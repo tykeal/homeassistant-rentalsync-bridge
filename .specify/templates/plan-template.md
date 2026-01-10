@@ -31,7 +31,15 @@
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+Verify feature design compliance with `.specify/memory/constitution.md`:
+
+- [ ] **Code Quality**: SPDX headers planned for all new source files
+- [ ] **Testing Standards**: Test strategy defined (contract/integration/unit levels)
+- [ ] **UX Consistency**: User-facing interfaces follow consistent patterns
+- [ ] **Performance**: Measurable performance goals defined in Technical Context
+- [ ] **Commit Discipline**: Team aware of atomic commit and pre-commit requirements
+
+*If any violations exist, document justification in Complexity Tracking section*
 
 ## Project Structure
 

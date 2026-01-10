@@ -246,6 +246,8 @@ With multiple developers:
 - [Story] label maps task to specific user story for traceability
 - Each user story should be independently completable and testable
 - Verify tests fail before implementing
-- Commit after each task or logical group
+- Atomic commits required: one logical change per commit (see constitution)
+- Pre-commit hooks MUST pass; never bypass with --no-verify
+- Checklist items: implementation commit + separate Docs commit for checklist update
 - Stop at any checkpoint to validate story independently
 - Avoid: vague tasks, same file conflicts, cross-story dependencies that break independence
