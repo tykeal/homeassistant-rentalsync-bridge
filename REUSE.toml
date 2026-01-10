@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: 2025 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+version = 1
+
+# Annotate spec kit files
+[[annotations]]
+path = [".github/prompts/*", ".specify/**", "addon/uv.lock", "uv.lock", "**.json", "captive_portal.egg-info/**"]
+SPDX-License-Identifier = "Apache-2.0"
+SPDX-FileCopyrightText = "2025 Andrew Grimberg <tykeal@bardicgrove.org>"

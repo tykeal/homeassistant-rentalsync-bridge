@@ -1,0 +1,90 @@
+# SPDX-FileCopyrightText: 2025 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+
+---
+ci:
+  autofix_commit_msg: |
+    Chore: pre-commit autofixes
+
+    Signed-off-by: pre-commit-ci[bot] <66853113+pre-commit-ci[bot]@users.noreply.github.com>
+  autofix_prs: false
+  autoupdate_commit_msg: |
+    Chore: pre-commit autoupdate
+
+    Signed-off-by: pre-commit-ci[bot] <66853113+pre-commit-ci[bot]@users.noreply.github.com>
+
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-ast
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-xml
+      - id: check-yaml
+      - id: debug-statements
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+      - id: no-commit-to-branch
+        args:
+          - --branch=main
+      - id: requirements-txt-fixer
+      - id: trailing-whitespace
+
+  - repo: https://github.com/jorisroovers/gitlint
+    rev: acc9d9de6369b76d22cb4167029d2035e8730b98 # frozen: v0.19.1
+    hooks:
+      - id: gitlint
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: 6ce4b4fc349b8881cbce40207dac3bf78824a88e  # frozen: v0.14.11
+    hooks:
+      - id: ruff
+        files: ^(scripts|tests|custom_components|addon|src)/.+\.py$
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+        files: ^(scripts|tests|custom_components|addon|src)/.+\.py$
+
+  - repo: https://github.com/adrienverge/yamllint.git
+    rev: 79a6b2b1392eaf49cdd32ac4f14be1a809bbd8f7  # frozen: v1.37.1
+    hooks:
+      - id: yamllint
+
+  - repo: https://github.com/econchick/interrogate
+    rev: a6268877efd41a21197445cc04cbf28f9c6facba # frozen: 1.7.0
+    hooks:
+      - id: interrogate
+        files: ^(scripts|tests|custom_components|addon|src)/.+\.py$
+        args: [-vv, --fail-under=100]
+        additional_dependencies:
+          - setuptools
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: a66e98df7b4aeeb3724184b332785976d062b92e  # frozen: v1.19.1
+    hooks:
+      - id: mypy
+        files: ^(scripts|tests|custom_components|addon|src)/.+\.py$
+        args: [--config-file=.mypy.ini]
+        additional_dependencies:
+          - types-pytz
+          - types-PyYAML
+          - pytest
+          - pytest-asyncio
+          - fastapi
+          - sqlmodel
+          - pydantic
+          - httpx
+          - argon2-cffi>=25.1.0
+
+  - repo: https://github.com/fsfe/reuse-tool
+    rev: 9fabf9eb815a57aac116b435e8346c200cdb8604  # frozen: v6.2.0
+    hooks:
+      - id: reuse
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: 0933c147c9d6587653d45fdcb4c497c57a65f9af  # frozen: v1.7.10
+    hooks:
+      - id: actionlint
