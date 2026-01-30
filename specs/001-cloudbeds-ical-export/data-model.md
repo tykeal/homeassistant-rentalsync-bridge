@@ -165,9 +165,30 @@ Defines optional data fields to include in iCal event descriptions per listing.
 | `updated_at` | DateTime | NOT NULL, Default: now() | Last update timestamp |
 
 **Validation Rules**:
-- `field_name` must correspond to available Cloudbeds booking fields
+- `field_name` must correspond to available Cloudbeds booking fields (see Available Custom Fields below)
 - `listing_id` + `field_name` combination must be unique (composite unique constraint)
 - `sort_order` determines field order in iCal description (ascending)
+
+**Available Custom Fields** (predefined list from Cloudbeds API):
+
+| field_name | display_label | Description |
+|------------|---------------|-------------|
+| `booking_notes` | Booking Notes | General notes attached to the reservation |
+| `arrival_time` | Arrival Time | Expected guest arrival time |
+| `departure_time` | Departure Time | Expected guest departure time |
+| `num_guests` | Number of Guests | Total guest count for the booking |
+| `room_type_name` | Room Type | Name of the room/unit type |
+| `source_name` | Booking Source | Channel or source of the booking (e.g., "Direct", "Booking.com") |
+| `special_requests` | Special Requests | Guest special requests or preferences |
+| `estimated_arrival` | Estimated Arrival | Estimated arrival date/time if different from check-in |
+
+**PII Exclusions** (fields NOT available for custom field selection per SC-010):
+- `guest_email` - Full email address
+- `guest_phone` - Full phone number (only last 4 digits via `guest_phone_last4`)
+- `guest_address` - Physical address
+- `payment_method` - Payment details
+- `id_document` - Government ID information
+- `private_notes` - Internal staff notes marked as private
 
 **Business Rules**:
 - Default custom fields created automatically when listing is enabled:

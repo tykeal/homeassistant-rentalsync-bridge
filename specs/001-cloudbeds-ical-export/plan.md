@@ -12,7 +12,7 @@ SPDX-License-Identifier: Apache-2.0
 
 This feature implements a web application that transforms Cloudbeds booking data into Airbnb-compatible iCal feeds. The system provides an administrative web interface for configuring which listings to export, manages OAuth authentication with Cloudbeds, and serves publicly accessible iCal URLs. It operates as a Home Assistant addon with HA authentication, while also supporting standalone container deployment for local testing.
 
-**Technical Approach**: FastAPI web application with SQLite storage, using the official cloudbeds-pms SDK for API integration and the icalendar library for RFC 5545-compliant calendar generation. Hybrid sync strategy combines webhook notifications with configurable polling (1-60 minutes) and on-demand refresh with timeout fallback.
+**Technical Approach**: FastAPI web application with SQLite storage, using the official cloudbeds-pms SDK for API integration and the icalendar library for RFC 5545-compliant calendar generation. Sync strategy uses configurable polling (1-60 minutes, default 5) with on-demand refresh and cached data fallback. Webhook support planned as future enhancement.
 
 ## Technical Context
 
@@ -35,7 +35,7 @@ See [research.md](./research.md) for detailed technology decisions and rationale
 Verify feature design compliance with `.specify/memory/constitution.md`:
 
 - [x] **Code Quality**: SPDX headers planned for all new source files (per tasks.md T001-T094)
-- [x] **Testing Standards**: Test strategy defined - pytest with contract/integration/unit tests (Phase 7: T092 performance, T093 security)
+- [x] **Testing Standards**: Test strategy defined - pytest with contract/integration/unit tests. Phase 7 creates test infrastructure (T073-T080) with test implementation integrated into each user story phase. Note: Full TDD is not mandated for this feature; tests are written alongside or after implementation per constitutional flexibility clause
 - [x] **UX Consistency**: User-facing interfaces follow consistent patterns (basic HTML forms, REST API, standard error messages per research.md)
 - [x] **Performance**: Measurable performance goals defined in Technical Context (<2s iCal gen, 50×365 bookings, <500ms API)
 - [x] **Commit Discipline**: Team aware of atomic commit and pre-commit requirements (constitution.md principles, pre-commit hooks configured)
@@ -142,7 +142,7 @@ This plan references the following detailed design documents:
 - **[data-model.md](./data-model.md)** - Database schema with 4 entities: OAuthCredential, Listing, CustomField, Booking
 - **[contracts/api-specification.md](./contracts/api-specification.md)** - REST API contracts for 15+ endpoints
 - **[quickstart.md](./quickstart.md)** - Standalone deployment guide for Podman testing
-- **[tasks.md](./tasks.md)** - 94 dependency-ordered implementation tasks across 7 phases
+- **[tasks.md](./tasks.md)** - 105 dependency-ordered implementation tasks across 8 phases
 
 ## Implementation Phases
 
