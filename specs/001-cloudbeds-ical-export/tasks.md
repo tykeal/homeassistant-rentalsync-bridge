@@ -27,14 +27,14 @@ Project uses single-project structure:
 
 **Purpose**: Project initialization and basic structure
 
-- [ ] T001 Create project structure with src/, tests/, and deployment directories
-- [ ] T002 Initialize Python project with uv and pyproject.toml including FastAPI, SQLAlchemy[asyncio], icalendar, cloudbeds-pms, APScheduler, Jinja2, cryptography dependencies
-- [ ] T003 [P] Configure ruff for linting and formatting in pyproject.toml
-- [ ] T004 [P] Configure mypy for type checking in pyproject.toml
-- [ ] T005 [P] Setup pre-commit hooks for SPDX headers, ruff, and mypy
-- [ ] T006 [P] Create Dockerfile for standalone/Home Assistant addon deployment
-- [ ] T007 [P] Create Home Assistant addon config.json with ingress configuration
-- [ ] T008 [P] Create .env.example with all required environment variables
+- [x] T001 Create project structure with src/, tests/, and deployment directories
+- [x] T002 Initialize Python project with uv and pyproject.toml including FastAPI, SQLAlchemy[asyncio], icalendar, cloudbeds-pms, APScheduler, Jinja2, cryptography dependencies
+- [x] T003 [P] Configure ruff for linting and formatting in pyproject.toml
+- [x] T004 [P] Configure mypy for type checking in pyproject.toml
+- [x] T005 [P] Setup pre-commit hooks for SPDX headers, ruff, and mypy
+- [x] T006 [P] Create Dockerfile for standalone/Home Assistant addon deployment
+- [x] T007 [P] Create Home Assistant addon config.json with ingress configuration
+- [x] T008 [P] Create .env.example with all required environment variables
 
 ---
 
