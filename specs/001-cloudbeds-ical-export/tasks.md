@@ -72,20 +72,20 @@ Project uses single-project structure:
 
 ### Implementation for User Story 1
 
-- [ ] T024 [P] [US1] Create repository pattern for Listing in src/repositories/listing_repository.py
-- [ ] T025 [P] [US1] Create repository pattern for Booking in src/repositories/booking_repository.py
-- [ ] T026 [P] [US1] Create repository pattern for CustomField in src/repositories/custom_field_repository.py
-- [ ] T027 [US1] Implement CalendarService in src/services/calendar_service.py with iCal generation using icalendar library
-- [ ] T028 [US1] Implement iCal event creation logic in src/services/calendar_service.py for bookings with guest name fallback to booking ID
-- [ ] T029 [US1] Implement phone number last 4 extraction and event description formatting in src/services/calendar_service.py
-- [ ] T030 [US1] Add timezone handling for DTSTART/DTEND in src/services/calendar_service.py
-- [ ] T031 [P] [US1] Create GET /ical/{slug}.ics endpoint in src/api/ical.py for public iCal feed access
-- [ ] T032 [P] [US1] Implement in-memory cache with 5-minute TTL for iCal strings in src/services/calendar_service.py
-- [ ] T033 [US1] Add CORS configuration for iCal endpoints in src/main.py
-- [ ] T034 [US1] Implement SyncService in src/services/sync_service.py for fetching bookings from Cloudbeds API
-- [ ] T035 [US1] Add booking data caching logic in src/services/sync_service.py with INSERT/UPDATE/cancelled handling
-- [ ] T036 [US1] Setup APScheduler background task for 5-minute sync interval in src/services/sync_service.py
-- [ ] T037 [US1] Implement OAuth token refresh logic in src/services/cloudbeds_service.py with automatic trigger before expiry
+- [x] T024 [P] [US1] Create repository pattern for Listing in src/repositories/listing_repository.py
+- [x] T025 [P] [US1] Create repository pattern for Booking in src/repositories/booking_repository.py
+- [x] T026 [P] [US1] Create repository pattern for CustomField in src/repositories/custom_field_repository.py
+- [x] T027 [US1] Implement CalendarService in src/services/calendar_service.py with iCal generation using icalendar library
+- [x] T028 [US1] Implement iCal event creation logic in src/services/calendar_service.py for bookings with guest name fallback to booking ID
+- [x] T029 [US1] Implement phone number last 4 extraction and event description formatting in src/services/calendar_service.py
+- [x] T030 [US1] Add timezone handling for DTSTART/DTEND in src/services/calendar_service.py
+- [x] T031 [P] [US1] Create GET /ical/{slug}.ics endpoint in src/api/ical.py for public iCal feed access
+- [x] T032 [P] [US1] Implement in-memory cache with 5-minute TTL for iCal strings in src/services/calendar_service.py
+- [x] T033 [US1] Add CORS configuration for iCal endpoints in src/main.py
+- [x] T034 [US1] Implement SyncService in src/services/sync_service.py for fetching bookings from Cloudbeds API
+- [x] T035 [US1] Add booking data caching logic in src/services/sync_service.py with INSERT/UPDATE/cancelled handling
+- [x] T036 [US1] Setup APScheduler background task for 5-minute sync interval in src/services/scheduler.py
+- [x] T037 [US1] Implement OAuth token refresh logic in src/services/oauth_service.py with automatic trigger before expiry
 
 **Checkpoint**: At this point, User Story 1 should be fully functional - single listing can be configured and iCal feed generated
 
