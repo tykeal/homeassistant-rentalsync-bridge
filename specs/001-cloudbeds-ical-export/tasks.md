@@ -44,21 +44,21 @@ Project uses single-project structure:
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T009 Create database configuration in src/database.py with SQLAlchemy async engine setup
-- [ ] T010 Setup Alembic for database migrations with initial migration script
-- [ ] T011 [P] Create OAuthCredential model in src/models/oauth_credential.py with AES-256 encryption for access and refresh tokens
-- [ ] T012 [P] Create Listing model in src/models/listing.py with all fields from data-model.md
-- [ ] T013 [P] Create CustomField model in src/models/custom_field.py with listing relationship
-- [ ] T014 [P] Create Booking model in src/models/booking.py with listing relationship
-- [ ] T015 Create initial Alembic migration 001_initial_schema.py for all models
-- [ ] T016 [P] Implement CloudbedsService wrapper in src/services/cloudbeds_service.py using cloudbeds-pms SDK
-- [ ] T017 [P] Implement ConfigService in src/services/config_service.py for environment configuration management
-- [ ] T018 [P] Create Pydantic settings configuration in src/config.py for environment variables
-- [ ] T019 [P] Create authentication middleware in src/middleware/auth.py for Home Assistant Ingress header checking
-- [ ] T020 [P] Setup FastAPI application structure in src/main.py with routers and middleware
-- [ ] T021 [P] Create health check endpoint GET /health in src/api/health.py
-- [ ] T022 [P] Implement error handling middleware in src/middleware/error_handler.py
-- [ ] T023 [P] Setup logging configuration in src/utils/logging.py
+- [x] T009 Create database configuration in src/database.py with SQLAlchemy async engine setup
+- [x] T010 Setup Alembic for database migrations with initial migration script
+- [x] T011 [P] Create OAuthCredential model in src/models/oauth_credential.py with AES-256 encryption for access and refresh tokens
+- [x] T012 [P] Create Listing model in src/models/listing.py with all fields from data-model.md
+- [x] T013 [P] Create CustomField model in src/models/custom_field.py with listing relationship
+- [x] T014 [P] Create Booking model in src/models/booking.py with listing relationship
+- [x] T015 Create initial Alembic migration 001_initial_schema.py for all models
+- [x] T016 [P] Implement CloudbedsService wrapper in src/services/cloudbeds_service.py using cloudbeds-pms SDK
+- [x] T017 [P] Implement ConfigService in src/services/config_service.py for environment configuration management
+- [x] T018 [P] Create Pydantic settings configuration in src/config.py for environment variables
+- [x] T019 [P] Create authentication middleware in src/middleware/auth.py for Home Assistant Ingress header checking
+- [x] T020 [P] Setup FastAPI application structure in src/main.py with routers and middleware
+- [x] T021 [P] Create health check endpoint GET /health in src/api/health.py
+- [x] T022 [P] Implement error handling middleware in src/middleware/error_handler.py
+- [x] T023 [P] Setup logging configuration in src/utils/logging.py
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in parallel
 
