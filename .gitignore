@@ -13,3 +13,12 @@ venv
 # Generated files that can be recreated
 addon/coverage.xml
 captive_portal.egg-info/*
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+data/*.db
+
+# Environment files
+.env
