@@ -17,7 +17,7 @@ This feature implements a web application that transforms Cloudbeds booking data
 ## Technical Context
 
 **Language/Version**: Python 3.13 or 3.14
-**Primary Dependencies**: FastAPI, SQLAlchemy (async), icalendar, cloudbeds-pms (official SDK), APScheduler, httpx, Jinja2
+**Primary Dependencies**: FastAPI, SQLAlchemy (async), icalendar, cloudbeds-pms (official SDK), APScheduler, Jinja2, cryptography (for AES-256)
 **Storage**: SQLite with WAL mode (single-file, ACID-compliant, container-friendly)
 **Testing**: pytest with async support, contract tests planned
 **Target Platform**: Home Assistant addon (Linux), standalone Podman container for testing

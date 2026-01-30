@@ -133,11 +133,18 @@ As a property manager, I want my exported iCal feeds to reflect booking changes 
 
 ### Key Entities *(include if feature involves data)*
 
+#### Domain Entities (Business Concepts)
+
 - **Listing**: Represents a Cloudbeds listing (property/unit) that can be configured for iCal export. Attributes include listing ID, listing name, export enabled status, iCal URL slug, and custom field configuration.
 - **Booking**: Represents a reservation in Cloudbeds. Attributes include booking ID, listing reference, guest name, guest phone number, check-in date, check-out date, booking status, and optional custom data fields.
-- **iCal Feed**: Represents the generated calendar output for a specific listing. Contains collection of booking events formatted per RFC 5545 standard.
-- **Configuration**: Represents administrator settings. Includes which listings are enabled, which optional fields are included per listing, and Cloudbeds API credentials.
-- **Calendar Event**: Represents a single booking as an iCal event. Attributes include event summary (title), start date/time, end date/time, description, unique identifier, and timestamp.
+- **iCal Feed**: Generated calendar output for a specific listing. Contains collection of booking events formatted per RFC 5545 standard. Not persisted; generated on-demand from cached bookings.
+- **Calendar Event**: A single booking represented as an iCal VEVENT. Attributes include event summary (title), DTSTART, DTEND, description, UID, and DTSTAMP. Generated artifact, not stored.
+
+#### Technical Entities (Implementation/Storage)
+
+- **OAuthCredential**: Stores Cloudbeds OAuth tokens (access_token, refresh_token, expires_at). Tokens encrypted at rest with AES-256. Single global credential for Cloudbeds API access.
+- **CustomField**: Configurable additional data fields for iCal event descriptions. Linked to Listing with field_name, field_source (Cloudbeds API path), and enabled status.
+- **Configuration**: Administrator settings including enabled listings, custom field mappings per listing, polling interval, and sync preferences. Persisted in database.
 
 ## Success Criteria *(mandatory)*
 

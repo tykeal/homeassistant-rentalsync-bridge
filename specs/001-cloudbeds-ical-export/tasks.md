@@ -28,7 +28,7 @@ Project uses single-project structure:
 **Purpose**: Project initialization and basic structure
 
 - [ ] T001 Create project structure with src/, tests/, and deployment directories
-- [ ] T002 Initialize Python project with uv and pyproject.toml including FastAPI, SQLAlchemy, icalendar, cloudbeds-pms, APScheduler dependencies
+- [ ] T002 Initialize Python project with uv and pyproject.toml including FastAPI, SQLAlchemy[asyncio], icalendar, cloudbeds-pms, APScheduler, Jinja2, cryptography dependencies
 - [ ] T003 [P] Configure ruff for linting and formatting in pyproject.toml
 - [ ] T004 [P] Configure mypy for type checking in pyproject.toml
 - [ ] T005 [P] Setup pre-commit hooks for SPDX headers, ruff, and mypy
