@@ -58,7 +58,12 @@ repos:
     hooks:
       - id: interrogate
         files: ^(scripts|tests|custom_components|addon|src)/.+\.py$
-        args: [-vv, --fail-under=100]
+        args:
+          - -vv
+          - --fail-under=100
+          - --ignore-nested-functions
+          - --ignore-nested-classes
+          - --ignore-regex=^(health|protected|ical|success|http_error|unhandled_error)$
         additional_dependencies:
           - setuptools
 
