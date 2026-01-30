@@ -119,10 +119,10 @@ As a property manager, I want my exported iCal feeds to reflect booking changes 
 - **FR-010**: System MUST allow administrators to configure, add, and remove optional additional data fields for inclusion in event descriptions through the admin interface
 - **FR-011**: System MUST persist configuration settings (enabled listings, custom fields, iCal URLs) across system restarts
 - **FR-012**: System MUST handle multiple listings independently, with separate configurations and iCal URLs for each
-- **FR-013**: System MUST refresh booking data from Cloudbeds using a hybrid sync strategy: webhook notifications (when available), configurable polling interval (1-60 minutes, default 5 minutes), and on-demand refresh with timeout fallback to cached data
+- **FR-013**: System MUST refresh booking data from Cloudbeds using a configurable polling interval (1-60 minutes, default 5 minutes) with on-demand refresh and timeout fallback to cached data. Note: Webhook notifications are a future enhancement not included in MVP scope
 - **FR-014**: System MUST serve iCal feeds via publicly accessible HTTP/HTTPS URLs that do not require authentication, enabling subscription by external calendar applications
 - **FR-015**: System MUST validate that generated iCal files are compatible with Airbnb, Google Calendar, and Apple Calendar
-- **FR-016**: System MUST handle API rate limits and errors from Cloudbeds gracefully without exposing sensitive error details to iCal consumers
+- **FR-016**: System MUST handle API rate limits and errors from Cloudbeds gracefully: serve cached data for up to 15 minutes during outages, display "Service Temporarily Unavailable" message in admin UI, retry up to 3 times with exponential backoff (2^n seconds), and never expose sensitive error details to iCal consumers
 - **FR-017**: System MUST log configuration changes and errors for troubleshooting purposes
 - **FR-018**: System MUST support at least 50 listings with up to 365 bookings per listing without performance degradation (iCal generation <2s, API response <500ms)
 - **FR-019**: System MUST handle concurrent administrator configuration updates using last-write-wins semantics with timestamp display in the admin UI

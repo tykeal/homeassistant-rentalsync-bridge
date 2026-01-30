@@ -329,7 +329,16 @@ If you have 2-3 developers:
 
 ## Testing Strategy
 
-**Note**: This specification does NOT explicitly request TDD or test tasks. Tests are optional and not included in task list. If tests are needed later:
+**Approach**: Tests are written alongside or shortly after implementation for each user story phase. Phase 7 establishes the test infrastructure and fixtures, while individual test files are created as features are implemented. This approach satisfies constitutional testing requirements while maintaining implementation velocity.
+
+**Test Implementation by Phase**:
+- **Phase 3 (US1)**: Unit tests for CalendarService, SyncService created after T037
+- **Phase 4 (US2)**: Integration tests for API endpoints created after T056
+- **Phase 5 (US3)**: Multi-listing isolation tests added
+- **Phase 6 (US4)**: Sync behavior tests added
+- **Phase 7**: Test infrastructure (conftest.py, fixtures), contract tests, and comprehensive test coverage validation
+
+**Test Types**:
 
 - Contract tests for API endpoints: `tests/contract/test_*.py`
 - Integration tests for user journeys: `tests/integration/test_*.py`
@@ -382,7 +391,7 @@ Track these outcomes during implementation:
 
 ## Task Summary
 
-- **Total Tasks**: 94
+- **Total Tasks**: 105
 - **Setup Phase**: 8 tasks
 - **Foundational Phase**: 15 tasks (BLOCKS all user stories)
 - **User Story 1 (MVP)**: 14 tasks
