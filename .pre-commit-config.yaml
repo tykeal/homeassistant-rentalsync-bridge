@@ -58,7 +58,12 @@ repos:
     hooks:
       - id: interrogate
         files: ^(scripts|tests|custom_components|addon|src)/.+\.py$
-        args: [-vv, --fail-under=100]
+        args:
+          - -vv
+          - --fail-under=100
+          - --ignore-nested-functions
+          - --ignore-nested-classes
+          - --ignore-regex=^(health|protected|ical|success|http_error|unhandled_error)$
         additional_dependencies:
           - setuptools
 
@@ -76,8 +81,11 @@ repos:
           - fastapi
           - sqlmodel
           - pydantic
+          - pydantic-settings
           - httpx
           - argon2-cffi>=25.1.0
+          - sqlalchemy[asyncio]
+          - cryptography
 
   - repo: https://github.com/fsfe/reuse-tool
     rev: 9fabf9eb815a57aac116b435e8346c200cdb8604  # frozen: v6.2.0

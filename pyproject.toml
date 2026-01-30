@@ -107,8 +107,6 @@ ignore = [
     "D100",   # Missing docstring in public module (handled by interrogate)
     "D104",   # Missing docstring in public package
     "D107",   # Missing docstring in __init__
-    "ANN101", # Missing type annotation for self
-    "ANN102", # Missing type annotation for cls
     "ANN401", # Dynamically typed expressions (Any)
     "PLR0913", # Too many arguments
 ]
@@ -122,6 +120,7 @@ convention = "google"
     "D",      # No docstrings required in tests
     "ARG",    # Unused arguments common in fixtures
     "PLR2004", # Magic values OK in tests
+    "PLC0415", # Allow imports inside functions in tests
 ]
 
 [tool.ruff.format]
