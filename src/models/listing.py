@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Listing model for Cloudbeds properties configured for iCal export."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text
@@ -13,6 +13,11 @@ from src.database import Base
 if TYPE_CHECKING:
     from src.models.booking import Booking
     from src.models.custom_field import CustomField
+
+
+def _utc_now() -> datetime:
+    """Get current UTC datetime for SQLAlchemy defaults."""
+    return datetime.now(UTC)
 
 
 class Listing(Base):
@@ -37,10 +42,10 @@ class Listing(Base):
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_sync_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow
+        DateTime, nullable=False, default=_utc_now
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, nullable=False, default=_utc_now, onupdate=_utc_now
     )
 
     # Relationships

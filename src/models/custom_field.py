@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """CustomField model for configurable iCal event description fields."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
@@ -20,6 +20,11 @@ from src.database import Base
 
 if TYPE_CHECKING:
     from src.models.listing import Listing
+
+
+def _utc_now() -> datetime:
+    """Get current UTC datetime for SQLAlchemy defaults."""
+    return datetime.now(UTC)
 
 
 class CustomField(Base):
@@ -40,10 +45,10 @@ class CustomField(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow
+        DateTime, nullable=False, default=_utc_now
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, nullable=False, default=_utc_now, onupdate=_utc_now
     )
 
     # Relationships

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """OAuthCredential model for Cloudbeds API authentication."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from cryptography.fernet import Fernet
 from sqlalchemy import DateTime, Integer, String, Text
@@ -10,6 +10,11 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from src.config import get_settings
 from src.database import Base
+
+
+def _utc_now() -> datetime:
+    """Get current UTC datetime for SQLAlchemy defaults."""
+    return datetime.now(UTC)
 
 
 def get_cipher() -> Fernet:
@@ -80,10 +85,10 @@ class OAuthCredential(Base):
     )
     token_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow
+        DateTime, nullable=False, default=_utc_now
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, nullable=False, default=_utc_now, onupdate=_utc_now
     )
 
     @property
@@ -124,7 +129,7 @@ class OAuthCredential(Base):
         """
         if self.token_expires_at is None:
             return True
-        return datetime.utcnow() >= self.token_expires_at
+        return datetime.now(UTC) >= self.token_expires_at
 
     def __repr__(self) -> str:
         """Return string representation."""

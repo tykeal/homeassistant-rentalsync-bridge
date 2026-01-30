@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Booking model for cached Cloudbeds reservation data."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
@@ -20,6 +20,11 @@ from src.database import Base
 
 if TYPE_CHECKING:
     from src.models.listing import Listing
+
+
+def _utc_now() -> datetime:
+    """Get current UTC datetime for SQLAlchemy defaults."""
+    return datetime.now(UTC)
 
 
 class Booking(Base):
@@ -43,13 +48,13 @@ class Booking(Base):
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="confirmed")
     custom_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     last_fetched_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow
+        DateTime, nullable=False, default=_utc_now
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow
+        DateTime, nullable=False, default=_utc_now
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, nullable=False, default=_utc_now, onupdate=_utc_now
     )
 
     # Relationships

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for database models."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from src.models import Booking, CustomField, Listing, OAuthCredential
@@ -48,7 +48,7 @@ class TestOAuthCredential:
         """Test token is expired when past expiry time."""
         cred = OAuthCredential(client_id="test")
         cred.client_secret = "secret"
-        cred.token_expires_at = datetime.utcnow() - timedelta(hours=1)
+        cred.token_expires_at = datetime.now(UTC) - timedelta(hours=1)
 
         assert cred.is_token_expired() is True
 
@@ -56,7 +56,7 @@ class TestOAuthCredential:
         """Test token is not expired when before expiry."""
         cred = OAuthCredential(client_id="test")
         cred.client_secret = "secret"
-        cred.token_expires_at = datetime.utcnow() + timedelta(hours=1)
+        cred.token_expires_at = datetime.now(UTC) + timedelta(hours=1)
 
         assert cred.is_token_expired() is False
 

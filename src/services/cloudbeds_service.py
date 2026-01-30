@@ -3,7 +3,7 @@
 """Cloudbeds API service wrapper using cloudbeds-pms SDK."""
 
 import logging
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from src.config import get_settings
@@ -85,9 +85,9 @@ class CloudbedsService:
 
         # Default date range: 24h ago to 365 days in future
         if start_date is None:
-            start_date = datetime.utcnow() - timedelta(hours=24)
+            start_date = datetime.now(UTC) - timedelta(hours=24)
         if end_date is None:
-            end_date = datetime.utcnow() + timedelta(days=365)
+            end_date = datetime.now(UTC) + timedelta(days=365)
 
         # TODO: Implement actual SDK call when cloudbeds-pms is available
         logger.warning("CloudbedsService.get_reservations: SDK not yet integrated")
