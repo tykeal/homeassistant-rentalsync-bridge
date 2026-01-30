@@ -94,14 +94,14 @@ As a property manager, I want my exported iCal feeds to reflect booking changes 
 
 ### Edge Cases
 
-- What happens when a booking has no guest name? (Use booking ID as fallback in event title)
-- What happens when a guest has no phone number? (Omit phone number field from description, or show "N/A")
-- How does the system handle bookings with missing check-in or check-out dates? (Skip invalid bookings and log error for administrator review)
-- What happens if Cloudbeds API is unavailable when generating iCal? (Return cached version if available, otherwise return error with retry instructions)
-- How does the system handle extremely long guest names or booking IDs? (Truncate to reasonable length per iCal standards, typically 255 characters for summary field)
-- What happens when Home Assistant authentication service is down? (Admin portal becomes inaccessible; iCal URLs remain accessible as they are read-only public endpoints)
-- How does the system handle time zones for check-in/check-out dates? (Use property's configured timezone from Cloudbeds, include timezone information in iCal DTSTART/DTEND fields)
-- What happens when multiple administrators configure the same listing simultaneously? (Last save wins; consider adding timestamp of last configuration update in admin UI)
+- What happens when a booking has no guest name? (Per FR-004: Use booking ID as fallback in event title)
+- What happens when a guest has no phone number? (Per FR-005: Omit phone number field from description)
+- How does the system handle bookings with missing check-in or check-out dates? (Per FR-021: Skip booking, log error with booking ID for administrator review)
+- What happens if Cloudbeds API is unavailable when generating iCal? (Return cached version if available, otherwise return HTTP 503 with Retry-After header)
+- How does the system handle extremely long guest names or booking IDs? (Truncate to 255 characters per iCal RFC 5545 summary field limit)
+- What happens when Home Assistant authentication service is down? (Admin portal returns HTTP 503; iCal URLs remain accessible per FR-014)
+- How does the system handle time zones for check-in/check-out dates? (Per FR-022: Use property's configured timezone from Cloudbeds; reject invalid IANA timezone identifiers and default to UTC with warning log)
+- What happens when multiple administrators configure the same listing simultaneously? (Per FR-019: Last save wins with timestamp display in admin UI)
 
 ## Requirements *(mandatory)*
 
@@ -116,19 +116,24 @@ As a property manager, I want my exported iCal feeds to reflect booking changes 
 - **FR-007**: System MUST authenticate all administrative access via Home Assistant authentication mechanism
 - **FR-008**: System MUST allow administrators to select which Cloudbeds listings are enabled for iCal export
 - **FR-009**: System MUST generate unique, persistent iCal URLs for each enabled listing
-- **FR-010**: System MUST allow administrators to configure optional additional data fields for inclusion in event descriptions
-- **FR-011**: System MUST allow administrators to add or remove optional data fields through the admin interface
-- **FR-012**: System MUST persist configuration settings (enabled listings, custom fields, iCal URLs) across system restarts
-- **FR-013**: System MUST handle multiple listings independently, with separate configurations and iCal URLs for each
-- **FR-014**: System MUST refresh booking data from Cloudbeds at regular intervals to maintain calendar accuracy [NEEDS CLARIFICATION: sync interval - continuous polling, webhook-based, or manual refresh?]
-- **FR-015**: System MUST serve iCal feeds via publicly accessible HTTP/HTTPS URLs that can be subscribed to by external calendar applications
-- **FR-016**: System MUST validate that generated iCal files are compatible with Airbnb, Google Calendar, and Apple Calendar
-- **FR-017**: System MUST handle API rate limits and errors from Cloudbeds gracefully without exposing sensitive error details to iCal consumers
-- **FR-018**: System MUST log configuration changes and errors for troubleshooting purposes
+- **FR-010**: System MUST allow administrators to configure, add, and remove optional additional data fields for inclusion in event descriptions through the admin interface
+- **FR-011**: System MUST persist configuration settings (enabled listings, custom fields, iCal URLs) across system restarts
+- **FR-012**: System MUST handle multiple listings independently, with separate configurations and iCal URLs for each
+- **FR-013**: System MUST refresh booking data from Cloudbeds using a hybrid sync strategy: webhook notifications (when available), configurable polling interval (1-60 minutes, default 5 minutes), and on-demand refresh with timeout fallback to cached data
+- **FR-014**: System MUST serve iCal feeds via publicly accessible HTTP/HTTPS URLs that do not require authentication, enabling subscription by external calendar applications
+- **FR-015**: System MUST validate that generated iCal files are compatible with Airbnb, Google Calendar, and Apple Calendar
+- **FR-016**: System MUST handle API rate limits and errors from Cloudbeds gracefully without exposing sensitive error details to iCal consumers
+- **FR-017**: System MUST log configuration changes and errors for troubleshooting purposes
+- **FR-018**: System MUST support at least 50 listings with up to 365 bookings per listing without performance degradation (iCal generation <2s, API response <500ms)
+- **FR-019**: System MUST handle concurrent administrator configuration updates using last-write-wins semantics with timestamp display in the admin UI
+- **FR-020**: System MUST encrypt OAuth credentials (access tokens, refresh tokens) at rest using industry-standard encryption (AES-256 or equivalent)
+- **FR-021**: System MUST skip bookings with missing or invalid check-in/check-out dates and log an error with booking ID for administrator review
+- **FR-022**: System MUST validate timezone identifiers against IANA timezone database and default to UTC with a warning log for invalid or missing timezones
+- **FR-023**: System MUST serve iCal feeds over HTTPS when deployed in production; HTTP is permitted only for local development or when behind a TLS-terminating reverse proxy
 
 ### Key Entities *(include if feature involves data)*
 
-- **Listing**: Represents a Cloudbeds property/room that can be configured for iCal export. Attributes include listing ID, listing name, export enabled status, iCal URL, and custom field configuration.
+- **Listing**: Represents a Cloudbeds listing (property/unit) that can be configured for iCal export. Attributes include listing ID, listing name, export enabled status, iCal URL slug, and custom field configuration.
 - **Booking**: Represents a reservation in Cloudbeds. Attributes include booking ID, listing reference, guest name, guest phone number, check-in date, check-out date, booking status, and optional custom data fields.
 - **iCal Feed**: Represents the generated calendar output for a specific listing. Contains collection of booking events formatted per RFC 5545 standard.
 - **Configuration**: Represents administrator settings. Includes which listings are enabled, which optional fields are included per listing, and Cloudbeds API credentials.
@@ -138,13 +143,28 @@ As a property manager, I want my exported iCal feeds to reflect booking changes 
 
 ### Measurable Outcomes
 
-- **SC-001**: Administrators can configure a new listing and obtain a working iCal URL within 5 minutes
+- **SC-001**: Administrators can configure a new listing and obtain a working iCal URL within 5 minutes (UX simplicity goal: minimal steps, clear interface)
 - **SC-002**: Generated iCal feeds successfully import into Airbnb, Google Calendar, and Apple Calendar without errors in 100% of test cases
 - **SC-003**: Calendar events contain accurate check-in and check-out dates matching Cloudbeds data with zero date discrepancies
 - **SC-004**: System supports at least 50 listings with up to 365 bookings per listing without performance degradation
-- **SC-005**: iCal feed updates reflect Cloudbeds changes within 15 minutes of booking creation or modification (dependent on FR-014 clarification)
+- **SC-005**: iCal feed updates reflect Cloudbeds changes within 5 minutes of booking creation or modification when using default polling interval
 - **SC-006**: Admin interface successfully authenticates via Home Assistant for 100% of authorized users
 - **SC-007**: Custom field configurations apply correctly to iCal output with zero configuration errors
 - **SC-008**: System uptime for iCal feed delivery exceeds 99.5% availability
 - **SC-009**: Property managers reduce manual calendar synchronization time by at least 80% compared to manual entry
-- **SC-010**: Zero instances of sensitive data leakage (full phone numbers, guest addresses, payment info) in iCal feeds
+- **SC-010**: Zero instances of sensitive data leakage in iCal feeds. Classified PII that MUST NOT appear: full phone numbers (only last 4 digits permitted), guest email addresses, guest physical addresses, payment information, government IDs, or internal booking notes marked as private
+
+## Glossary
+
+| Term | Definition |
+|------|------------|
+| **Listing** | A Cloudbeds property or unit configured for iCal export. Synonymous with "property" or "room" in Cloudbeds terminology. |
+| **iCal URL** | The HTTP/HTTPS endpoint that serves an iCal feed for a specific listing. This is the URL users subscribe to in their calendar applications. |
+| **iCal Feed** | The calendar content (RFC 5545 formatted data) returned when accessing an iCal URL. Contains VEVENT entries for each booking. |
+| **Check-in Date** | The guest arrival date from Cloudbeds. Mapped to DTSTART in iCal events. |
+| **Check-out Date** | The guest departure date from Cloudbeds. Mapped to DTEND in iCal events. |
+| **DTSTART/DTEND** | RFC 5545 iCal properties representing event start and end times. |
+| **Sync** | The process of fetching updated booking data from Cloudbeds and refreshing the local cache. |
+| **Polling Interval** | The configurable time between automatic sync operations (1-60 minutes). |
+| **Slug** | A URL-safe identifier generated for each listing's iCal URL (e.g., `/ical/beach-house-123.ics`). |
+| **PII** | Personally Identifiable Information. Data that must be protected or excluded from iCal feeds per SC-010. |

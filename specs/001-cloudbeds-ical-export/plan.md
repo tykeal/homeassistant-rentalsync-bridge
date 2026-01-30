@@ -3,34 +3,30 @@ SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Implementation Plan: [FEATURE]
+# Implementation Plan: Cloudbeds to Airbnb iCal Export Bridge
 
-**Branch**: `[###-feature-name]` | **Date**: [DATE] | **Spec**: [link]
-**Input**: Feature specification from `/specs/[###-feature-name]/spec.md`
-
-**Note**: This template is filled in by the `/speckit.plan` command. See `.specify/templates/commands/plan.md` for the execution workflow.
+**Branch**: `001-cloudbeds-ical-export` | **Date**: 2026-01-24 | **Spec**: [spec.md](./spec.md)
+**Input**: Feature specification from `/specs/001-cloudbeds-ical-export/spec.md`
 
 ## Summary
 
-[Extract from feature spec: primary requirement + technical approach from research]
+This feature implements a web application that transforms Cloudbeds booking data into Airbnb-compatible iCal feeds. The system provides an administrative web interface for configuring which listings to export, manages OAuth authentication with Cloudbeds, and serves publicly accessible iCal URLs. It operates as a Home Assistant addon with HA authentication, while also supporting standalone container deployment for local testing.
+
+**Technical Approach**: FastAPI web application with SQLite storage, using the official cloudbeds-pms SDK for API integration and the icalendar library for RFC 5545-compliant calendar generation. Hybrid sync strategy combines webhook notifications with configurable polling (1-60 minutes) and on-demand refresh with timeout fallback.
 
 ## Technical Context
 
-<!--
-  ACTION REQUIRED: Replace the content in this section with the technical details
-  for the project. The structure here is presented in advisory capacity to guide
-  the iteration process.
--->
+**Language/Version**: Python 3.13 or 3.14
+**Primary Dependencies**: FastAPI, SQLAlchemy (async), icalendar, cloudbeds-pms (official SDK), APScheduler, httpx, Jinja2
+**Storage**: SQLite with WAL mode (single-file, ACID-compliant, container-friendly)
+**Testing**: pytest with async support, contract tests planned
+**Target Platform**: Home Assistant addon (Linux), standalone Podman container for testing
+**Project Type**: Web application (backend API + minimal HTML admin UI)
+**Performance Goals**: <2s iCal generation, support 50 listings × 365 bookings, <500ms API response time
+**Constraints**: Minimal frontend (basic HTML), uv package manager required, pre-commit hooks mandatory
+**Scale/Scope**: Single-instance deployment, 10-50 listings typical, 99.5% uptime target
 
-**Language/Version**: [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION]
-**Primary Dependencies**: [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION]
-**Storage**: [if applicable, e.g., PostgreSQL, CoreData, files or N/A]
-**Testing**: [e.g., pytest, XCTest, cargo test or NEEDS CLARIFICATION]
-**Target Platform**: [e.g., Linux server, iOS 15+, WASM or NEEDS CLARIFICATION]
-**Project Type**: [single/web/mobile - determines source structure]
-**Performance Goals**: [domain-specific, e.g., 1000 req/s, 10k lines/sec, 60 fps or NEEDS CLARIFICATION]
-**Constraints**: [domain-specific, e.g., <200ms p95, <100MB memory, offline-capable or NEEDS CLARIFICATION]
-**Scale/Scope**: [domain-specific, e.g., 10k users, 1M LOC, 50 screens or NEEDS CLARIFICATION]
+See [research.md](./research.md) for detailed technology decisions and rationale.
 
 ## Constitution Check
 
@@ -38,13 +34,13 @@ SPDX-License-Identifier: Apache-2.0
 
 Verify feature design compliance with `.specify/memory/constitution.md`:
 
-- [ ] **Code Quality**: SPDX headers planned for all new source files
-- [ ] **Testing Standards**: Test strategy defined (contract/integration/unit levels)
-- [ ] **UX Consistency**: User-facing interfaces follow consistent patterns
-- [ ] **Performance**: Measurable performance goals defined in Technical Context
-- [ ] **Commit Discipline**: Team aware of atomic commit and pre-commit requirements
+- [x] **Code Quality**: SPDX headers planned for all new source files (per tasks.md T001-T094)
+- [x] **Testing Standards**: Test strategy defined - pytest with contract/integration/unit tests (Phase 7: T092 performance, T093 security)
+- [x] **UX Consistency**: User-facing interfaces follow consistent patterns (basic HTML forms, REST API, standard error messages per research.md)
+- [x] **Performance**: Measurable performance goals defined in Technical Context (<2s iCal gen, 50×365 bookings, <500ms API)
+- [x] **Commit Discipline**: Team aware of atomic commit and pre-commit requirements (constitution.md principles, pre-commit hooks configured)
 
-*If any violations exist, document justification in Complexity Tracking section*
+*All constitutional requirements satisfied. No violations to document.*
 
 ## Project Structure
 
@@ -61,57 +57,120 @@ specs/[###-feature]/
 ```
 
 ### Source Code (repository root)
-<!--
-  ACTION REQUIRED: Replace the placeholder tree below with the concrete layout
-  for this feature. Delete unused options and expand the chosen structure with
-  real paths (e.g., apps/admin, packages/something). The delivered plan must
-  not include Option labels.
--->
 
 ```text
-# [REMOVE IF UNUSED] Option 1: Single project (DEFAULT)
-src/
-├── models/
-├── services/
-├── cli/
-└── lib/
-
-tests/
-├── contract/
-├── integration/
-└── unit/
-
-# [REMOVE IF UNUSED] Option 2: Web application (when "frontend" + "backend" detected)
-backend/
-├── src/
-│   ├── models/
-│   ├── services/
-│   └── api/
-└── tests/
-
-frontend/
-├── src/
-│   ├── components/
-│   ├── pages/
-│   └── services/
-└── tests/
-
-# [REMOVE IF UNUSED] Option 3: Mobile + API (when "iOS/Android" detected)
-api/
-└── [same as backend above]
-
-ios/ or android/
-└── [platform-specific structure: feature modules, UI flows, platform tests]
+rentalsync-bridge/
+├── src/                              # Application source code
+│   ├── api/                          # FastAPI route handlers
+│   │   ├── __init__.py
+│   │   ├── health.py                 # Health check endpoints
+│   │   ├── oauth.py                  # OAuth configuration
+│   │   ├── listings.py               # Listing management
+│   │   ├── custom_fields.py          # Custom field config
+│   │   ├── bookings.py               # Booking debug endpoints
+│   │   └── ical.py                   # Public iCal feeds
+│   ├── models/                       # SQLAlchemy ORM models
+│   │   ├── __init__.py
+│   │   ├── oauth_credential.py
+│   │   ├── listing.py
+│   │   ├── custom_field.py
+│   │   └── booking.py
+│   ├── schemas/                      # Pydantic request/response schemas
+│   │   ├── __init__.py
+│   │   ├── oauth.py
+│   │   ├── listing.py
+│   │   ├── custom_field.py
+│   │   └── booking.py
+│   ├── services/                     # Business logic layer
+│   │   ├── __init__.py
+│   │   ├── cloudbeds_service.py      # Cloudbeds SDK wrapper
+│   │   ├── sync_service.py           # Background sync orchestration
+│   │   └── calendar_service.py       # iCal generation
+│   ├── repositories/                 # Data access layer
+│   │   ├── __init__.py
+│   │   ├── listing_repository.py
+│   │   ├── booking_repository.py
+│   │   └── custom_field_repository.py
+│   ├── middleware/                   # FastAPI middleware
+│   │   ├── __init__.py
+│   │   ├── auth.py                   # Home Assistant auth
+│   │   └── error_handler.py          # Global error handling
+│   ├── templates/                    # Jinja2 HTML templates
+│   │   ├── base.html
+│   │   ├── dashboard.html
+│   │   ├── listings.html
+│   │   ├── oauth.html
+│   │   └── custom_fields.html
+│   ├── static/                       # Static assets (minimal)
+│   │   └── styles.css
+│   ├── config.py                     # Configuration management
+│   ├── database.py                   # SQLAlchemy async engine
+│   └── main.py                       # FastAPI app entry point
+│
+├── tests/                            # Test suite
+│   ├── contract/                     # API contract tests
+│   ├── integration/                  # Integration tests
+│   └── unit/                         # Unit tests
+│
+├── alembic/                          # Database migrations
+│   ├── versions/
+│   └── env.py
+│
+├── homeassistant/                    # Home Assistant addon config
+│   ├── config.yaml
+│   ├── Dockerfile
+│   └── run.sh
+│
+├── pyproject.toml                    # uv project config
+├── Dockerfile                        # Standalone container
+└── .env.example                      # Environment template
 ```
 
-**Structure Decision**: [Document the selected structure and reference the real
-directories captured above]
+**Structure Decision**: Single web application structure with clear separation of concerns (API routes, models, services, repositories). The service layer pattern isolates business logic from FastAPI routes and database access, enabling independent testing of each layer. Minimal frontend (HTML templates + basic CSS) keeps the project simple per constitutional requirements.
+
+See [data-model.md](./data-model.md) for entity relationships and [contracts/api-specification.md](./contracts/api-specification.md) for API endpoints.
 
 ## Complexity Tracking
 
-> **Fill ONLY if Constitution Check has violations that must be justified**
+*No constitutional violations detected. This section intentionally left empty.*
 
-| Violation | Why Needed | Simpler Alternative Rejected Because |
-|-----------|------------|-------------------------------------|
-| [e.g., 4th project] | [current need] | [why 3 projects insufficient] |
-| [e.g., Repository pattern] | [specific problem] | [why direct DB access insufficient] |
+## Planning Artifacts
+
+This plan references the following detailed design documents:
+
+- **[research.md](./research.md)** - Technology selection rationale (FastAPI, cloudbeds-pms SDK, icalendar, SQLite)
+- **[data-model.md](./data-model.md)** - Database schema with 4 entities: OAuthCredential, Listing, CustomField, Booking
+- **[contracts/api-specification.md](./contracts/api-specification.md)** - REST API contracts for 15+ endpoints
+- **[quickstart.md](./quickstart.md)** - Standalone deployment guide for Podman testing
+- **[tasks.md](./tasks.md)** - 94 dependency-ordered implementation tasks across 7 phases
+
+## Implementation Phases
+
+**Phase 1: Setup** (Tasks T001-T008)
+- Project initialization, uv dependencies, Docker configuration
+
+**Phase 2: Foundational** (Tasks T009-T023) - **CRITICAL GATE**
+- Database models, migrations, service layer, FastAPI setup
+- **BLOCKS** all user story work until complete
+
+**Phase 3: User Story 1 - Basic iCal Export** (Tasks T024-T037) - **MVP**
+- Repositories, calendar generation, public iCal endpoint, sync service
+- **First deliverable increment**
+
+**Phase 4: User Story 2 - Admin Configuration** (Tasks T038-T055)
+- OAuth endpoints, listing management, custom fields, HTML UI
+- Independent of US1, can run in parallel after Phase 2
+
+**Phase 5: User Story 3 - Multi-Listing** (Tasks T056-T062)
+- Multiple listing support, slug generation, conflict detection
+- Requires US1 + US2 complete
+
+**Phase 6: User Story 4 - Real-Time Sync** (Tasks T063-T071)
+- Webhook handlers, on-demand refresh, sync status API
+- Requires US1 complete
+
+**Phase 7: Polish** (Tasks T072-T094)
+- Edge cases, security hardening, documentation, performance testing
+- Final productionization
+
+See [tasks.md](./tasks.md) for complete task breakdown with dependencies and parallel execution markers.
