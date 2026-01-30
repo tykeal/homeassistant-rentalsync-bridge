@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.api import health
+from src.api import health, ical
 from src.config import get_settings
 from src.middleware.auth import AuthenticationMiddleware
 from src.middleware.error_handler import ErrorHandlerMiddleware
@@ -69,6 +69,7 @@ def create_app() -> FastAPI:
 
     # Include routers
     app.include_router(health.router)
+    app.include_router(ical.router)
 
     return app
 

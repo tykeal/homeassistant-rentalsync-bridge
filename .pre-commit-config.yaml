@@ -63,7 +63,7 @@ repos:
           - --fail-under=100
           - --ignore-nested-functions
           - --ignore-nested-classes
-          - --ignore-regex=^(health|protected|ical|success|http_error|unhandled_error)$
+          - --ignore-regex=^(health|protected|ical|success|http_error|unhandled_error|override_get_db)$
         additional_dependencies:
           - setuptools
 
