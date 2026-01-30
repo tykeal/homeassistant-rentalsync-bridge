@@ -147,7 +147,7 @@ As a property manager, I want my exported iCal feeds to reflect booking changes 
 - **SC-002**: Generated iCal feeds successfully import into Airbnb, Google Calendar, and Apple Calendar without errors in 100% of test cases
 - **SC-003**: Calendar events contain accurate check-in and check-out dates matching Cloudbeds data with zero date discrepancies
 - **SC-004**: System supports at least 50 listings with up to 365 bookings per listing without performance degradation
-- **SC-005**: iCal feed updates reflect Cloudbeds changes within 5 minutes of booking creation or modification when using default polling interval
+- **SC-005**: iCal feed updates reflect Cloudbeds changes within 5-10 minutes of booking creation or modification when using default polling interval (configurable 1-60 minutes)
 - **SC-006**: Admin interface successfully authenticates via Home Assistant for 100% of authorized users
 - **SC-007**: Custom field configurations apply correctly to iCal output with zero configuration errors
 - **SC-008**: System uptime for iCal feed delivery exceeds 99.5% availability

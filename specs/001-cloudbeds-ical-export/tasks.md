@@ -116,7 +116,8 @@ Project uses single-project structure:
 - [ ] T052 [US2] Add OAuth configuration form and flow in admin UI
 - [ ] T053 [US2] Add listing management interface in admin UI with enable/disable toggles
 - [ ] T054 [US2] Add custom field selection interface in admin UI with add/remove functionality
-- [ ] T055 [US2] Implement ical_url_slug generation (slugify) in src/repositories/listing_repository.py
+- [ ] T055 [US2] Add sync settings interface in admin UI with polling interval dropdown (1-60 minutes, default 5)
+- [ ] T056 [US2] Implement ical_url_slug generation (slugify) in src/repositories/listing_repository.py
 
 **Checkpoint**: Admin portal fully functional - users can configure listings and customize fields via web UI
 
@@ -130,13 +131,13 @@ Project uses single-project structure:
 
 ### Implementation for User Story 3
 
-- [ ] T056 [P] [US3] Add listing count validation (max 50) in src/api/listings.py POST /enable endpoint
-- [ ] T057 [US3] Implement unique iCal URL generation with conflict detection in src/repositories/listing_repository.py
-- [ ] T058 [US3] Add listing-specific custom field retrieval in src/services/calendar_service.py
-- [ ] T059 [US3] Implement per-listing iCal generation with independent field configurations in src/services/calendar_service.py
-- [ ] T060 [US3] Add listing isolation validation in src/services/sync_service.py to prevent booking cross-contamination
-- [ ] T061 [US3] Update admin UI to display all listings with individual configuration controls
-- [ ] T062 [US3] Add bulk listing operations (enable/disable multiple) to admin UI
+- [ ] T057 [P] [US3] Add listing count validation (max 50) in src/api/listings.py POST /enable endpoint
+- [ ] T058 [US3] Implement unique iCal URL generation with conflict detection in src/repositories/listing_repository.py
+- [ ] T059 [US3] Add listing-specific custom field retrieval in src/services/calendar_service.py
+- [ ] T060 [US3] Implement per-listing iCal generation with independent field configurations in src/services/calendar_service.py
+- [ ] T061 [US3] Add listing isolation validation in src/services/sync_service.py to prevent booking cross-contamination
+- [ ] T062 [US3] Update admin UI to display all listings with individual configuration controls
+- [ ] T063 [US3] Add bulk listing operations (enable/disable multiple) to admin UI
 
 **Checkpoint**: Multi-listing support complete - each listing independently configurable and isolated
 
@@ -150,17 +151,17 @@ Project uses single-project structure:
 
 ### Implementation for User Story 4
 
-- [ ] T063 [P] [US4] Create POST /api/listings/{id}/sync endpoint in src/api/listings.py for manual sync trigger
-- [ ] T064 [US4] Implement sync status tracking with last_sync_at updates in src/services/sync_service.py
-- [ ] T065 [US4] Add sync error logging and last_sync_error field updates in src/services/sync_service.py
-- [ ] T066 [US4] Implement booking change detection (new, modified, cancelled) in src/services/sync_service.py
-- [ ] T067 [US4] Add cache invalidation on sync completion in src/services/sync_service.py
-- [ ] T068 [US4] Implement rate limit handling with exponential backoff in src/services/cloudbeds_service.py
-- [ ] T069 [US4] Add sync status display in admin UI showing last sync time and next sync time
-- [ ] T070 [US4] Add manual "Sync Now" button per listing in admin UI
-- [ ] T071 [P] [US4] Create GET /api/listings/{id}/bookings endpoint in src/api/bookings.py for debugging cached bookings
+- [ ] T064 [P] [US4] Create POST /api/listings/{id}/sync endpoint in src/api/listings.py for manual sync trigger
+- [ ] T065 [US4] Implement sync status tracking with last_sync_at updates in src/services/sync_service.py
+- [ ] T066 [US4] Add sync error logging and last_sync_error field updates in src/services/sync_service.py
+- [ ] T067 [US4] Implement booking change detection (new, modified, cancelled) in src/services/sync_service.py
+- [ ] T068 [US4] Add cache invalidation on sync completion in src/services/sync_service.py
+- [ ] T069 [US4] Implement rate limit handling with exponential backoff in src/services/cloudbeds_service.py
+- [ ] T070 [US4] Add sync status display in admin UI showing last sync time and next sync time
+- [ ] T071 [US4] Add manual "Sync Now" button per listing in admin UI
+- [ ] T072 [P] [US4] Create GET /api/listings/{id}/bookings endpoint in src/api/bookings.py for debugging cached bookings
 
-**Checkpoint**: Real-time sync complete - bookings reflect in iCal within 5 minutes
+**Checkpoint**: Real-time sync complete - bookings reflect in iCal within 5-10 minutes
 
 ---
 
@@ -168,14 +169,14 @@ Project uses single-project structure:
 
 **Purpose**: Ensure code quality and functionality through automated tests
 
-- [ ] T072 [P] Create tests/unit/test_calendar_service.py with unit tests for iCal generation
-- [ ] T073 [P] Create tests/unit/test_sync_service.py with unit tests for sync orchestration
-- [ ] T074 [P] Create tests/unit/test_cloudbeds_service.py with mocked SDK tests
-- [ ] T075 [P] Create tests/integration/test_api_oauth.py with OAuth endpoint integration tests
-- [ ] T076 [P] Create tests/integration/test_api_listings.py with listing endpoint integration tests
-- [ ] T077 [P] Create tests/integration/test_api_ical.py with iCal feed integration tests
-- [ ] T078 [P] Create tests/contract/test_ical_rfc5545.py with RFC 5545 compliance validation
-- [ ] T079 [P] Create tests/conftest.py with pytest fixtures for async database and test client
+- [ ] T073 [P] Create tests/unit/test_calendar_service.py with unit tests for iCal generation
+- [ ] T074 [P] Create tests/unit/test_sync_service.py with unit tests for sync orchestration
+- [ ] T075 [P] Create tests/unit/test_cloudbeds_service.py with mocked SDK tests
+- [ ] T076 [P] Create tests/integration/test_api_oauth.py with OAuth endpoint integration tests
+- [ ] T077 [P] Create tests/integration/test_api_listings.py with listing endpoint integration tests
+- [ ] T078 [P] Create tests/integration/test_api_ical.py with iCal feed integration tests
+- [ ] T079 [P] Create tests/contract/test_ical_rfc5545.py with RFC 5545 compliance validation
+- [ ] T080 [P] Create tests/conftest.py with pytest fixtures for async database and test client
 
 **Checkpoint**: All unit and integration tests passing
 
@@ -185,31 +186,31 @@ Project uses single-project structure:
 
 **Purpose**: Improvements that affect multiple user stories and production readiness
 
-- [ ] T080 [P] Implement data purge job for old bookings (90 days) in src/services/sync_service.py
-- [ ] T081 [P] Add cancelled booking purge (30 days) in src/services/sync_service.py
-- [ ] T082 [P] Schedule daily purge task at 02:00 UTC using APScheduler
-- [ ] T083 [P] Add comprehensive logging for all services with structured log format
-- [ ] T084 [P] Implement RFC 5545 validation for generated iCal in src/services/calendar_service.py
-- [ ] T085 [P] Add edge case handling for missing guest name (fallback to booking ID) in src/services/calendar_service.py
-- [ ] T086 [P] Add edge case handling for missing phone number (omit field) in src/services/calendar_service.py
-- [ ] T087 [P] Add edge case handling for invalid booking dates (skip and log) in src/services/sync_service.py
-- [ ] T088 [P] Add Cloudbeds API unavailability handling with cached response fallback in src/services/sync_service.py
-- [ ] T089 [P] Add guest name truncation for iCal summary field (255 char limit) in src/services/calendar_service.py
-- [ ] T090 [P] Add Home Assistant authentication service down handling in src/middleware/auth.py
-- [ ] T091 [P] Add timezone validation for IANA timezone identifiers in src/repositories/listing_repository.py with UTC fallback and warning log for invalid timezones
-- [ ] T092 [P] Create README.md with project overview and installation instructions
-- [ ] T093 [P] Create docs/homeassistant-addon-setup.md for addon installation guide
-- [ ] T094 [P] Create docs/api-usage.md with API examples
-- [ ] T095 [P] Add SPDX headers to all Python source files
-- [ ] T096 [P] Add SQLite WAL mode configuration in src/database.py for concurrent reads
-- [ ] T097 [P] Add database backup instructions in README.md
-- [ ] T098 Run quickstart.md validation with standalone Podman deployment
-- [ ] T099 Verify iCal import compatibility by importing generated feeds into Airbnb calendar sync, Google Calendar, AND Apple Calendar - document test results for each platform
-- [ ] T100 Performance testing with 50 listings × 365 bookings load scenario
-- [ ] T101 Security audit for PII leakage in iCal feeds per SC-010 classification (full phone, email, address, payment, IDs, private notes)
-- [ ] T102 [P] Implement last-write-wins with timestamp display in admin UI for concurrent configuration updates
-- [ ] T103 [P] Document HTTPS configuration requirements in docs/deployment.md (production HTTPS required, HTTP only behind TLS proxy)
-- [ ] T104 Final code review and cleanup
+- [ ] T081 [P] Implement data purge job for old bookings (90 days) in src/services/sync_service.py
+- [ ] T082 [P] Add cancelled booking purge (30 days) in src/services/sync_service.py
+- [ ] T083 [P] Schedule daily purge task at 02:00 UTC using APScheduler
+- [ ] T084 [P] Add comprehensive logging for all services with structured log format
+- [ ] T085 [P] Implement RFC 5545 validation for generated iCal in src/services/calendar_service.py
+- [ ] T086 [P] Add edge case handling for missing guest name (fallback to booking ID) in src/services/calendar_service.py
+- [ ] T087 [P] Add edge case handling for missing phone number (omit field) in src/services/calendar_service.py
+- [ ] T088 [P] Add edge case handling for invalid booking dates (skip and log) in src/services/sync_service.py
+- [ ] T089 [P] Add Cloudbeds API unavailability handling with cached response fallback in src/services/sync_service.py
+- [ ] T090 [P] Add guest name truncation for iCal summary field (255 char limit) in src/services/calendar_service.py
+- [ ] T091 [P] Add Home Assistant authentication service down handling in src/middleware/auth.py
+- [ ] T092 [P] Add timezone validation for IANA timezone identifiers in src/repositories/listing_repository.py with UTC fallback and warning log for invalid timezones
+- [ ] T093 [P] Create README.md with project overview and installation instructions
+- [ ] T094 [P] Create docs/homeassistant-addon-setup.md for addon installation guide
+- [ ] T095 [P] Create docs/api-usage.md with API examples
+- [ ] T096 [P] Add SPDX headers to all Python source files
+- [ ] T097 [P] Add SQLite WAL mode configuration in src/database.py for concurrent reads
+- [ ] T098 [P] Add database backup instructions in README.md
+- [ ] T099 Run quickstart.md validation with standalone Podman deployment
+- [ ] T100 Verify iCal import compatibility by importing generated feeds into Airbnb calendar sync, Google Calendar, AND Apple Calendar - document test results for each platform
+- [ ] T101 Performance testing with 50 listings × 365 bookings load scenario
+- [ ] T102 Security audit for PII leakage per SC-010 classification: verify no full phone numbers, email addresses, physical addresses, payment info, government IDs, or private booking notes appear in iCal feeds
+- [ ] T103 [P] Implement last-write-wins with timestamp display in admin UI for concurrent configuration updates
+- [ ] T104 [P] Document HTTPS configuration requirements in docs/deployment.md (production HTTPS required, HTTP only behind TLS proxy)
+- [ ] T105 Final code review and cleanup
 
 ---
 
