@@ -601,3 +601,65 @@ class TestSyncStatusTracking:
         # last_sync_error should be set
         assert listing.last_sync_error == "API rate limit exceeded"
         assert listing.last_sync_at is not None
+
+
+class TestBookingChangeDetection:
+    """Tests for booking change detection (T067)."""
+
+    @pytest.mark.asyncio
+    async def test_sync_returns_accurate_change_counts(
+        self, sync_session, test_credential
+    ):
+        """Test that sync returns accurate counts for all change types."""
+        listing = Listing(
+            cloudbeds_id="CHANGE_DETECT",
+            name="Change Detection Test",
+            ical_url_slug="change-detect",
+            enabled=True,
+            sync_enabled=True,
+        )
+        sync_session.add(listing)
+        await sync_session.commit()
+        await sync_session.refresh(listing)
+
+        # Create existing booking that will be cancelled
+        existing_booking = Booking(
+            listing_id=listing.id,
+            cloudbeds_booking_id="EXISTING_001",
+            guest_name="Existing Guest",
+            check_in_date=datetime(2026, 1, 1, tzinfo=UTC),
+            check_out_date=datetime(2026, 1, 5, tzinfo=UTC),
+            status="confirmed",
+        )
+        sync_session.add(existing_booking)
+        await sync_session.commit()
+
+        # Return one new booking and one that will update the existing
+        # (but the existing one has a different ID, so will be cancelled)
+        mock_reservations = [
+            {
+                "id": "NEW_001",
+                "guestName": "New Guest",
+                "startDate": "2026-02-01",
+                "endDate": "2026-02-05",
+                "status": "confirmed",
+            },
+        ]
+
+        with patch(
+            "src.services.sync_service.CloudbedsService"
+        ) as mock_cloudbeds_class:
+            mock_cloudbeds = AsyncMock()
+            mock_cloudbeds.get_reservations = AsyncMock(return_value=mock_reservations)
+            mock_cloudbeds_class.return_value = mock_cloudbeds
+            mock_cloudbeds_class.extract_phone_last4 = (
+                CloudbedsService.extract_phone_last4
+            )
+
+            service = SyncService(sync_session)
+            result = await service.sync_listing(listing, test_credential)
+
+        # Should have 1 new, 0 updated, 1 cancelled
+        assert result["inserted"] == 1
+        assert result["updated"] == 0
+        assert result["cancelled"] == 1
