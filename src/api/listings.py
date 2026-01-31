@@ -170,15 +170,19 @@ async def enable_listing(
                     detail=msg,
                 ) from e
             # Other integrity error (e.g., slug collision)
+            logger.error("Integrity error enabling listing %s: %s", listing_id, e)
+            msg = "Failed to enable listing due to a data conflict."
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to enable listing. Please try again.",
+                detail=msg,
             ) from e
         except Exception as e:
             await db.rollback()
+            logger.error("Unexpected error enabling listing %s: %s", listing_id, e)
+            msg = "Failed to enable listing due to a server error."
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to enable listing. Please try again.",
+                detail=msg,
             ) from e
 
         await db.refresh(listing)
@@ -384,9 +388,11 @@ async def bulk_update_listings(
     except Exception as e:
         await db.rollback()
         logger.error("Bulk update commit failed: %s", e)
+        failed_ids = [d["id"] for d in details if d.get("success")]
+        msg = f"Failed to save {len(failed_ids)} listing(s). Please retry."
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to save changes. Please try again.",
+            detail=msg,
         ) from e
 
     logger.info("Bulk update: %d updated, %d failed", updated, failed)

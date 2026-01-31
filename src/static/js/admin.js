@@ -186,14 +186,16 @@ function renderListings(listings) {
     const html = listings.map(listing => {
         // Coerce to number for consistent Set operations and data-attribute comparisons
         const id = Number(listing.id);
+        // Coerce to boolean string for safe attribute interpolation
+        const enabled = Boolean(listing.enabled);
 
         return `
-        <div class="listing-item${selectedListings.has(id) ? ' selected' : ''}" data-id="${id}" data-enabled="${listing.enabled}">
+        <div class="listing-item${selectedListings.has(id) ? ' selected' : ''}" data-id="${id}" data-enabled="${enabled}">
             <input type="checkbox" class="listing-checkbox" data-action="select"
                    ${selectedListings.has(id) ? 'checked' : ''}>
             <div class="listing-info">
                 <h3>${escapeHtml(listing.name)}</h3>
-                ${listing.enabled && listing.ical_url_slug
+                ${enabled && listing.ical_url_slug
                     ? `<span class="ical-url">/ical/${escapeHtml(listing.ical_url_slug)}.ics</span>`
                     : '<span class="ical-url">Not enabled</span>'}
             </div>
@@ -290,7 +292,11 @@ async function bulkEnable() {
                     selectedListings.delete(id);
                 }
             });
-            alert(`Enabled ${result.updated} listing(s). ${result.failed} failed.`);
+            const failedNames = result.details
+                .filter(d => !d.success)
+                .map(d => d.error || `Listing ${d.id}`)
+                .join(', ');
+            alert(`Enabled ${result.updated} listing(s). ${result.failed} failed: ${failedNames}`);
         } else {
             selectedListings.clear();
         }
@@ -327,7 +333,11 @@ async function bulkDisable() {
                     selectedListings.delete(id);
                 }
             });
-            alert(`Disabled ${result.updated} listing(s). ${result.failed} failed.`);
+            const failedNames = result.details
+                .filter(d => !d.success)
+                .map(d => d.error || `Listing ${d.id}`)
+                .join(', ');
+            alert(`Disabled ${result.updated} listing(s). ${result.failed} failed: ${failedNames}`);
         } else {
             selectedListings.clear();
         }
