@@ -169,16 +169,16 @@ Project uses single-project structure:
 
 **Purpose**: Ensure code quality and functionality through automated tests
 
-- [ ] T073 [P] Create tests/unit/test_calendar_service.py with unit tests for iCal generation
-- [ ] T074 [P] Create tests/unit/test_sync_service.py with unit tests for sync orchestration
-- [ ] T075 [P] Create tests/unit/test_cloudbeds_service.py with mocked SDK tests
-- [ ] T076 [P] Create tests/integration/test_api_oauth.py with OAuth endpoint integration tests
-- [ ] T077 [P] Create tests/integration/test_api_listings.py with listing endpoint integration tests
-- [ ] T078 [P] Create tests/integration/test_api_ical.py with iCal feed integration tests
-- [ ] T079 [P] Create tests/contract/test_ical_rfc5545.py with RFC 5545 compliance validation
-- [ ] T080 [P] Create tests/conftest.py with pytest fixtures for async database and test client
+- [x] T073 [P] Create tests/unit/test_calendar_service.py with unit tests for iCal generation
+- [x] T074 [P] Create tests/unit/test_sync_service.py with unit tests for sync orchestration
+- [x] T075 [P] Create tests/unit/test_cloudbeds_service.py with mocked SDK tests
+- [x] T076 [P] Create tests/integration/test_api_oauth.py with OAuth endpoint integration tests
+- [x] T077 [P] Create tests/integration/test_api_listings.py with listing endpoint integration tests
+- [x] T078 [P] Create tests/integration/test_api_ical.py with iCal feed integration tests
+- [x] T079 [P] Create tests/contract/test_ical_rfc5545.py with RFC 5545 compliance validation
+- [x] T080 [P] Create tests/conftest.py with pytest fixtures for async database and test client
 
-**Checkpoint**: All unit and integration tests passing
+**Checkpoint**: All unit and integration tests passing (244 tests)
 
 ---
 
