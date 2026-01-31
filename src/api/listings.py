@@ -146,7 +146,7 @@ async def enable_listing(
 
         # Generate slug if not set
         if not listing.ical_url_slug:
-            listing.ical_url_slug = await repo._generate_unique_slug(listing.name)
+            listing.ical_url_slug = await repo.generate_unique_slug(listing.name)
 
         await db.commit()
         await db.refresh(listing)
