@@ -327,3 +327,73 @@ class TestUpdateListing:
 
         assert response.status_code == 400
         assert "already in use" in response.json()["detail"]
+
+
+class TestListingsDisplayForAdminUI:
+    """Tests for admin UI listing display functionality."""
+
+    @pytest.mark.asyncio
+    async def test_list_returns_all_listings_with_enabled_state(
+        self, listings_app, listings_session
+    ):
+        """Test that listing endpoint returns all listings with enabled/disabled state.
+
+        T062: Verifies admin UI can display all listings regardless of enabled state.
+        """
+        # Create mix of enabled and disabled listings
+        listing1 = Listing(
+            cloudbeds_id="PROP_A",
+            name="Enabled Property A",
+            ical_url_slug="enabled-a",
+            enabled=True,
+            sync_enabled=True,
+            timezone="America/New_York",
+        )
+        listing2 = Listing(
+            cloudbeds_id="PROP_B",
+            name="Disabled Property B",
+            ical_url_slug="disabled-b",  # Required even when disabled
+            enabled=False,
+            sync_enabled=False,
+        )
+        listing3 = Listing(
+            cloudbeds_id="PROP_C",
+            name="Enabled Property C",
+            ical_url_slug="enabled-c",
+            enabled=True,
+            sync_enabled=True,
+            timezone="America/Los_Angeles",
+        )
+        listings_session.add_all([listing1, listing2, listing3])
+        await listings_session.commit()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=listings_app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/api/listings",
+                headers={"Authorization": "Bearer test"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Should return all 3 listings
+        assert data["total"] == 3
+        assert len(data["listings"]) == 3
+
+        # Verify each listing has enabled state for toggle display
+        enabled_states = {
+            item["cloudbeds_id"]: item["enabled"] for item in data["listings"]
+        }
+        assert enabled_states["PROP_A"] is True
+        assert enabled_states["PROP_B"] is False
+        assert enabled_states["PROP_C"] is True
+
+        # Verify iCal URLs are present for enabled listings
+        urls = {
+            item["cloudbeds_id"]: item.get("ical_url_slug") for item in data["listings"]
+        }
+        assert urls["PROP_A"] == "enabled-a"
+        assert urls["PROP_B"] == "disabled-b"  # Has slug but not enabled
+        assert urls["PROP_C"] == "enabled-c"
