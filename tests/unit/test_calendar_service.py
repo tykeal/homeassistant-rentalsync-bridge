@@ -257,3 +257,89 @@ class TestExtractPhoneLast4:
         result = CalendarService.extract_phone_last4("1234")
 
         assert result == "1234"
+
+
+class TestListingSpecificCustomFields:
+    """Tests for listing-specific custom field configurations."""
+
+    def test_different_listings_use_different_custom_fields(self):
+        """Test that each listing uses its own custom field configuration."""
+        service = CalendarService(cache=CalendarCache())
+
+        # Create two listings
+        listing1 = Listing(
+            id=1,
+            cloudbeds_id="PROP1",
+            name="Beach House",
+            enabled=True,
+            sync_enabled=True,
+            ical_url_slug="beach-house",
+            timezone="America/Los_Angeles",
+        )
+        listing2 = Listing(
+            id=2,
+            cloudbeds_id="PROP2",
+            name="Mountain Cabin",
+            enabled=True,
+            sync_enabled=True,
+            ical_url_slug="mountain-cabin",
+            timezone="America/Denver",
+        )
+
+        # Create bookings for each listing
+        booking1 = Booking(
+            id=1,
+            listing_id=1,
+            cloudbeds_booking_id="CB001",
+            guest_name="Guest One",
+            check_in_date=datetime(2024, 7, 1, tzinfo=UTC),
+            check_out_date=datetime(2024, 7, 5, tzinfo=UTC),
+            status="confirmed",
+            custom_data={"booking_notes": "Beach lover"},
+        )
+        booking2 = Booking(
+            id=2,
+            listing_id=2,
+            cloudbeds_booking_id="CB002",
+            guest_name="Guest Two",
+            check_in_date=datetime(2024, 8, 1, tzinfo=UTC),
+            check_out_date=datetime(2024, 8, 5, tzinfo=UTC),
+            status="confirmed",
+            custom_data={"special_requests": "Mountain view room"},
+        )
+
+        # Create different custom fields for each listing
+        fields1 = [
+            CustomField(
+                id=1,
+                listing_id=1,
+                field_name="booking_notes",
+                display_label="Notes",
+                enabled=True,
+                sort_order=0,
+            )
+        ]
+        fields2 = [
+            CustomField(
+                id=2,
+                listing_id=2,
+                field_name="special_requests",
+                display_label="Special Requests",
+                enabled=True,
+                sort_order=0,
+            )
+        ]
+
+        # Generate iCal for each
+        ical1 = service.generate_ical(listing1, [booking1], fields1)
+        service.invalidate_cache(listing1.ical_url_slug)
+
+        ical2 = service.generate_ical(listing2, [booking2], fields2)
+
+        # Verify listing 1 has its custom field
+        assert "Beach lover" in ical1
+        assert "Mountain view room" not in ical1
+
+        # Verify listing 2 has its custom field
+        assert "Mountain view room" in ical2
+        assert "Beach lover" not in ical2

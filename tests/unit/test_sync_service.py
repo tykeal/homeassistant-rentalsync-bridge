@@ -349,3 +349,136 @@ class TestParseDate:
         result = SyncService._parse_date("not-a-date")
 
         assert result is None
+
+
+class TestListingIsolation:
+    """Tests for listing isolation during sync."""
+
+    @pytest.mark.asyncio
+    async def test_sync_does_not_affect_other_listings(
+        self, sync_session, test_credential
+    ):
+        """Test that syncing one listing doesn't affect bookings from other listings."""
+        # Create two listings
+        listing1 = Listing(
+            cloudbeds_id="PROP_A",
+            name="Property A",
+            ical_url_slug="property-a",
+            enabled=True,
+            sync_enabled=True,
+            timezone="America/New_York",
+        )
+        listing2 = Listing(
+            cloudbeds_id="PROP_B",
+            name="Property B",
+            ical_url_slug="property-b",
+            enabled=True,
+            sync_enabled=True,
+            timezone="America/Los_Angeles",
+        )
+        sync_session.add_all([listing1, listing2])
+        await sync_session.commit()
+        await sync_session.refresh(listing1)
+        await sync_session.refresh(listing2)
+
+        # Create existing booking for listing2
+        booking2 = Booking(
+            listing_id=listing2.id,
+            cloudbeds_booking_id="RES_B001",
+            guest_name="Guest B",
+            check_in_date=datetime(2026, 4, 1, tzinfo=UTC),
+            check_out_date=datetime(2026, 4, 5, tzinfo=UTC),
+            status="confirmed",
+        )
+        sync_session.add(booking2)
+        await sync_session.commit()
+
+        # Sync listing1 with empty reservations
+        mock_reservations: list = []
+
+        with patch(
+            "src.services.sync_service.CloudbedsService"
+        ) as mock_cloudbeds_class:
+            mock_cloudbeds = AsyncMock()
+            mock_cloudbeds.get_reservations = AsyncMock(return_value=mock_reservations)
+            mock_cloudbeds_class.return_value = mock_cloudbeds
+            mock_cloudbeds_class.extract_phone_last4 = (
+                CloudbedsService.extract_phone_last4
+            )
+
+            service = SyncService(sync_session)
+            result = await service.sync_listing(listing1, test_credential)
+
+        # Listing1 sync shouldn't affect listing2's booking
+        assert result["cancelled"] == 0
+
+        # Verify listing2's booking is still confirmed
+        await sync_session.refresh(booking2)
+        assert booking2.status == "confirmed"
+
+    @pytest.mark.asyncio
+    async def test_sync_only_cancels_own_listing_bookings(
+        self, sync_session, test_credential
+    ):
+        """Test that sync only cancels bookings belonging to that listing."""
+        # Create two listings
+        listing1 = Listing(
+            cloudbeds_id="PROP_X",
+            name="Property X",
+            ical_url_slug="property-x",
+            enabled=True,
+            sync_enabled=True,
+        )
+        listing2 = Listing(
+            cloudbeds_id="PROP_Y",
+            name="Property Y",
+            ical_url_slug="property-y",
+            enabled=True,
+            sync_enabled=True,
+        )
+        sync_session.add_all([listing1, listing2])
+        await sync_session.commit()
+        await sync_session.refresh(listing1)
+        await sync_session.refresh(listing2)
+
+        # Create bookings for both listings
+        booking1 = Booking(
+            listing_id=listing1.id,
+            cloudbeds_booking_id="RES_X001",
+            guest_name="Guest X",
+            check_in_date=datetime(2026, 5, 1, tzinfo=UTC),
+            check_out_date=datetime(2026, 5, 5, tzinfo=UTC),
+            status="confirmed",
+        )
+        booking2 = Booking(
+            listing_id=listing2.id,
+            cloudbeds_booking_id="RES_Y001",
+            guest_name="Guest Y",
+            check_in_date=datetime(2026, 5, 10, tzinfo=UTC),
+            check_out_date=datetime(2026, 5, 15, tzinfo=UTC),
+            status="confirmed",
+        )
+        sync_session.add_all([booking1, booking2])
+        await sync_session.commit()
+
+        # Sync listing1 with empty (booking cancelled)
+        with patch(
+            "src.services.sync_service.CloudbedsService"
+        ) as mock_cloudbeds_class:
+            mock_cloudbeds = AsyncMock()
+            mock_cloudbeds.get_reservations = AsyncMock(return_value=[])
+            mock_cloudbeds_class.return_value = mock_cloudbeds
+            mock_cloudbeds_class.extract_phone_last4 = (
+                CloudbedsService.extract_phone_last4
+            )
+
+            service = SyncService(sync_session)
+            result = await service.sync_listing(listing1, test_credential)
+
+        # Only listing1's booking should be cancelled
+        assert result["cancelled"] == 1
+
+        await sync_session.refresh(booking1)
+        await sync_session.refresh(booking2)
+        assert booking1.status == "cancelled"
+        assert booking2.status == "confirmed"  # Unaffected

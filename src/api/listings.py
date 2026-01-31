@@ -7,10 +7,11 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database import get_db
-from src.repositories.listing_repository import ListingRepository
+from src.repositories.listing_repository import MAX_LISTINGS, ListingRepository
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,14 @@ async def enable_listing(
         )
 
     if not listing.enabled:
+        # Check if we've reached the maximum enabled listings
+        enabled_count = await repo.count_enabled()
+        if enabled_count >= MAX_LISTINGS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Maximum number of enabled listings ({MAX_LISTINGS}) reached",
+            )
+
         listing.enabled = True
         listing.sync_enabled = True
 
@@ -148,7 +157,34 @@ async def enable_listing(
         if not listing.ical_url_slug:
             listing.ical_url_slug = await repo.generate_unique_slug(listing.name)
 
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError as e:
+            await db.rollback()
+            # Check if this was a MAX_LISTINGS race condition vs other integrity error
+            enabled_count = await repo.count_enabled()
+            if enabled_count >= MAX_LISTINGS:
+                msg = f"Maximum number of enabled listings ({MAX_LISTINGS}) reached"
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=msg,
+                ) from e
+            # Other integrity error (e.g., slug collision)
+            logger.error("Integrity error enabling listing %s: %s", listing_id, e)
+            msg = "Failed to enable listing due to a data conflict."
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=msg,
+            ) from e
+        except Exception as e:
+            await db.rollback()
+            logger.error("Unexpected error enabling listing %s: %s", listing_id, e)
+            msg = "Failed to enable listing due to a server error."
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=msg,
+            ) from e
+
         await db.refresh(listing)
         logger.info("Enabled listing %s", listing.cloudbeds_id)
 
@@ -211,3 +247,165 @@ async def update_listing(
     logger.info("Updated listing %s", listing.cloudbeds_id)
 
     return _listing_to_response(listing)
+
+
+class BulkListingRequest(BaseModel):
+    """Request model for bulk listing operations."""
+
+    listing_ids: list[int] = Field(description="List of listing IDs to update")
+    enabled: bool = Field(description="Enable or disable listings")
+
+
+class BulkListingResponse(BaseModel):
+    """Response model for bulk listing operation."""
+
+    updated: int = Field(description="Number of listings updated")
+    failed: int = Field(description="Number of listings that failed to update")
+    details: list[dict[str, Any]] = Field(description="Details of each operation")
+
+
+async def _process_bulk_listing(
+    listing: Any,
+    enabled: bool,
+    repo: ListingRepository,
+    generated_slugs: set[str],
+    existing_slugs: set[str],
+) -> tuple[bool, dict[str, Any]]:
+    """Process a single listing in a bulk operation.
+
+    Args:
+        listing: Listing to process.
+        enabled: Target enabled state.
+        repo: Listing repository.
+        generated_slugs: Set of slugs generated in this transaction.
+        existing_slugs: Pre-fetched set of all existing slugs in database.
+
+    Returns:
+        Tuple of (changed, detail_dict).
+    """
+    changed = False
+    if enabled and not listing.enabled:
+        # Enable listing - generate slug if needed
+        if not listing.ical_url_slug:
+            # Regenerate slug until unique across both transaction and database
+            # Uses same random suffix pattern as single-listing flow
+            max_attempts = 100
+            slug = None
+            for _ in range(max_attempts):
+                candidate = await repo.generate_unique_slug(listing.name)
+                if candidate not in generated_slugs and candidate not in existing_slugs:
+                    slug = candidate
+                    break
+            if slug is None:
+                msg = f"Failed to generate unique slug after {max_attempts} attempts"
+                raise ValueError(msg)
+            generated_slugs.add(slug)
+            listing.ical_url_slug = slug
+        listing.enabled = True
+        listing.sync_enabled = True
+        changed = True
+    elif not enabled and listing.enabled:
+        # Disable listing
+        listing.enabled = False
+        listing.sync_enabled = False
+        changed = True
+
+    return changed, {
+        "id": listing.id,
+        "success": True,
+        "enabled": listing.enabled,
+        "changed": changed,
+    }
+
+
+@router.post(
+    "/bulk",
+    response_model=BulkListingResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        400: {"description": "Bad request"},
+    },
+)
+async def bulk_update_listings(
+    request: BulkListingRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, Any]:
+    """Bulk enable or disable multiple listings.
+
+    Args:
+        request: Bulk update data with listing IDs and enabled state.
+        db: Database session.
+
+    Returns:
+        Summary of bulk operation results.
+    """
+    repo = ListingRepository(db)
+    updated = 0
+    failed = 0
+    details: list[dict[str, Any]] = []
+
+    # Fetch all requested listings in a single query
+    listings_map = await repo.get_by_ids(request.listing_ids)
+
+    # Check max listings constraint if enabling
+    if request.enabled:
+        current_enabled = await repo.count_enabled()
+
+        # Count how many of the requested listings are already enabled
+        already_enabled = sum(
+            1
+            for lid in request.listing_ids
+            if lid in listings_map and listings_map[lid].enabled
+        )
+
+        new_enabled = len(request.listing_ids) - already_enabled
+        if current_enabled + new_enabled > MAX_LISTINGS:
+            msg = f"Cannot enable: would exceed maximum of {MAX_LISTINGS} listings"
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=msg,
+            )
+
+    # Track generated slugs within this transaction to detect collisions
+    # Pre-fetch all existing slugs to avoid N+1 queries during collision resolution
+    generated_slugs: set[str] = set()
+    existing_slugs = await repo.get_all_slugs() if request.enabled else set()
+
+    for listing_id in request.listing_ids:
+        listing = listings_map.get(listing_id)
+        if not listing:
+            failed += 1
+            details.append(
+                {"id": listing_id, "success": False, "error": "Listing not found"}
+            )
+            continue
+
+        try:
+            changed, detail = await _process_bulk_listing(
+                listing, request.enabled, repo, generated_slugs, existing_slugs
+            )
+            if changed:
+                updated += 1
+            details.append(detail)
+        except Exception as e:
+            failed += 1
+            details.append({"id": listing_id, "success": False, "error": str(e)})
+
+    try:
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        logger.error("Bulk update commit failed: %s", e)
+        msg = f"Failed to save {updated} listing(s). Please retry."
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=msg,
+        ) from e
+
+    logger.info("Bulk update: %d updated, %d failed", updated, failed)
+
+    return {
+        "updated": updated,
+        "failed": failed,
+        "details": details,
+    }

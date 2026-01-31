@@ -6,7 +6,7 @@ import secrets
 import string
 from collections.abc import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.listing import Listing
@@ -113,6 +113,46 @@ class ListingRepository:
         """
         result = await self._session.execute(select(Listing))
         return len(result.scalars().all())
+
+    async def count_enabled(self) -> int:
+        """Count enabled listings.
+
+        Returns:
+            Number of enabled listings.
+        """
+        result = await self._session.execute(
+            select(func.count()).select_from(Listing).where(Listing.enabled.is_(True))
+        )
+        return result.scalar() or 0
+
+    async def get_by_ids(self, listing_ids: list[int]) -> dict[int, Listing]:
+        """Get multiple listings by their IDs in a single query.
+
+        Args:
+            listing_ids: List of listing IDs to fetch.
+
+        Returns:
+            Dictionary mapping listing ID to Listing object.
+        """
+        if not listing_ids:
+            return {}
+
+        result = await self._session.execute(
+            select(Listing).where(Listing.id.in_(listing_ids))
+        )
+        listings = result.scalars().all()
+        return {listing.id: listing for listing in listings}
+
+    async def get_all_slugs(self) -> set[str]:
+        """Get all existing iCal URL slugs.
+
+        Returns:
+            Set of all non-null slugs in the database.
+        """
+        result = await self._session.execute(
+            select(Listing.ical_url_slug).where(Listing.ical_url_slug.isnot(None))
+        )
+        return {slug for (slug,) in result.all() if slug}
 
     async def create(self, listing: Listing) -> Listing:
         """Create a new listing.

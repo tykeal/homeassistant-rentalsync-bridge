@@ -101,6 +101,11 @@ SPDX-License-Identifier: Apache-2.0
         <section id="listings-section" class="card">
             <h2>Properties</h2>
             <p class="description">Enable iCal export for your Cloudbeds properties.</p>
+            <div class="bulk-actions">
+                <button id="bulk-enable-btn" class="btn secondary" disabled>Enable Selected</button>
+                <button id="bulk-disable-btn" class="btn secondary" disabled>Disable Selected</button>
+                <span id="selected-count" class="selected-info">0 selected</span>
+            </div>
             <div id="listings-container">
                 <p class="loading">Loading listings...</p>
             </div>
