@@ -267,6 +267,30 @@ function updateBulkButtons() {
     elements.bulkDisableBtn.disabled = count === 0;
 }
 
+function handleBulkResult(result, action) {
+    // Handle partial failures - keep failed items selected
+    if (result.failed > 0) {
+        const failedIds = new Set(
+            result.details
+                .filter(d => !d.success)
+                .map(d => Number(d.id))
+        );
+        // Keep only failed items selected for retry
+        selectedListings.forEach(id => {
+            if (!failedIds.has(id)) {
+                selectedListings.delete(id);
+            }
+        });
+        const failedNames = result.details
+            .filter(d => !d.success)
+            .map(d => d.error || `Listing ${d.id}`)
+            .join(', ');
+        alert(`${action} ${result.updated} listing(s). ${result.failed} failed: ${failedNames}`);
+    } else {
+        selectedListings.clear();
+    }
+}
+
 async function bulkEnable() {
     if (selectedListings.size === 0) return;
 
@@ -279,28 +303,7 @@ async function bulkEnable() {
             })
         });
 
-        // Handle partial failures - keep failed items selected
-        if (result.failed > 0) {
-            const failedIds = new Set(
-                result.details
-                    .filter(d => !d.success)
-                    .map(d => Number(d.id))
-            );
-            // Keep only failed items selected for retry
-            selectedListings.forEach(id => {
-                if (!failedIds.has(id)) {
-                    selectedListings.delete(id);
-                }
-            });
-            const failedNames = result.details
-                .filter(d => !d.success)
-                .map(d => d.error || `Listing ${d.id}`)
-                .join(', ');
-            alert(`Enabled ${result.updated} listing(s). ${result.failed} failed: ${failedNames}`);
-        } else {
-            selectedListings.clear();
-        }
-
+        handleBulkResult(result, 'Enabled');
         await loadListings();
         await loadStatus();
     } catch (error) {
@@ -320,28 +323,7 @@ async function bulkDisable() {
             })
         });
 
-        // Handle partial failures - keep failed items selected
-        if (result.failed > 0) {
-            const failedIds = new Set(
-                result.details
-                    .filter(d => !d.success)
-                    .map(d => Number(d.id))
-            );
-            // Keep only failed items selected for retry
-            selectedListings.forEach(id => {
-                if (!failedIds.has(id)) {
-                    selectedListings.delete(id);
-                }
-            });
-            const failedNames = result.details
-                .filter(d => !d.success)
-                .map(d => d.error || `Listing ${d.id}`)
-                .join(', ');
-            alert(`Disabled ${result.updated} listing(s). ${result.failed} failed: ${failedNames}`);
-        } else {
-            selectedListings.clear();
-        }
-
+        handleBulkResult(result, 'Disabled');
         await loadListings();
         await loadStatus();
     } catch (error) {
