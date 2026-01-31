@@ -185,16 +185,22 @@ function renderListings(listings) {
 
     let invalidCount = 0;
     const html = listings.map(listing => {
-        // Validate listing.id is a number to prevent injection
-        const id = Number.isInteger(listing.id) ? listing.id : parseInt(listing.id, 10);
-        if (isNaN(id)) {
-            console.error('Invalid listing ID:', listing.id);
+        // Validate listing.id is a positive integer to prevent injection
+        let id;
+        if (Number.isInteger(listing.id) && listing.id > 0) {
+            id = listing.id;
+        } else if (typeof listing.id === 'string' && /^\d+$/.test(listing.id)) {
+            // Only parse strings that are purely numeric (no letters, symbols, etc.)
+            id = parseInt(listing.id, 10);
+        } else {
+            // Invalid ID - log details but don't expose raw value to UI
+            console.error('Invalid listing ID type or format:', typeof listing.id);
             invalidCount++;
             return `
             <div class="listing-item error-item">
                 <div class="listing-info">
                     <h3>⚠️ Invalid Listing</h3>
-                    <span class="ical-url error">Data error: invalid ID "${escapeHtml(String(listing.id))}"</span>
+                    <span class="ical-url error">Data error: listing has invalid identifier</span>
                 </div>
             </div>`;
         }
