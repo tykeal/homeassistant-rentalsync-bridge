@@ -81,8 +81,8 @@ async def get_ical_feed(
             detail="Listing not found",
         )
 
-    # Fetch bookings and custom fields
-    bookings = await booking_repo.get_for_listing(listing.id)
+    # Fetch confirmed bookings and custom fields
+    bookings = await booking_repo.get_confirmed_for_listing(listing.id)
     custom_fields = await custom_field_repo.get_for_listing(listing.id)
 
     # Filter only enabled custom fields
