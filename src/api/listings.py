@@ -396,8 +396,7 @@ async def bulk_update_listings(
     except Exception as e:
         await db.rollback()
         logger.error("Bulk update commit failed: %s", e)
-        failed_ids = [d["id"] for d in details if not d.get("success")]
-        msg = f"Failed to save {len(failed_ids)} listing(s). Please retry."
+        msg = f"Failed to save {updated} listing(s). Please retry."
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=msg,

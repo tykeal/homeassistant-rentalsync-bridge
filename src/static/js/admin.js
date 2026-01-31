@@ -186,7 +186,7 @@ function renderListings(listings) {
     const html = listings.map(listing => {
         // Coerce to number for consistent Set operations and data-attribute comparisons
         const id = Number(listing.id);
-        // Coerce to boolean string for safe attribute interpolation
+        // Coerce to boolean for safe attribute interpolation
         const enabled = Boolean(listing.enabled);
 
         return `
