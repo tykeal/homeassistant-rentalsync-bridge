@@ -81,15 +81,14 @@ async def get_ical_feed(
             detail="Listing not found",
         )
 
-    # Fetch confirmed bookings and custom fields
+    # Fetch confirmed bookings and enabled custom fields for this listing
     bookings = await booking_repo.get_confirmed_for_listing(listing.id)
-    custom_fields = await custom_field_repo.get_for_listing(listing.id)
+    custom_fields = await custom_field_repo.get_enabled_for_listing(listing.id)
 
-    # Filter only enabled custom fields
-    enabled_fields = [cf for cf in custom_fields if cf.enabled]
-
-    # Generate iCal
-    ical_content = calendar_service.generate_ical(listing, bookings, enabled_fields)
+    # Generate iCal with listing-specific configuration
+    ical_content = calendar_service.generate_ical(
+        listing, bookings, list(custom_fields)
+    )
 
     return Response(
         content=ical_content,

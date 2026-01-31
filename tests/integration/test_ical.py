@@ -253,3 +253,98 @@ async def test_get_ical_empty_bookings(test_app, test_session):
     assert "BEGIN:VCALENDAR" in response.text
     # Should have no VEVENT blocks
     assert "BEGIN:VEVENT" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_per_listing_ical_uses_independent_custom_fields(test_app, test_session):
+    """Test that each listing's iCal uses its own custom field configuration."""
+    # Create two listings
+    listing1 = Listing(
+        cloudbeds_id="prop_001",
+        name="Beach House",
+        ical_url_slug="beach-house-ical",
+        enabled=True,
+        sync_enabled=True,
+        timezone="America/Los_Angeles",
+    )
+    listing2 = Listing(
+        cloudbeds_id="prop_002",
+        name="Mountain Cabin",
+        ical_url_slug="mountain-cabin-ical",
+        enabled=True,
+        sync_enabled=True,
+        timezone="America/Denver",
+    )
+    test_session.add_all([listing1, listing2])
+    await test_session.commit()
+    await test_session.refresh(listing1)
+    await test_session.refresh(listing2)
+
+    # Create different custom fields for each listing
+    field1 = CustomField(
+        listing_id=listing1.id,
+        field_name="booking_notes",
+        display_label="Beach Notes",
+        enabled=True,
+        sort_order=0,
+    )
+    field2 = CustomField(
+        listing_id=listing2.id,
+        field_name="special_requests",
+        display_label="Mountain Requests",
+        enabled=True,
+        sort_order=0,
+    )
+    test_session.add_all([field1, field2])
+
+    # Create bookings with different custom data
+    booking1 = Booking(
+        listing_id=listing1.id,
+        cloudbeds_booking_id="CB001",
+        guest_name="Beach Guest",
+        check_in_date=datetime(2026, 7, 1, tzinfo=UTC),
+        check_out_date=datetime(2026, 7, 5, tzinfo=UTC),
+        status="confirmed",
+        custom_data={"booking_notes": "Loves the ocean view"},
+    )
+    booking2 = Booking(
+        listing_id=listing2.id,
+        cloudbeds_booking_id="CB002",
+        guest_name="Mountain Guest",
+        check_in_date=datetime(2026, 8, 1, tzinfo=UTC),
+        check_out_date=datetime(2026, 8, 5, tzinfo=UTC),
+        status="confirmed",
+        custom_data={"special_requests": "Wants hiking trail map"},
+    )
+    test_session.add_all([booking1, booking2])
+    await test_session.commit()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=test_app), base_url="http://test"
+    ) as client:
+        # Get iCal for listing 1
+        response1 = await client.get(
+            "/ical/beach-house-ical.ics",
+            headers={"Authorization": "Bearer test_token"},
+        )
+        # Get iCal for listing 2
+        response2 = await client.get(
+            "/ical/mountain-cabin-ical.ics",
+            headers={"Authorization": "Bearer test_token"},
+        )
+
+    # Verify listing 1 has its custom field data
+    assert response1.status_code == 200
+    assert "Beach Guest" in response1.text
+    assert "Loves the ocean view" in response1.text
+    # Listing 1 should NOT have listing 2's data
+    assert "Mountain Guest" not in response1.text
+    assert "Wants hiking trail map" not in response1.text
+
+    # Verify listing 2 has its custom field data
+    assert response2.status_code == 200
+    assert "Mountain Guest" in response2.text
+    assert "Wants hiking trail map" in response2.text
+    # Listing 2 should NOT have listing 1's data
+    assert "Beach Guest" not in response2.text
+    assert "Loves the ocean view" not in response2.text
