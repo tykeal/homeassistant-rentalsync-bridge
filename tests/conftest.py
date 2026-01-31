@@ -9,23 +9,40 @@ from typing import Any
 
 import pytest
 from cryptography.fernet import Fernet
-from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from src.database import Base
+
+
+# Set environment variables BEFORE any src imports
+# This must happen at module load time
+def _setup_env() -> None:
+    """Set up test environment variables at module load."""
+    if "ENCRYPTION_KEY" not in os.environ:
+        test_key = Fernet.generate_key().decode()
+        os.environ["ENCRYPTION_KEY"] = test_key
+    if "DATABASE_URL" not in os.environ:
+        os.environ["DATABASE_URL"] = "sqlite:///./test.db"
+    if "STANDALONE_MODE" not in os.environ:
+        os.environ["STANDALONE_MODE"] = "true"
+    if "CLOUDBEDS_CLIENT_ID" not in os.environ:
+        os.environ["CLOUDBEDS_CLIENT_ID"] = "test_client_id"
+    if "CLOUDBEDS_CLIENT_SECRET" not in os.environ:
+        os.environ["CLOUDBEDS_CLIENT_SECRET"] = "test_client_secret"
+    if "LOG_LEVEL" not in os.environ:
+        os.environ["LOG_LEVEL"] = "DEBUG"
+
+
+_setup_env()
+
+# Now safe to import from src
+from fastapi import FastAPI  # noqa: E402
+from src.database import Base  # noqa: E402
 
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_environment():
     """Set up test environment variables."""
-    # Generate a valid Fernet key for testing
-    test_key = Fernet.generate_key().decode()
-    os.environ["ENCRYPTION_KEY"] = test_key
-    os.environ["DATABASE_URL"] = "sqlite:///./test.db"
-    os.environ["STANDALONE_MODE"] = "true"
-    os.environ["CLOUDBEDS_CLIENT_ID"] = "test_client_id"
-    os.environ["CLOUDBEDS_CLIENT_SECRET"] = "test_client_secret"
-    os.environ["LOG_LEVEL"] = "DEBUG"
+    # Already set by _setup_env(), just yield and cleanup
     yield
     # Cleanup
     test_db_path = Path("test.db")
@@ -106,6 +123,6 @@ def sample_booking_data() -> dict[str, Any]:
 
 
 @pytest.fixture
-def encryption_key() -> str:
+def encryption_key(setup_test_environment) -> str:
     """Get test encryption key."""
     return os.environ["ENCRYPTION_KEY"]
