@@ -284,7 +284,7 @@ async function bulkEnable() {
             const failedIds = new Set(
                 result.details
                     .filter(d => !d.success)
-                    .map(d => d.id)
+                    .map(d => Number(d.id))
             );
             // Keep only failed items selected for retry
             selectedListings.forEach(id => {
@@ -325,7 +325,7 @@ async function bulkDisable() {
             const failedIds = new Set(
                 result.details
                     .filter(d => !d.success)
-                    .map(d => d.id)
+                    .map(d => Number(d.id))
             );
             // Keep only failed items selected for retry
             selectedListings.forEach(id => {

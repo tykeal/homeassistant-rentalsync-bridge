@@ -291,10 +291,14 @@ async def _process_bulk_listing(
             # Ensure slug doesn't collide with others in this transaction
             # or with existing slugs (pre-fetched to avoid N+1 queries)
             base_slug = slug
-            counter = 1
-            while slug in generated_slugs or slug in existing_slugs:
+            max_attempts = 100
+            for counter in range(1, max_attempts + 1):
+                if slug not in generated_slugs and slug not in existing_slugs:
+                    break
                 slug = f"{base_slug}-{counter}"
-                counter += 1
+            else:
+                # Fallback: regenerate with new random suffix
+                slug = await repo.generate_unique_slug(listing.name)
             generated_slugs.add(slug)
             listing.ical_url_slug = slug
         listing.enabled = True
