@@ -172,7 +172,7 @@ class TestBookingRepository:
 
     @pytest.mark.asyncio
     async def test_get_confirmed_for_listing(self, async_session):
-        """Test getting confirmed bookings."""
+        """Test getting active bookings (confirmed, checked_in, checked_out)."""
         listing_repo = ListingRepository(async_session)
         listing = await listing_repo.create(
             Listing(
@@ -196,7 +196,29 @@ class TestBookingRepository:
                 status="confirmed",
             )
         )
-        # Create cancelled booking
+        # Create checked_in booking
+        await repo.create(
+            Booking(
+                listing_id=listing.id,
+                cloudbeds_booking_id="BK_CHECKIN",
+                guest_name="Checked In Guest",
+                check_in_date=datetime.now(UTC) - timedelta(days=1),
+                check_out_date=datetime.now(UTC) + timedelta(days=3),
+                status="checked_in",
+            )
+        )
+        # Create checked_out booking (recent)
+        await repo.create(
+            Booking(
+                listing_id=listing.id,
+                cloudbeds_booking_id="BK_CHECKOUT",
+                guest_name="Checked Out Guest",
+                check_in_date=datetime.now(UTC) - timedelta(days=5),
+                check_out_date=datetime.now(UTC) - timedelta(days=1),
+                status="checked_out",
+            )
+        )
+        # Create cancelled booking (should be excluded)
         await repo.create(
             Booking(
                 listing_id=listing.id,
@@ -210,8 +232,12 @@ class TestBookingRepository:
 
         confirmed = await repo.get_confirmed_for_listing(listing.id)
 
-        assert len(confirmed) == 1
-        assert confirmed[0].guest_name == "Confirmed Guest"
+        assert len(confirmed) == 3
+        guest_names = {b.guest_name for b in confirmed}
+        assert "Confirmed Guest" in guest_names
+        assert "Checked In Guest" in guest_names
+        assert "Checked Out Guest" in guest_names
+        assert "Cancelled Guest" not in guest_names
 
     @pytest.mark.asyncio
     async def test_upsert_insert(self, async_session):

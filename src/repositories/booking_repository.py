@@ -94,7 +94,7 @@ class BookingRepository:
             select(Booking)
             .where(
                 Booking.listing_id == listing_id,
-                Booking.status == "confirmed",
+                Booking.status.in_(["confirmed", "checked_in", "checked_out"]),
                 Booking.check_out_date >= cutoff_date,
             )
             .order_by(Booking.check_in_date)

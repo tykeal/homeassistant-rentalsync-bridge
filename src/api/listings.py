@@ -7,11 +7,18 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database import get_db
+from src.models.booking import Booking
+from src.models.listing import Listing
+from src.models.oauth_credential import OAuthCredential
 from src.repositories.listing_repository import MAX_LISTINGS, ListingRepository
+from src.services.calendar_service import get_calendar_cache
+from src.services.cloudbeds_service import CloudbedsService, CloudbedsServiceError
+from src.services.sync_service import SyncService, SyncServiceError
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +35,8 @@ class ListingResponse(BaseModel):
     sync_enabled: bool = Field(description="Whether sync is enabled")
     ical_url_slug: str | None = Field(default=None, description="iCal URL slug")
     timezone: str | None = Field(default=None, description="Property timezone")
+    last_sync_at: str | None = Field(default=None, description="Last sync timestamp")
+    last_sync_error: str | None = Field(default=None, description="Last sync error")
 
 
 class ListingsResponse(BaseModel):
@@ -55,6 +64,36 @@ class EnableResponse(BaseModel):
     message: str = Field(description="Status message")
 
 
+class BookingResponse(BaseModel):
+    """Response model for a booking."""
+
+    id: int = Field(description="Booking ID")
+    cloudbeds_booking_id: str = Field(description="Cloudbeds booking ID")
+    guest_name: str | None = Field(default=None, description="Guest name")
+    guest_phone_last4: str | None = Field(
+        default=None, description="Last 4 phone digits"
+    )
+    check_in_date: str = Field(description="Check-in date (ISO format)")
+    check_out_date: str = Field(description="Check-out date (ISO format)")
+    status: str = Field(description="Booking status")
+
+
+class BookingsResponse(BaseModel):
+    """Response model for bookings collection."""
+
+    bookings: list[BookingResponse] = Field(description="List of bookings")
+    total: int = Field(description="Total count")
+
+
+class SyncPropertiesResponse(BaseModel):
+    """Response model for sync properties operation."""
+
+    success: bool = Field(description="Whether operation succeeded")
+    created: int = Field(description="Number of new listings created")
+    updated: int = Field(description="Number of existing listings updated")
+    message: str = Field(description="Status message")
+
+
 def _listing_to_response(listing: Any) -> dict[str, Any]:
     """Convert listing model to response dict."""
     return {
@@ -65,6 +104,10 @@ def _listing_to_response(listing: Any) -> dict[str, Any]:
         "sync_enabled": listing.sync_enabled,
         "ical_url_slug": listing.ical_url_slug,
         "timezone": listing.timezone,
+        "last_sync_at": (
+            listing.last_sync_at.isoformat() if listing.last_sync_at else None
+        ),
+        "last_sync_error": listing.last_sync_error,
     }
 
 
@@ -83,6 +126,97 @@ async def list_listings(
     return {
         "listings": [_listing_to_response(listing) for listing in listings],
         "total": len(listings),
+    }
+
+
+@router.post("/sync-properties", response_model=SyncPropertiesResponse)
+async def sync_properties(
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, Any]:
+    """Sync properties from Cloudbeds to the database.
+
+    Fetches all properties from Cloudbeds API and creates or updates
+    corresponding listings in the database. This populates the listings
+    that can then be enabled for iCal export.
+
+    Returns:
+        Summary of created and updated listings.
+
+    Raises:
+        HTTPException: 503 if authentication not configured or API fails.
+    """
+    # Get credentials
+    result = await db.execute(select(OAuthCredential).limit(1))
+    credential = result.scalar_one_or_none()
+
+    # Check for either access_token or api_key
+    if not credential or (not credential.access_token and not credential.api_key):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cloudbeds credentials not configured. Configure OAuth or API key.",
+        )
+
+    # Fetch properties from Cloudbeds
+    try:
+        service = CloudbedsService(
+            access_token=credential.access_token,
+            api_key=credential.api_key,
+        )
+        properties = await service.get_properties()
+    except CloudbedsServiceError as e:
+        logger.error("Failed to fetch properties from Cloudbeds: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to fetch properties from Cloudbeds: {e}",
+        ) from e
+
+    if not properties:
+        return {
+            "success": True,
+            "created": 0,
+            "updated": 0,
+            "message": "No properties found in Cloudbeds account",
+        }
+
+    # Create or update listings
+    repo = ListingRepository(db)
+    created = 0
+    updated = 0
+
+    for prop in properties:
+        cloudbeds_id = str(prop.get("propertyID", ""))
+        if not cloudbeds_id:
+            continue
+
+        existing = await repo.get_by_cloudbeds_id(cloudbeds_id)
+
+        if existing:
+            # Update existing listing
+            existing.name = prop.get("propertyName", existing.name)
+            existing.timezone = prop.get("propertyTimezone", existing.timezone)
+            updated += 1
+        else:
+            # Create new listing with generated slug
+            name = prop.get("propertyName", f"Property {cloudbeds_id}")
+            slug = await repo.generate_unique_slug(name)
+            new_listing = Listing(
+                cloudbeds_id=cloudbeds_id,
+                name=name,
+                ical_url_slug=slug,
+                timezone=prop.get("propertyTimezone", "UTC"),
+                enabled=False,
+                sync_enabled=False,
+            )
+            db.add(new_listing)
+            created += 1
+
+    await db.commit()
+
+    return {
+        "success": True,
+        "created": created,
+        "updated": updated,
+        "message": f"Synced {created + updated} properties from Cloudbeds",
     }
 
 
@@ -408,4 +542,130 @@ async def bulk_update_listings(
         "updated": updated,
         "failed": failed,
         "details": details,
+    }
+
+
+class SyncResponse(BaseModel):
+    """Response model for sync operation."""
+
+    success: bool = Field(description="Whether sync succeeded")
+    inserted: int = Field(description="Number of new bookings")
+    updated: int = Field(description="Number of updated bookings")
+    cancelled: int = Field(description="Number of cancelled bookings")
+    message: str = Field(description="Status message")
+
+
+@router.post(
+    "/{listing_id}/sync",
+    response_model=SyncResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        404: {"description": "Listing not found"},
+        503: {"description": "Sync failed"},
+    },
+)
+async def sync_listing(
+    listing_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, Any]:
+    """Manually trigger sync for a listing.
+
+    Args:
+        listing_id: Listing ID.
+        db: Database session.
+
+    Returns:
+        Sync results with booking counts.
+    """
+    repo = ListingRepository(db)
+    listing = await repo.get_by_id(listing_id)
+
+    if not listing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Listing not found",
+        )
+
+    # Get OAuth credentials
+    result = await db.execute(select(OAuthCredential).limit(1))
+    credential = result.scalar_one_or_none()
+
+    if not credential or (not credential.access_token and not credential.api_key):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cloudbeds credentials not configured. Configure OAuth or API key.",
+        )
+
+    # Run sync
+    try:
+        sync_service = SyncService(db, get_calendar_cache())
+        counts = await sync_service.sync_listing(listing, credential)
+
+        return {
+            "success": True,
+            "inserted": counts["inserted"],
+            "updated": counts["updated"],
+            "cancelled": counts["cancelled"],
+            "message": "Sync completed successfully",
+        }
+
+    except SyncServiceError as e:
+        logger.error("Manual sync failed for listing %s: %s", listing_id, e)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Sync failed: {e}",
+        ) from e
+
+
+@router.get("/{listing_id}/bookings", response_model=BookingsResponse)
+async def get_listing_bookings(
+    listing_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, Any]:
+    """Get cached bookings for a listing (debugging endpoint).
+
+    Returns all cached bookings for the specified listing.
+    Useful for debugging sync issues and verifying data.
+
+    Args:
+        listing_id: ID of the listing.
+        db: Database session.
+
+    Returns:
+        List of cached bookings.
+
+    Raises:
+        HTTPException: 404 if listing not found.
+    """
+    repo = ListingRepository(db)
+    listing = await repo.get_by_id(listing_id)
+
+    if not listing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Listing {listing_id} not found",
+        )
+
+    # Get bookings for this listing
+    result = await db.execute(
+        select(Booking)
+        .where(Booking.listing_id == listing_id)
+        .order_by(Booking.check_in_date)
+    )
+    bookings = result.scalars().all()
+
+    return {
+        "bookings": [
+            {
+                "id": b.id,
+                "cloudbeds_booking_id": b.cloudbeds_booking_id,
+                "guest_name": b.guest_name,
+                "guest_phone_last4": b.guest_phone_last4,
+                "check_in_date": b.check_in_date.isoformat(),
+                "check_out_date": b.check_out_date.isoformat(),
+                "status": b.status,
+            }
+            for b in bookings
+        ],
+        "total": len(bookings),
     }

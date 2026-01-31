@@ -9,6 +9,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from src.database import Base, get_db
 from src.main import create_app
+from src.models.booking import Booking
 from src.models.listing import Listing
 
 
@@ -146,6 +147,40 @@ class TestGetListing:
         assert data["cloudbeds_id"] == "PROP1"
         assert data["name"] == "Test Property"
         assert data["timezone"] == "America/New_York"
+
+    @pytest.mark.asyncio
+    async def test_get_includes_sync_status_fields(
+        self, listings_app, listings_session
+    ):
+        """Test that listing response includes sync status fields."""
+        from datetime import datetime
+
+        sync_time = datetime(2024, 1, 15, 10, 30, 0)
+        listing = Listing(
+            cloudbeds_id="SYNC_STATUS",
+            name="Sync Status Test",
+            ical_url_slug="sync-status-test",
+            enabled=True,
+            sync_enabled=True,
+            last_sync_at=sync_time,
+            last_sync_error="Test error message",
+        )
+        listings_session.add(listing)
+        await listings_session.commit()
+        await listings_session.refresh(listing)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=listings_app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                f"/api/listings/{listing.id}",
+                headers={"Authorization": "Bearer test"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "2024-01-15T10:30:00" in data["last_sync_at"]
+        assert data["last_sync_error"] == "Test error message"
 
     @pytest.mark.asyncio
     async def test_get_not_found(self, listings_app):
@@ -557,3 +592,165 @@ class TestBulkListingOperations:
 
         assert response.status_code == 400
         assert "maximum" in response.json()["detail"].lower()
+
+
+class TestManualSync:
+    """Tests for POST /api/listings/{id}/sync endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_sync_listing_not_found(self, listings_app):
+        """Test sync returns 404 for non-existent listing."""
+        async with AsyncClient(
+            transport=ASGITransport(app=listings_app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/listings/999/sync",
+                headers={"Authorization": "Bearer test"},
+            )
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_sync_listing_no_credentials(self, listings_app, listings_session):
+        """Test sync returns 503 when Cloudbeds credentials not configured."""
+        listing = Listing(
+            cloudbeds_id="SYNC1",
+            name="Sync Test Property",
+            ical_url_slug="sync-test",
+            enabled=True,
+            sync_enabled=True,
+        )
+        listings_session.add(listing)
+        await listings_session.commit()
+        await listings_session.refresh(listing)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=listings_app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                f"/api/listings/{listing.id}/sync",
+                headers={"Authorization": "Bearer test"},
+            )
+
+        assert response.status_code == 503
+        assert "credentials" in response.json()["detail"].lower()
+
+
+class TestGetListingBookings:
+    """Tests for GET /api/listings/{id}/bookings endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_get_bookings_not_found(self, listings_app):
+        """Test returns 404 for non-existent listing."""
+        async with AsyncClient(
+            transport=ASGITransport(app=listings_app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/api/listings/999/bookings",
+                headers={"Authorization": "Bearer test"},
+            )
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_get_bookings_empty(self, listings_app, listings_session):
+        """Test returns empty list when no bookings exist."""
+        listing = Listing(
+            cloudbeds_id="NOBOOKINGS",
+            name="No Bookings Property",
+            ical_url_slug="no-bookings",
+            enabled=True,
+            sync_enabled=True,
+        )
+        listings_session.add(listing)
+        await listings_session.commit()
+        await listings_session.refresh(listing)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=listings_app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                f"/api/listings/{listing.id}/bookings",
+                headers={"Authorization": "Bearer test"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["bookings"] == []
+        assert data["total"] == 0
+
+    @pytest.mark.asyncio
+    async def test_get_bookings_with_data(self, listings_app, listings_session):
+        """Test returns bookings for listing."""
+        from datetime import datetime
+
+        listing = Listing(
+            cloudbeds_id="WITHBOOKINGS",
+            name="With Bookings Property",
+            ical_url_slug="with-bookings",
+            enabled=True,
+            sync_enabled=True,
+        )
+        listings_session.add(listing)
+        await listings_session.commit()
+        await listings_session.refresh(listing)
+
+        booking1 = Booking(
+            listing_id=listing.id,
+            cloudbeds_booking_id="RES001",
+            guest_name="John Doe",
+            guest_phone_last4="1234",
+            check_in_date=datetime(2024, 3, 1),
+            check_out_date=datetime(2024, 3, 5),
+            status="confirmed",
+        )
+        booking2 = Booking(
+            listing_id=listing.id,
+            cloudbeds_booking_id="RES002",
+            guest_name="Jane Smith",
+            guest_phone_last4="5678",
+            check_in_date=datetime(2024, 3, 10),
+            check_out_date=datetime(2024, 3, 15),
+            status="confirmed",
+        )
+        listings_session.add_all([booking1, booking2])
+        await listings_session.commit()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=listings_app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                f"/api/listings/{listing.id}/bookings",
+                headers={"Authorization": "Bearer test"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 2
+        assert len(data["bookings"]) == 2
+        # Verify ordering by check_in_date
+        assert data["bookings"][0]["cloudbeds_booking_id"] == "RES001"
+        assert data["bookings"][1]["cloudbeds_booking_id"] == "RES002"
+        # Verify fields
+        assert data["bookings"][0]["guest_name"] == "John Doe"
+        assert data["bookings"][0]["guest_phone_last4"] == "1234"
+
+
+class TestSyncProperties:
+    """Tests for POST /api/listings/sync-properties endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_sync_properties_no_credentials(self, listings_app):
+        """Test returns 503 when Cloudbeds credentials not configured."""
+        async with AsyncClient(
+            transport=ASGITransport(app=listings_app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/listings/sync-properties",
+                headers={"Authorization": "Bearer test"},
+            )
+
+        assert response.status_code == 503
+        assert "credentials" in response.json()["detail"].lower()

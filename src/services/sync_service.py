@@ -70,20 +70,35 @@ class SyncService:
             return {"inserted": 0, "updated": 0, "cancelled": 0}
 
         try:
-            # Initialize Cloudbeds service with tokens
+            # Initialize Cloudbeds service with tokens or API key
             cloudbeds = CloudbedsService(
                 access_token=credential.access_token,
                 refresh_token=credential.refresh_token,
+                api_key=credential.api_key,
             )
 
             # Fetch reservations from Cloudbeds
             reservations = await cloudbeds.get_reservations(listing.cloudbeds_id)
 
-            return await self._process_reservations(listing, reservations)
+            counts = await self._process_reservations(listing, reservations)
+
+            # Update sync status on success
+            listing.last_sync_at = datetime.now(UTC)
+            listing.last_sync_error = None
+
+            return counts
 
         except CloudbedsServiceError as e:
-            logger.error("Failed to sync listing %s: %s", listing.cloudbeds_id, e)
-            raise SyncServiceError(str(e)) from e
+            # Update sync error status
+            error_msg = str(e)
+            listing.last_sync_error = error_msg
+            listing.last_sync_at = datetime.now(UTC)
+            logger.error(
+                "Sync failed for listing %s: %s",
+                listing.cloudbeds_id,
+                error_msg,
+            )
+            raise SyncServiceError(error_msg) from e
 
     async def _process_reservations(
         self,

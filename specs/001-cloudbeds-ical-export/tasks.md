@@ -151,15 +151,15 @@ Project uses single-project structure:
 
 ### Implementation for User Story 4
 
-- [ ] T064 [P] [US4] Create POST /api/listings/{id}/sync endpoint in src/api/listings.py for manual sync trigger
-- [ ] T065 [US4] Implement sync status tracking with last_sync_at updates in src/services/sync_service.py
-- [ ] T066 [US4] Add sync error logging and last_sync_error field updates in src/services/sync_service.py
-- [ ] T067 [US4] Implement booking change detection (new, modified, cancelled) in src/services/sync_service.py
-- [ ] T068 [US4] Add cache invalidation on sync completion in src/services/sync_service.py
-- [ ] T069 [US4] Implement rate limit handling with exponential backoff in src/services/cloudbeds_service.py
-- [ ] T070 [US4] Add sync status display in admin UI showing last sync time and next sync time
-- [ ] T071 [US4] Add manual "Sync Now" button per listing in admin UI
-- [ ] T072 [P] [US4] Create GET /api/listings/{id}/bookings endpoint in src/api/bookings.py for debugging cached bookings
+- [x] T064 [P] [US4] Create POST /api/listings/{id}/sync endpoint in src/api/listings.py for manual sync trigger
+- [x] T065 [US4] Implement sync status tracking with last_sync_at updates in src/services/sync_service.py
+- [x] T066 [US4] Add sync error logging and last_sync_error field updates in src/services/sync_service.py
+- [x] T067 [US4] Implement booking change detection (new, modified, cancelled) in src/services/sync_service.py
+- [x] T068 [US4] Add cache invalidation on sync completion in src/services/sync_service.py
+- [x] T069 [US4] Implement rate limit handling with exponential backoff in src/services/cloudbeds_service.py
+- [x] T070 [US4] Add sync status display in admin UI showing last sync time and next sync time
+- [x] T071 [US4] Add manual "Sync Now" button per listing in admin UI
+- [x] T072 [P] [US4] Create GET /api/listings/{id}/bookings endpoint in src/api/listings.py for debugging cached bookings
 
 **Checkpoint**: Real-time sync complete - bookings reflect in iCal within 5-10 minutes
 
