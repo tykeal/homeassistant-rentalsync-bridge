@@ -290,10 +290,15 @@ async def _process_bulk_listing(
             # Regenerate slug until unique across both transaction and database
             # Uses same random suffix pattern as single-listing flow
             max_attempts = 100
+            slug = None
             for _ in range(max_attempts):
-                slug = await repo.generate_unique_slug(listing.name)
-                if slug not in generated_slugs and slug not in existing_slugs:
+                candidate = await repo.generate_unique_slug(listing.name)
+                if candidate not in generated_slugs and candidate not in existing_slugs:
+                    slug = candidate
                     break
+            if slug is None:
+                msg = f"Failed to generate unique slug after {max_attempts} attempts"
+                raise ValueError(msg)
             generated_slugs.add(slug)
             listing.ical_url_slug = slug
         listing.enabled = True
