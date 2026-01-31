@@ -5,15 +5,21 @@
 import logging
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.models.listing import Listing
 from src.models.oauth_credential import OAuthCredential
+from src.repositories.booking_repository import BookingRepository
 from src.services.calendar_service import CalendarCache
 from src.services.cloudbeds_service import CloudbedsService, CloudbedsServiceError
 from src.services.sync_service import SYNC_INTERVAL_SECONDS, SyncService
+
+# Data retention settings
+OLD_BOOKING_RETENTION_DAYS = 90
+CANCELLED_BOOKING_RETENTION_DAYS = 30
 
 logger = logging.getLogger(__name__)
 
@@ -54,11 +60,21 @@ class SyncScheduler:
             max_instances=1,  # Prevent overlapping syncs
         )
 
+        # Add daily purge job at 02:00 UTC
+        self._scheduler.add_job(
+            self._purge_old_bookings,
+            trigger=CronTrigger(hour=2, minute=0, timezone="UTC"),
+            id="purge_old_bookings",
+            replace_existing=True,
+            max_instances=1,
+        )
+
         self._scheduler.start()
         self._running = True
         logger.info(
             "Sync scheduler started with %d second interval", SYNC_INTERVAL_SECONDS
         )
+        logger.info("Data purge scheduled daily at 02:00 UTC")
 
     def stop(self) -> None:
         """Stop the scheduler."""
@@ -169,6 +185,40 @@ class SyncScheduler:
         except CloudbedsServiceError as e:
             logger.error("Failed to refresh OAuth token: %s", e)
             raise
+
+    async def _purge_old_bookings(self) -> None:
+        """Purge old and cancelled bookings from the database.
+
+        Runs daily at 02:00 UTC to clean up:
+        - Bookings with checkout > 90 days ago
+        - Cancelled bookings > 30 days old
+        """
+        logger.info("Starting scheduled data purge")
+
+        async with self._session_factory() as session:
+            try:
+                booking_repo = BookingRepository(session)
+
+                # Purge old bookings (90 days after checkout)
+                old_count = await booking_repo.purge_old_bookings(
+                    days=OLD_BOOKING_RETENTION_DAYS
+                )
+
+                # Purge cancelled bookings (30 days after cancellation)
+                cancelled_count = await booking_repo.purge_cancelled_bookings(
+                    days=CANCELLED_BOOKING_RETENTION_DAYS
+                )
+
+                await session.commit()
+
+                logger.info(
+                    "Data purge complete: %d old, %d cancelled bookings removed",
+                    old_count,
+                    cancelled_count,
+                )
+
+            except Exception:
+                logger.exception("Error during data purge")
 
 
 # Global scheduler instance
