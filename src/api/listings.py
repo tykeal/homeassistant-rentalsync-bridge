@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database import get_db
-from src.repositories.listing_repository import ListingRepository
+from src.repositories.listing_repository import MAX_LISTINGS, ListingRepository
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +141,14 @@ async def enable_listing(
         )
 
     if not listing.enabled:
+        # Check if we've reached the maximum enabled listings
+        enabled_count = await repo.count_enabled()
+        if enabled_count >= MAX_LISTINGS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Maximum number of enabled listings ({MAX_LISTINGS}) reached",
+            )
+
         listing.enabled = True
         listing.sync_enabled = True
 

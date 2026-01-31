@@ -114,6 +114,17 @@ class ListingRepository:
         result = await self._session.execute(select(Listing))
         return len(result.scalars().all())
 
+    async def count_enabled(self) -> int:
+        """Count enabled listings.
+
+        Returns:
+            Number of enabled listings.
+        """
+        result = await self._session.execute(
+            select(Listing).where(Listing.enabled.is_(True))
+        )
+        return len(result.scalars().all())
+
     async def create(self, listing: Listing) -> Listing:
         """Create a new listing.
 

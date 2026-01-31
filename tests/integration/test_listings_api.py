@@ -205,6 +205,45 @@ class TestEnableListing:
 
         assert response.status_code == 404
 
+    @pytest.mark.asyncio
+    async def test_enable_max_listings_exceeded(self, listings_app, listings_session):
+        """Test enabling fails when max listings reached."""
+        # Create 50 enabled listings (the maximum)
+        for i in range(50):
+            listing = Listing(
+                cloudbeds_id=f"PROP{i}",
+                name=f"Property {i}",
+                ical_url_slug=f"property-{i}",
+                enabled=True,
+                sync_enabled=True,
+            )
+            listings_session.add(listing)
+        await listings_session.commit()
+
+        # Create one more disabled listing
+        new_listing = Listing(
+            cloudbeds_id="PROP_NEW",
+            name="New Property",
+            ical_url_slug="new-property",
+            enabled=False,
+            sync_enabled=False,
+        )
+        listings_session.add(new_listing)
+        await listings_session.commit()
+        await listings_session.refresh(new_listing)
+
+        # Try to enable - should fail
+        async with AsyncClient(
+            transport=ASGITransport(app=listings_app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                f"/api/listings/{new_listing.id}/enable",
+                headers={"Authorization": "Bearer test"},
+            )
+
+        assert response.status_code == 400
+        assert "Maximum" in response.json()["detail"]
+
 
 class TestUpdateListing:
     """Tests for PUT /api/listings/{id} endpoint."""
