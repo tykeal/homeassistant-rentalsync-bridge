@@ -1,0 +1,113 @@
+<!--
+SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+SPDX-License-Identifier: Apache-2.0
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RentalSync Bridge - Admin</title>
+    <link rel="stylesheet" href="/static/css/admin.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>RentalSync Bridge</h1>
+            <p class="subtitle">Cloudbeds to Airbnb iCal Export</p>
+        </header>
+
+        <!-- Status Section -->
+        <section id="status-section" class="card">
+            <h2>System Status</h2>
+            <div id="status-content" class="status-grid">
+                <div class="status-item">
+                    <span class="label">Overall:</span>
+                    <span id="status-overall" class="badge">Loading...</span>
+                </div>
+                <div class="status-item">
+                    <span class="label">OAuth:</span>
+                    <span id="status-oauth" class="badge">--</span>
+                </div>
+                <div class="status-item">
+                    <span class="label">Last Sync:</span>
+                    <span id="status-sync">--</span>
+                </div>
+                <div class="status-item">
+                    <span class="label">Listings:</span>
+                    <span id="status-listings">--</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- OAuth Configuration -->
+        <section id="oauth-section" class="card">
+            <h2>Cloudbeds OAuth</h2>
+            <div id="oauth-status-display">
+                <p id="oauth-status-text">Checking OAuth status...</p>
+            </div>
+            <form id="oauth-form" class="hidden">
+                <div class="form-group">
+                    <label for="client-id">Client ID</label>
+                    <input type="text" id="client-id" required>
+                </div>
+                <div class="form-group">
+                    <label for="client-secret">Client Secret</label>
+                    <input type="password" id="client-secret" required>
+                </div>
+                <button type="submit" class="btn primary">Save OAuth Credentials</button>
+            </form>
+            <div id="oauth-connected" class="hidden">
+                <p class="success">✓ Connected to Cloudbeds</p>
+                <button id="refresh-token-btn" class="btn secondary">Refresh Token</button>
+            </div>
+        </section>
+
+        <!-- Sync Settings -->
+        <section id="sync-section" class="card">
+            <h2>Sync Settings</h2>
+            <div class="form-group">
+                <label for="sync-interval">Polling Interval</label>
+                <select id="sync-interval">
+                    <option value="1">1 minute</option>
+                    <option value="5" selected>5 minutes</option>
+                    <option value="10">10 minutes</option>
+                    <option value="15">15 minutes</option>
+                    <option value="30">30 minutes</option>
+                    <option value="60">60 minutes</option>
+                </select>
+            </div>
+            <button id="save-sync-btn" class="btn primary">Save Settings</button>
+        </section>
+
+        <!-- Listings Section -->
+        <section id="listings-section" class="card">
+            <h2>Properties</h2>
+            <p class="description">Enable iCal export for your Cloudbeds properties.</p>
+            <div id="listings-container">
+                <p class="loading">Loading listings...</p>
+            </div>
+        </section>
+
+        <!-- Custom Fields Modal -->
+        <div id="custom-fields-modal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Custom Fields</h3>
+                    <button class="close-btn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div id="custom-fields-list"></div>
+                    <button id="add-field-btn" class="btn secondary">+ Add Field</button>
+                </div>
+                <div class="modal-footer">
+                    <button id="save-fields-btn" class="btn primary">Save</button>
+                    <button class="cancel-btn btn secondary">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/admin.js"></script>
+</body>
+</html>
