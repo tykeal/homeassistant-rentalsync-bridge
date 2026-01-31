@@ -7,6 +7,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database import get_db
@@ -158,9 +159,9 @@ async def enable_listing(
 
         try:
             await db.commit()
-        except Exception as e:
+        except IntegrityError as e:
             await db.rollback()
-            # Re-check count in case of race condition
+            # Re-check count in case of race condition on MAX_LISTINGS
             enabled_count = await repo.count_enabled()
             if enabled_count >= MAX_LISTINGS:
                 msg = f"Maximum number of enabled listings ({MAX_LISTINGS}) reached"
@@ -168,6 +169,13 @@ async def enable_listing(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=msg,
                 ) from e
+            # Other integrity error (e.g., slug collision)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to enable listing. Please try again.",
+            ) from e
+        except Exception as e:
+            await db.rollback()
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to enable listing. Please try again.",
