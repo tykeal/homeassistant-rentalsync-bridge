@@ -110,7 +110,14 @@ class OAuthCredential(Base):
     @api_key.setter
     def api_key(self, value: str | None) -> None:
         """Set encrypted API key."""
-        self._api_key = encrypt_value(value)
+        if value is None:
+            self._api_key = None
+        else:
+            encrypted = encrypt_value(value)
+            if encrypted is None:
+                msg = "encrypt_value returned None for non-None input"
+                raise ValueError(msg)
+            self._api_key = encrypted
 
     @property
     def access_token(self) -> str | None:
