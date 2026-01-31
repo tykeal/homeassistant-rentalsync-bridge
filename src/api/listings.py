@@ -161,7 +161,7 @@ async def enable_listing(
             await db.commit()
         except IntegrityError as e:
             await db.rollback()
-            # Re-check count in case of race condition on MAX_LISTINGS
+            # Check if this was a MAX_LISTINGS race condition vs other integrity error
             enabled_count = await repo.count_enabled()
             if enabled_count >= MAX_LISTINGS:
                 msg = f"Maximum number of enabled listings ({MAX_LISTINGS}) reached"

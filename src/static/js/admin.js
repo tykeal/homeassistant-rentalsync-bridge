@@ -184,7 +184,7 @@ function renderListings(listings) {
     }
 
     const html = listings.map(listing => {
-        // Coerce ID to number - server is source of truth for validation
+        // Coerce to number for consistent Set operations and data-attribute comparisons
         const id = Number(listing.id);
 
         return `
