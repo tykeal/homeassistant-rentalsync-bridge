@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database import get_db
+from src.models.booking import Booking
 from src.models.oauth_credential import OAuthCredential
 from src.repositories.listing_repository import MAX_LISTINGS, ListingRepository
 from src.services.calendar_service import get_calendar_cache
@@ -59,6 +60,27 @@ class EnableResponse(BaseModel):
     success: bool = Field(description="Whether operation succeeded")
     ical_url: str = Field(description="iCal URL for the listing")
     message: str = Field(description="Status message")
+
+
+class BookingResponse(BaseModel):
+    """Response model for a booking."""
+
+    id: int = Field(description="Booking ID")
+    cloudbeds_booking_id: str = Field(description="Cloudbeds booking ID")
+    guest_name: str | None = Field(default=None, description="Guest name")
+    guest_phone_last4: str | None = Field(
+        default=None, description="Last 4 phone digits"
+    )
+    check_in_date: str = Field(description="Check-in date (ISO format)")
+    check_out_date: str = Field(description="Check-out date (ISO format)")
+    status: str = Field(description="Booking status")
+
+
+class BookingsResponse(BaseModel):
+    """Response model for bookings collection."""
+
+    bookings: list[BookingResponse] = Field(description="List of bookings")
+    total: int = Field(description="Total count")
 
 
 def _listing_to_response(listing: Any) -> dict[str, Any]:
@@ -491,3 +513,57 @@ async def sync_listing(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Sync failed: {e}",
         ) from e
+
+
+@router.get("/{listing_id}/bookings", response_model=BookingsResponse)
+async def get_listing_bookings(
+    listing_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, Any]:
+    """Get cached bookings for a listing (debugging endpoint).
+
+    Returns all cached bookings for the specified listing.
+    Useful for debugging sync issues and verifying data.
+
+    Args:
+        listing_id: ID of the listing.
+        db: Database session.
+
+    Returns:
+        List of cached bookings.
+
+    Raises:
+        HTTPException: 404 if listing not found.
+    """
+    repo = ListingRepository(db)
+    listing = await repo.get_by_id(listing_id)
+
+    if not listing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Listing {listing_id} not found",
+        )
+
+    # Get bookings for this listing
+    result = await db.execute(
+        select(Booking)
+        .where(Booking.listing_id == listing_id)
+        .order_by(Booking.check_in_date)
+    )
+    bookings = result.scalars().all()
+
+    return {
+        "bookings": [
+            {
+                "id": b.id,
+                "cloudbeds_booking_id": b.cloudbeds_booking_id,
+                "guest_name": b.guest_name,
+                "guest_phone_last4": b.guest_phone_last4,
+                "check_in_date": b.check_in_date.isoformat(),
+                "check_out_date": b.check_out_date.isoformat(),
+                "status": b.status,
+            }
+            for b in bookings
+        ],
+        "total": len(bookings),
+    }
