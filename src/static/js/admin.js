@@ -261,14 +261,32 @@ async function bulkEnable() {
     if (selectedListings.size === 0) return;
 
     try {
-        await fetchAPI('/api/listings/bulk', {
+        const result = await fetchAPI('/api/listings/bulk', {
             method: 'POST',
             body: JSON.stringify({
                 listing_ids: Array.from(selectedListings),
                 enabled: true
             })
         });
-        selectedListings.clear();
+
+        // Handle partial failures - keep failed items selected
+        if (result.failed > 0) {
+            const failedIds = new Set(
+                result.details
+                    .filter(d => !d.success)
+                    .map(d => d.id)
+            );
+            // Keep only failed items selected for retry
+            selectedListings.forEach(id => {
+                if (!failedIds.has(id)) {
+                    selectedListings.delete(id);
+                }
+            });
+            alert(`Enabled ${result.updated} listing(s). ${result.failed} failed.`);
+        } else {
+            selectedListings.clear();
+        }
+
         await loadListings();
         await loadStatus();
     } catch (error) {
@@ -280,14 +298,32 @@ async function bulkDisable() {
     if (selectedListings.size === 0) return;
 
     try {
-        await fetchAPI('/api/listings/bulk', {
+        const result = await fetchAPI('/api/listings/bulk', {
             method: 'POST',
             body: JSON.stringify({
                 listing_ids: Array.from(selectedListings),
                 enabled: false
             })
         });
-        selectedListings.clear();
+
+        // Handle partial failures - keep failed items selected
+        if (result.failed > 0) {
+            const failedIds = new Set(
+                result.details
+                    .filter(d => !d.success)
+                    .map(d => d.id)
+            );
+            // Keep only failed items selected for retry
+            selectedListings.forEach(id => {
+                if (!failedIds.has(id)) {
+                    selectedListings.delete(id);
+                }
+            });
+            alert(`Disabled ${result.updated} listing(s). ${result.failed} failed.`);
+        } else {
+            selectedListings.clear();
+        }
+
         await loadListings();
         await loadStatus();
     } catch (error) {

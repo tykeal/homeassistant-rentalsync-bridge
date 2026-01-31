@@ -156,7 +156,22 @@ async def enable_listing(
         if not listing.ical_url_slug:
             listing.ical_url_slug = await repo.generate_unique_slug(listing.name)
 
-        await db.commit()
+        try:
+            await db.commit()
+        except Exception as e:
+            await db.rollback()
+            # Re-check count in case of race condition
+            enabled_count = await repo.count_enabled()
+            if enabled_count >= MAX_LISTINGS:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Maximum listings ({MAX_LISTINGS}) reached",
+                ) from e
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to enable listing. Please try again.",
+            ) from e
+
         await db.refresh(listing)
         logger.info("Enabled listing %s", listing.cloudbeds_id)
 
@@ -236,6 +251,53 @@ class BulkListingResponse(BaseModel):
     details: list[dict[str, Any]] = Field(description="Details of each operation")
 
 
+async def _process_bulk_listing(
+    listing: Any,
+    enabled: bool,
+    repo: ListingRepository,
+    generated_slugs: set[str],
+) -> tuple[bool, dict[str, Any]]:
+    """Process a single listing in a bulk operation.
+
+    Args:
+        listing: Listing to process.
+        enabled: Target enabled state.
+        repo: Listing repository.
+        generated_slugs: Set of slugs generated in this transaction.
+
+    Returns:
+        Tuple of (changed, detail_dict).
+    """
+    changed = False
+    if enabled and not listing.enabled:
+        # Enable listing - generate slug if needed
+        if not listing.ical_url_slug:
+            slug = await repo.generate_unique_slug(listing.name)
+            # Ensure slug doesn't collide with others in this transaction
+            base_slug = slug
+            counter = 1
+            while slug in generated_slugs:
+                slug = f"{base_slug}-{counter}"
+                counter += 1
+            generated_slugs.add(slug)
+            listing.ical_url_slug = slug
+        listing.enabled = True
+        listing.sync_enabled = True
+        changed = True
+    elif not enabled and listing.enabled:
+        # Disable listing
+        listing.enabled = False
+        listing.sync_enabled = False
+        changed = True
+
+    return changed, {
+        "id": listing.id,
+        "success": True,
+        "enabled": listing.enabled,
+        "changed": changed,
+    }
+
+
 @router.post(
     "/bulk",
     response_model=BulkListingResponse,
@@ -284,52 +346,39 @@ async def bulk_update_listings(
                 detail=msg,
             )
 
+    # Track generated slugs within this transaction to detect collisions
+    generated_slugs: set[str] = set()
+
     for listing_id in request.listing_ids:
         listing = listings_map.get(listing_id)
         if not listing:
             failed += 1
             details.append(
-                {
-                    "id": listing_id,
-                    "success": False,
-                    "error": "Listing not found",
-                }
+                {"id": listing_id, "success": False, "error": "Listing not found"}
             )
             continue
 
         try:
-            if request.enabled and not listing.enabled:
-                # Enable listing - generate slug if needed
-                if not listing.ical_url_slug:
-                    listing.ical_url_slug = await repo.generate_unique_slug(
-                        listing.name
-                    )
-                listing.enabled = True
-                listing.sync_enabled = True
-            elif not request.enabled and listing.enabled:
-                # Disable listing
-                listing.enabled = False
-                listing.sync_enabled = False
-
-            updated += 1
-            details.append(
-                {
-                    "id": listing_id,
-                    "success": True,
-                    "enabled": listing.enabled,
-                }
+            changed, detail = await _process_bulk_listing(
+                listing, request.enabled, repo, generated_slugs
             )
+            if changed:
+                updated += 1
+            details.append(detail)
         except Exception as e:
             failed += 1
-            details.append(
-                {
-                    "id": listing_id,
-                    "success": False,
-                    "error": str(e),
-                }
-            )
+            details.append({"id": listing_id, "success": False, "error": str(e)})
 
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        logger.error("Bulk update commit failed: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save changes. Please try again.",
+        ) from e
+
     logger.info("Bulk update: %d updated, %d failed", updated, failed)
 
     return {
