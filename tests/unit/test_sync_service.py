@@ -562,3 +562,42 @@ class TestSyncStatusTracking:
         # last_sync_error should be cleared
         assert listing.last_sync_error is None
         assert listing.last_sync_at is not None
+
+    @pytest.mark.asyncio
+    async def test_sync_updates_last_sync_error_on_failure(
+        self, sync_session, test_credential
+    ):
+        """Test that last_sync_error is set on failed sync."""
+        from src.services.cloudbeds_service import CloudbedsServiceError
+
+        listing = Listing(
+            cloudbeds_id="SYNC_ERROR",
+            name="Sync Error Test",
+            ical_url_slug="sync-error",
+            enabled=True,
+            sync_enabled=True,
+            last_sync_at=None,
+            last_sync_error=None,
+        )
+        sync_session.add(listing)
+        await sync_session.commit()
+        await sync_session.refresh(listing)
+
+        assert listing.last_sync_error is None
+
+        with patch(
+            "src.services.sync_service.CloudbedsService"
+        ) as mock_cloudbeds_class:
+            mock_cloudbeds = AsyncMock()
+            mock_cloudbeds.get_reservations = AsyncMock(
+                side_effect=CloudbedsServiceError("API rate limit exceeded")
+            )
+            mock_cloudbeds_class.return_value = mock_cloudbeds
+
+            service = SyncService(sync_session)
+            with pytest.raises(SyncServiceError):
+                await service.sync_listing(listing, test_credential)
+
+        # last_sync_error should be set
+        assert listing.last_sync_error == "API rate limit exceeded"
+        assert listing.last_sync_at is not None

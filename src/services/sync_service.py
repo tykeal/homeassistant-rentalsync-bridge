@@ -88,8 +88,16 @@ class SyncService:
             return counts
 
         except CloudbedsServiceError as e:
-            logger.error("Failed to sync listing %s: %s", listing.cloudbeds_id, e)
-            raise SyncServiceError(str(e)) from e
+            # Update sync error status
+            error_msg = str(e)
+            listing.last_sync_error = error_msg
+            listing.last_sync_at = datetime.now(UTC)
+            logger.error(
+                "Sync failed for listing %s: %s",
+                listing.cloudbeds_id,
+                error_msg,
+            )
+            raise SyncServiceError(error_msg) from e
 
     async def _process_reservations(
         self,
