@@ -131,13 +131,13 @@ Project uses single-project structure:
 
 ### Implementation for User Story 3
 
-- [ ] T057 [P] [US3] Add listing count validation (max 50) in src/api/listings.py POST /enable endpoint
-- [ ] T058 [US3] Implement unique iCal URL generation with conflict detection in src/repositories/listing_repository.py
-- [ ] T059 [US3] Add listing-specific custom field retrieval in src/services/calendar_service.py
-- [ ] T060 [US3] Implement per-listing iCal generation with independent field configurations in src/services/calendar_service.py
-- [ ] T061 [US3] Add listing isolation validation in src/services/sync_service.py to prevent booking cross-contamination
-- [ ] T062 [US3] Update admin UI to display all listings with individual configuration controls
-- [ ] T063 [US3] Add bulk listing operations (enable/disable multiple) to admin UI
+- [x] T057 [P] [US3] Add listing count validation (max 50) in src/api/listings.py POST /enable endpoint
+- [x] T058 [US3] Implement unique iCal URL generation with conflict detection in src/repositories/listing_repository.py
+- [x] T059 [US3] Add listing-specific custom field retrieval in src/services/calendar_service.py
+- [x] T060 [US3] Implement per-listing iCal generation with independent field configurations in src/services/calendar_service.py
+- [x] T061 [US3] Add listing isolation validation in src/services/sync_service.py to prevent booking cross-contamination
+- [x] T062 [US3] Update admin UI to display all listings with individual configuration controls
+- [x] T063 [US3] Add bulk listing operations (enable/disable multiple) to admin UI
 
 **Checkpoint**: Multi-listing support complete - each listing independently configurable and isolated
 
