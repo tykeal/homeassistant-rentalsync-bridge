@@ -4,7 +4,9 @@
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -39,13 +41,24 @@ def create_engine() -> async_sessionmaker[AsyncSession]:
     Returns:
         Async session maker for database operations.
     """
+    database_url = get_database_url()
+    is_sqlite = "sqlite" in database_url
+
     engine = create_async_engine(
-        get_database_url(),
+        database_url,
         echo=False,
-        connect_args={"check_same_thread": False}
-        if "sqlite" in get_database_url()
-        else {},
+        connect_args={"check_same_thread": False} if is_sqlite else {},
     )
+
+    # Enable WAL mode for SQLite for better concurrent read performance (T097)
+    if is_sqlite:
+
+        @event.listens_for(engine.sync_engine, "connect")
+        def set_sqlite_pragma(dbapi_connection: Any, _connection_record: Any) -> None:
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.close()
 
     return async_sessionmaker(
         engine,
