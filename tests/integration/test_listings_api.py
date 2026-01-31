@@ -397,3 +397,163 @@ class TestListingsDisplayForAdminUI:
         assert urls["PROP_A"] == "enabled-a"
         assert urls["PROP_B"] == "disabled-b"  # Has slug but not enabled
         assert urls["PROP_C"] == "enabled-c"
+
+
+class TestBulkListingOperations:
+    """Tests for POST /api/listings/bulk endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_bulk_enable_listings(self, listings_app, listings_session):
+        """Test bulk enabling multiple listings."""
+        # Create disabled listings
+        listing1 = Listing(
+            cloudbeds_id="BULK1",
+            name="Bulk Property 1",
+            ical_url_slug="bulk-1",
+            enabled=False,
+            sync_enabled=False,
+        )
+        listing2 = Listing(
+            cloudbeds_id="BULK2",
+            name="Bulk Property 2",
+            ical_url_slug="bulk-2",
+            enabled=False,
+            sync_enabled=False,
+        )
+        listings_session.add_all([listing1, listing2])
+        await listings_session.commit()
+        await listings_session.refresh(listing1)
+        await listings_session.refresh(listing2)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=listings_app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/listings/bulk",
+                headers={"Authorization": "Bearer test"},
+                json={
+                    "listing_ids": [listing1.id, listing2.id],
+                    "enabled": True,
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["updated"] == 2
+        assert data["failed"] == 0
+
+    @pytest.mark.asyncio
+    async def test_bulk_disable_listings(self, listings_app, listings_session):
+        """Test bulk disabling multiple listings."""
+        # Create enabled listings
+        listing1 = Listing(
+            cloudbeds_id="BULKD1",
+            name="Bulk Disable 1",
+            ical_url_slug="bulk-dis-1",
+            enabled=True,
+            sync_enabled=True,
+        )
+        listing2 = Listing(
+            cloudbeds_id="BULKD2",
+            name="Bulk Disable 2",
+            ical_url_slug="bulk-dis-2",
+            enabled=True,
+            sync_enabled=True,
+        )
+        listings_session.add_all([listing1, listing2])
+        await listings_session.commit()
+        await listings_session.refresh(listing1)
+        await listings_session.refresh(listing2)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=listings_app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/listings/bulk",
+                headers={"Authorization": "Bearer test"},
+                json={
+                    "listing_ids": [listing1.id, listing2.id],
+                    "enabled": False,
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["updated"] == 2
+        assert data["failed"] == 0
+
+    @pytest.mark.asyncio
+    async def test_bulk_with_nonexistent_listings(self, listings_app, listings_session):
+        """Test bulk operation with some nonexistent listings."""
+        listing = Listing(
+            cloudbeds_id="BULKEX",
+            name="Existing Property",
+            ical_url_slug="bulk-exist",
+            enabled=False,
+            sync_enabled=False,
+        )
+        listings_session.add(listing)
+        await listings_session.commit()
+        await listings_session.refresh(listing)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=listings_app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/listings/bulk",
+                headers={"Authorization": "Bearer test"},
+                json={
+                    "listing_ids": [listing.id, 9999],  # 9999 doesn't exist
+                    "enabled": True,
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["updated"] == 1
+        assert data["failed"] == 1
+
+    @pytest.mark.asyncio
+    async def test_bulk_enable_exceeds_max(self, listings_app, listings_session):
+        """Test bulk enable fails when exceeding max listings."""
+        from src.repositories.listing_repository import MAX_LISTINGS
+
+        # Create MAX_LISTINGS enabled listings
+        for i in range(MAX_LISTINGS):
+            listing = Listing(
+                cloudbeds_id=f"MAX{i}",
+                name=f"Max Property {i}",
+                ical_url_slug=f"max-{i}",
+                enabled=True,
+                sync_enabled=True,
+            )
+            listings_session.add(listing)
+        await listings_session.commit()
+
+        # Create one more disabled listing
+        new_listing = Listing(
+            cloudbeds_id="OVER_MAX",
+            name="Over Max Property",
+            ical_url_slug="over-max",
+            enabled=False,
+            sync_enabled=False,
+        )
+        listings_session.add(new_listing)
+        await listings_session.commit()
+        await listings_session.refresh(new_listing)
+
+        # Try to enable - should fail
+        async with AsyncClient(
+            transport=ASGITransport(app=listings_app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/listings/bulk",
+                headers={"Authorization": "Bearer test"},
+                json={
+                    "listing_ids": [new_listing.id],
+                    "enabled": True,
+                },
+            )
+
+        assert response.status_code == 400
+        assert "maximum" in response.json()["detail"].lower()

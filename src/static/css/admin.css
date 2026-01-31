@@ -184,6 +184,23 @@ header .subtitle {
     cursor: not-allowed;
 }
 
+/* Bulk Actions */
+.bulk-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 15px;
+    padding: 10px;
+    background-color: var(--bg-secondary);
+    border-radius: 4px;
+}
+
+.bulk-actions .selected-info {
+    margin-left: auto;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
 /* Listings */
 .listing-item {
     display: flex;
@@ -193,6 +210,15 @@ header .subtitle {
     border: 1px solid var(--border-color);
     border-radius: 4px;
     margin-bottom: 10px;
+}
+
+.listing-item.selected {
+    background-color: var(--bg-secondary);
+    border-color: var(--primary-color);
+}
+
+.listing-checkbox {
+    margin-right: 10px;
 }
 
 .listing-info h3 {

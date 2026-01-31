@@ -26,6 +26,9 @@ const elements = {
     syncInterval: document.getElementById('sync-interval'),
     saveSyncBtn: document.getElementById('save-sync-btn'),
     listingsContainer: document.getElementById('listings-container'),
+    bulkEnableBtn: document.getElementById('bulk-enable-btn'),
+    bulkDisableBtn: document.getElementById('bulk-disable-btn'),
+    selectedCount: document.getElementById('selected-count'),
     customFieldsModal: document.getElementById('custom-fields-modal'),
     customFieldsList: document.getElementById('custom-fields-list'),
     addFieldBtn: document.getElementById('add-field-btn'),
@@ -33,6 +36,7 @@ const elements = {
 };
 
 let currentListingId = null;
+let selectedListings = new Set();
 
 // API Functions
 async function fetchAPI(endpoint, options = {}) {
@@ -175,11 +179,15 @@ async function loadListings() {
 function renderListings(listings) {
     if (listings.length === 0) {
         elements.listingsContainer.innerHTML = '<p class="loading">No listings found. Sync with Cloudbeds to populate.</p>';
+        updateBulkButtons();
         return;
     }
 
     const html = listings.map(listing => `
-        <div class="listing-item" data-id="${listing.id}">
+        <div class="listing-item${selectedListings.has(listing.id) ? ' selected' : ''}" data-id="${listing.id}">
+            <input type="checkbox" class="listing-checkbox"
+                   ${selectedListings.has(listing.id) ? 'checked' : ''}
+                   onchange="toggleSelection(${listing.id}, this.checked)">
             <div class="listing-info">
                 <h3>${escapeHtml(listing.name)}</h3>
                 ${listing.enabled && listing.ical_url_slug
@@ -197,6 +205,67 @@ function renderListings(listings) {
     `).join('');
 
     elements.listingsContainer.innerHTML = html;
+    updateBulkButtons();
+}
+
+function toggleSelection(id, selected) {
+    if (selected) {
+        selectedListings.add(id);
+    } else {
+        selectedListings.delete(id);
+    }
+    updateBulkButtons();
+
+    // Update visual state
+    const item = document.querySelector(`.listing-item[data-id="${id}"]`);
+    if (item) {
+        item.classList.toggle('selected', selected);
+    }
+}
+
+function updateBulkButtons() {
+    const count = selectedListings.size;
+    elements.selectedCount.textContent = `${count} selected`;
+    elements.bulkEnableBtn.disabled = count === 0;
+    elements.bulkDisableBtn.disabled = count === 0;
+}
+
+async function bulkEnable() {
+    if (selectedListings.size === 0) return;
+
+    try {
+        await fetchAPI('/api/listings/bulk', {
+            method: 'POST',
+            body: JSON.stringify({
+                listing_ids: Array.from(selectedListings),
+                enabled: true
+            })
+        });
+        selectedListings.clear();
+        await loadListings();
+        await loadStatus();
+    } catch (error) {
+        alert(`Bulk enable failed: ${error.message}`);
+    }
+}
+
+async function bulkDisable() {
+    if (selectedListings.size === 0) return;
+
+    try {
+        await fetchAPI('/api/listings/bulk', {
+            method: 'POST',
+            body: JSON.stringify({
+                listing_ids: Array.from(selectedListings),
+                enabled: false
+            })
+        });
+        selectedListings.clear();
+        await loadListings();
+        await loadStatus();
+    } catch (error) {
+        alert(`Bulk disable failed: ${error.message}`);
+    }
 }
 
 async function toggleListing(id, enabled) {
@@ -328,6 +397,8 @@ function initEventListeners() {
     elements.saveSyncBtn.addEventListener('click', saveSyncSettings);
     elements.addFieldBtn.addEventListener('click', addField);
     elements.saveFieldsBtn.addEventListener('click', saveCustomFields);
+    elements.bulkEnableBtn.addEventListener('click', bulkEnable);
+    elements.bulkDisableBtn.addEventListener('click', bulkDisable);
 
     // Modal close handlers
     elements.customFieldsModal.querySelector('.close-btn').addEventListener('click', closeModal);

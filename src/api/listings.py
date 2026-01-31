@@ -219,3 +219,119 @@ async def update_listing(
     logger.info("Updated listing %s", listing.cloudbeds_id)
 
     return _listing_to_response(listing)
+
+
+class BulkListingRequest(BaseModel):
+    """Request model for bulk listing operations."""
+
+    listing_ids: list[int] = Field(description="List of listing IDs to update")
+    enabled: bool = Field(description="Enable or disable listings")
+
+
+class BulkListingResponse(BaseModel):
+    """Response model for bulk listing operation."""
+
+    updated: int = Field(description="Number of listings updated")
+    failed: int = Field(description="Number of listings that failed to update")
+    details: list[dict[str, Any]] = Field(description="Details of each operation")
+
+
+@router.post(
+    "/bulk",
+    response_model=BulkListingResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        400: {"description": "Bad request"},
+    },
+)
+async def bulk_update_listings(
+    request: BulkListingRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, Any]:
+    """Bulk enable or disable multiple listings.
+
+    Args:
+        request: Bulk update data with listing IDs and enabled state.
+        db: Database session.
+
+    Returns:
+        Summary of bulk operation results.
+    """
+    repo = ListingRepository(db)
+    updated = 0
+    failed = 0
+    details: list[dict[str, Any]] = []
+
+    # Check max listings constraint if enabling
+    if request.enabled:
+        current_enabled = await repo.count_enabled()
+        listings_to_enable = len(request.listing_ids)
+
+        # Get how many of the requested listings are already enabled
+        already_enabled = 0
+        for listing_id in request.listing_ids:
+            listing = await repo.get_by_id(listing_id)
+            if listing and listing.enabled:
+                already_enabled += 1
+
+        new_enabled = listings_to_enable - already_enabled
+        if current_enabled + new_enabled > MAX_LISTINGS:
+            msg = f"Cannot enable: would exceed maximum of {MAX_LISTINGS} listings"
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=msg,
+            )
+
+    for listing_id in request.listing_ids:
+        listing = await repo.get_by_id(listing_id)
+        if not listing:
+            failed += 1
+            details.append(
+                {
+                    "id": listing_id,
+                    "success": False,
+                    "error": "Listing not found",
+                }
+            )
+            continue
+
+        try:
+            if request.enabled and not listing.enabled:
+                # Enable listing - generate slug if needed
+                if not listing.ical_url_slug:
+                    listing.ical_url_slug = await repo.generate_unique_slug(
+                        listing.name
+                    )
+                listing.enabled = True
+                listing.sync_enabled = True
+            elif not request.enabled and listing.enabled:
+                # Disable listing
+                listing.enabled = False
+                listing.sync_enabled = False
+
+            updated += 1
+            details.append(
+                {
+                    "id": listing_id,
+                    "success": True,
+                    "enabled": listing.enabled,
+                }
+            )
+        except Exception as e:
+            failed += 1
+            details.append(
+                {
+                    "id": listing_id,
+                    "success": False,
+                    "error": str(e),
+                }
+            )
+
+    await db.commit()
+    logger.info("Bulk update: %d updated, %d failed", updated, failed)
+
+    return {
+        "updated": updated,
+        "failed": failed,
+        "details": details,
+    }
