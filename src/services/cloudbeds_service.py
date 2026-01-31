@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Cloudbeds API service wrapper using cloudbeds-pms SDK."""
 
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -12,6 +13,9 @@ logger = logging.getLogger(__name__)
 
 
 PHONE_LAST_DIGITS = 4
+MAX_RETRIES = 3
+BASE_DELAY_SECONDS = 1.0
+MAX_DELAY_SECONDS = 30.0
 
 
 class CloudbedsServiceError(Exception):
@@ -20,11 +24,26 @@ class CloudbedsServiceError(Exception):
     pass
 
 
+class RateLimitError(CloudbedsServiceError):
+    """Exception raised when API rate limit is exceeded."""
+
+    def __init__(self, message: str, retry_after: float | None = None) -> None:
+        """Initialize RateLimitError.
+
+        Args:
+            message: Error message.
+            retry_after: Seconds to wait before retry, if provided by API.
+        """
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
 class CloudbedsService:
     """Service wrapper for Cloudbeds API operations.
 
     Provides methods for fetching property and booking data from Cloudbeds
-    using the cloudbeds-pms SDK with automatic token refresh.
+    using the cloudbeds-pms SDK with automatic token refresh and rate limit
+    handling with exponential backoff.
     """
 
     def __init__(
@@ -41,6 +60,55 @@ class CloudbedsService:
         self._access_token = access_token
         self._refresh_token = refresh_token
         self._settings = get_settings()
+
+    async def _with_retry(
+        self,
+        operation: str,
+        func: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Execute an API call with exponential backoff retry on rate limit.
+
+        Args:
+            operation: Description of operation for logging.
+            func: Async function to call.
+            *args: Positional arguments for func.
+            **kwargs: Keyword arguments for func.
+
+        Returns:
+            Result from func.
+
+        Raises:
+            CloudbedsServiceError: If all retries fail.
+        """
+        last_error: Exception | None = None
+        delay = BASE_DELAY_SECONDS
+
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                return await func(*args, **kwargs)
+            except RateLimitError as e:
+                last_error = e
+                if attempt == MAX_RETRIES:
+                    break
+
+                # Use retry_after if provided, otherwise exponential backoff
+                wait_time = e.retry_after if e.retry_after else delay
+                wait_time = min(wait_time, MAX_DELAY_SECONDS)
+
+                logger.warning(
+                    "%s rate limited, retrying in %.1fs (attempt %d/%d)",
+                    operation,
+                    wait_time,
+                    attempt + 1,
+                    MAX_RETRIES,
+                )
+                await asyncio.sleep(wait_time)
+                delay *= 2  # Exponential backoff
+
+        msg = f"{operation} failed after {MAX_RETRIES} retries: {last_error}"
+        raise CloudbedsServiceError(msg) from last_error
 
     async def get_properties(self) -> list[dict[str, Any]]:
         """Fetch all properties from Cloudbeds.
