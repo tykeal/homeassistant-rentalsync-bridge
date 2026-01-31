@@ -557,3 +557,46 @@ class TestBulkListingOperations:
 
         assert response.status_code == 400
         assert "maximum" in response.json()["detail"].lower()
+
+
+class TestManualSync:
+    """Tests for POST /api/listings/{id}/sync endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_sync_listing_not_found(self, listings_app):
+        """Test sync returns 404 for non-existent listing."""
+        async with AsyncClient(
+            transport=ASGITransport(app=listings_app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/listings/999/sync",
+                headers={"Authorization": "Bearer test"},
+            )
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_sync_listing_no_oauth(self, listings_app, listings_session):
+        """Test sync returns 503 when OAuth not configured."""
+        listing = Listing(
+            cloudbeds_id="SYNC1",
+            name="Sync Test Property",
+            ical_url_slug="sync-test",
+            enabled=True,
+            sync_enabled=True,
+        )
+        listings_session.add(listing)
+        await listings_session.commit()
+        await listings_session.refresh(listing)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=listings_app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                f"/api/listings/{listing.id}/sync",
+                headers={"Authorization": "Bearer test"},
+            )
+
+        assert response.status_code == 503
+        assert "oauth" in response.json()["detail"].lower()

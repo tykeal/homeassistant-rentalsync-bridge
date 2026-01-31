@@ -7,11 +7,15 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database import get_db
+from src.models.oauth_credential import OAuthCredential
 from src.repositories.listing_repository import MAX_LISTINGS, ListingRepository
+from src.services.calendar_service import get_calendar_cache
+from src.services.sync_service import SyncService, SyncServiceError
 
 logger = logging.getLogger(__name__)
 
@@ -409,3 +413,75 @@ async def bulk_update_listings(
         "failed": failed,
         "details": details,
     }
+
+
+class SyncResponse(BaseModel):
+    """Response model for sync operation."""
+
+    success: bool = Field(description="Whether sync succeeded")
+    inserted: int = Field(description="Number of new bookings")
+    updated: int = Field(description="Number of updated bookings")
+    cancelled: int = Field(description="Number of cancelled bookings")
+    message: str = Field(description="Status message")
+
+
+@router.post(
+    "/{listing_id}/sync",
+    response_model=SyncResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        404: {"description": "Listing not found"},
+        503: {"description": "Sync failed"},
+    },
+)
+async def sync_listing(
+    listing_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, Any]:
+    """Manually trigger sync for a listing.
+
+    Args:
+        listing_id: Listing ID.
+        db: Database session.
+
+    Returns:
+        Sync results with booking counts.
+    """
+    repo = ListingRepository(db)
+    listing = await repo.get_by_id(listing_id)
+
+    if not listing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Listing not found",
+        )
+
+    # Get OAuth credentials
+    result = await db.execute(select(OAuthCredential).limit(1))
+    credential = result.scalar_one_or_none()
+
+    if not credential:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="OAuth credentials not configured",
+        )
+
+    # Run sync
+    try:
+        sync_service = SyncService(db, get_calendar_cache())
+        counts = await sync_service.sync_listing(listing, credential)
+
+        return {
+            "success": True,
+            "inserted": counts["inserted"],
+            "updated": counts["updated"],
+            "cancelled": counts["cancelled"],
+            "message": "Sync completed successfully",
+        }
+
+    except SyncServiceError as e:
+        logger.error("Manual sync failed for listing %s: %s", listing_id, e)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Sync failed: {e}",
+        ) from e
