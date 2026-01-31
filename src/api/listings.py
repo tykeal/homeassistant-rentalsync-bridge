@@ -196,10 +196,13 @@ async def sync_properties(
             existing.timezone = prop.get("propertyTimezone", existing.timezone)
             updated += 1
         else:
-            # Create new listing
+            # Create new listing with generated slug
+            name = prop.get("propertyName", f"Property {cloudbeds_id}")
+            slug = await repo.generate_unique_slug(name)
             new_listing = Listing(
                 cloudbeds_id=cloudbeds_id,
-                name=prop.get("propertyName", f"Property {cloudbeds_id}"),
+                name=name,
+                ical_url_slug=slug,
                 timezone=prop.get("propertyTimezone", "UTC"),
                 enabled=False,
                 sync_enabled=False,
