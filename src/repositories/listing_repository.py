@@ -6,7 +6,7 @@ import secrets
 import string
 from collections.abc import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.listing import Listing
@@ -121,9 +121,9 @@ class ListingRepository:
             Number of enabled listings.
         """
         result = await self._session.execute(
-            select(Listing).where(Listing.enabled.is_(True))
+            select(func.count()).select_from(Listing).where(Listing.enabled.is_(True))
         )
-        return len(result.scalars().all())
+        return result.scalar() or 0
 
     async def get_by_ids(self, listing_ids: list[int]) -> dict[int, Listing]:
         """Get multiple listings by their IDs in a single query.
