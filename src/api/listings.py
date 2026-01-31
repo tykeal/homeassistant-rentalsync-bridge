@@ -269,6 +269,7 @@ async def _process_bulk_listing(
     enabled: bool,
     repo: ListingRepository,
     generated_slugs: set[str],
+    existing_slugs: set[str],
 ) -> tuple[bool, dict[str, Any]]:
     """Process a single listing in a bulk operation.
 
@@ -277,6 +278,7 @@ async def _process_bulk_listing(
         enabled: Target enabled state.
         repo: Listing repository.
         generated_slugs: Set of slugs generated in this transaction.
+        existing_slugs: Pre-fetched set of all existing slugs in database.
 
     Returns:
         Tuple of (changed, detail_dict).
@@ -287,10 +289,10 @@ async def _process_bulk_listing(
         if not listing.ical_url_slug:
             slug = await repo.generate_unique_slug(listing.name)
             # Ensure slug doesn't collide with others in this transaction
-            # AND doesn't already exist in database
+            # or with existing slugs (pre-fetched to avoid N+1 queries)
             base_slug = slug
             counter = 1
-            while slug in generated_slugs or await repo.get_by_slug(slug):
+            while slug in generated_slugs or slug in existing_slugs:
                 slug = f"{base_slug}-{counter}"
                 counter += 1
             generated_slugs.add(slug)
@@ -361,7 +363,9 @@ async def bulk_update_listings(
             )
 
     # Track generated slugs within this transaction to detect collisions
+    # Pre-fetch all existing slugs to avoid N+1 queries during collision resolution
     generated_slugs: set[str] = set()
+    existing_slugs = await repo.get_all_slugs() if request.enabled else set()
 
     for listing_id in request.listing_ids:
         listing = listings_map.get(listing_id)
@@ -374,7 +378,7 @@ async def bulk_update_listings(
 
         try:
             changed, detail = await _process_bulk_listing(
-                listing, request.enabled, repo, generated_slugs
+                listing, request.enabled, repo, generated_slugs, existing_slugs
             )
             if changed:
                 updated += 1
@@ -388,7 +392,7 @@ async def bulk_update_listings(
     except Exception as e:
         await db.rollback()
         logger.error("Bulk update commit failed: %s", e)
-        failed_ids = [d["id"] for d in details if d.get("success")]
+        failed_ids = [d["id"] for d in details if not d.get("success")]
         msg = f"Failed to save {len(failed_ids)} listing(s). Please retry."
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

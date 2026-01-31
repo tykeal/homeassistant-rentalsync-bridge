@@ -143,6 +143,17 @@ class ListingRepository:
         listings = result.scalars().all()
         return {listing.id: listing for listing in listings}
 
+    async def get_all_slugs(self) -> set[str]:
+        """Get all existing iCal URL slugs.
+
+        Returns:
+            Set of all non-null slugs in the database.
+        """
+        result = await self._session.execute(
+            select(Listing.ical_url_slug).where(Listing.ical_url_slug.isnot(None))
+        )
+        return {slug for (slug,) in result.all() if slug}
+
     async def create(self, listing: Listing) -> Listing:
         """Create a new listing.
 
