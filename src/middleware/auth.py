@@ -5,7 +5,8 @@
 import logging
 from collections.abc import Awaitable, Callable
 
-from fastapi import HTTPException, Request, status
+from fastapi import Request, status
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
@@ -66,9 +67,6 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
 
         Returns:
             HTTP response.
-
-        Raises:
-            HTTPException: If authentication fails.
         """
         settings = get_settings()
         path = request.url.path
@@ -86,9 +84,9 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         user_id = request.headers.get(HA_AUTHENTICATED_HEADER)
         if not user_id:
             logger.warning("Unauthorized access attempt to %s", path)
-            raise HTTPException(
+            return JSONResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Authentication required",
+                content={"detail": "Authentication required"},
                 headers={"WWW-Authenticate": "Home Assistant"},
             )
 

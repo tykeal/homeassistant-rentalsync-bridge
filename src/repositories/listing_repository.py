@@ -133,7 +133,7 @@ class ListingRepository:
 
         # Generate slug if not provided
         if not listing.ical_url_slug:
-            listing.ical_url_slug = await self._generate_unique_slug(listing.name)
+            listing.ical_url_slug = await self.generate_unique_slug(listing.name)
 
         self._session.add(listing)
         await self._session.flush()
@@ -162,7 +162,7 @@ class ListingRepository:
         await self._session.delete(listing)
         await self._session.flush()
 
-    async def _generate_unique_slug(self, name: str) -> str:
+    async def generate_unique_slug(self, name: str) -> str:
         """Generate a unique URL-safe slug from listing name.
 
         Args:

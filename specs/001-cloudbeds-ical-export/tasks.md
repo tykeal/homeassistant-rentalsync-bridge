@@ -99,25 +99,25 @@ Project uses single-project structure:
 
 ### Implementation for User Story 2
 
-- [ ] T038 [P] [US2] Create GET /api/oauth/status endpoint in src/api/oauth.py for OAuth credential status
-- [ ] T039 [P] [US2] Create POST /api/oauth/configure endpoint in src/api/oauth.py for setting credentials
-- [ ] T040 [P] [US2] Create POST /api/oauth/refresh endpoint in src/api/oauth.py for manual token refresh
-- [ ] T041 [P] [US2] Create GET /api/status endpoint in src/api/status.py for system status
-- [ ] T042 [P] [US2] Create GET /api/listings endpoint in src/api/listings.py for listing all properties
-- [ ] T043 [P] [US2] Create GET /api/listings/{id} endpoint in src/api/listings.py for listing details
-- [ ] T044 [P] [US2] Create POST /api/listings/{id}/enable endpoint in src/api/listings.py for enabling export
-- [ ] T045 [P] [US2] Create PUT /api/listings/{id} endpoint in src/api/listings.py for updating configuration
-- [ ] T046 [P] [US2] Create GET /api/listings/{id}/custom-fields endpoint in src/api/custom_fields.py for field configuration
-- [ ] T047 [P] [US2] Create PUT /api/listings/{id}/custom-fields endpoint in src/api/custom_fields.py for updating fields
-- [ ] T048 [US2] Implement authentication check for all admin endpoints using auth middleware in src/api/* routers
-- [ ] T049 [P] [US2] Create HTML admin UI template in src/templates/admin.html with Jinja2
-- [ ] T050 [P] [US2] Create CSS stylesheet in src/static/css/admin.css for admin UI styling
-- [ ] T051 [P] [US2] Create JavaScript for admin UI in src/static/js/admin.js for API interactions
-- [ ] T052 [US2] Add OAuth configuration form and flow in admin UI
-- [ ] T053 [US2] Add listing management interface in admin UI with enable/disable toggles
-- [ ] T054 [US2] Add custom field selection interface in admin UI with add/remove functionality
-- [ ] T055 [US2] Add sync settings interface in admin UI with polling interval dropdown (1-60 minutes, default 5)
-- [ ] T056 [US2] Implement ical_url_slug generation (slugify) in src/repositories/listing_repository.py
+- [x] T038 [P] [US2] Create GET /api/oauth/status endpoint in src/api/oauth.py for OAuth credential status
+- [x] T039 [P] [US2] Create POST /api/oauth/configure endpoint in src/api/oauth.py for setting credentials
+- [x] T040 [P] [US2] Create POST /api/oauth/refresh endpoint in src/api/oauth.py for manual token refresh
+- [x] T041 [P] [US2] Create GET /api/status endpoint in src/api/status.py for system status
+- [x] T042 [P] [US2] Create GET /api/listings endpoint in src/api/listings.py for listing all properties
+- [x] T043 [P] [US2] Create GET /api/listings/{id} endpoint in src/api/listings.py for listing details
+- [x] T044 [P] [US2] Create POST /api/listings/{id}/enable endpoint in src/api/listings.py for enabling export
+- [x] T045 [P] [US2] Create PUT /api/listings/{id} endpoint in src/api/listings.py for updating configuration
+- [x] T046 [P] [US2] Create GET /api/listings/{id}/custom-fields endpoint in src/api/custom_fields.py for field configuration
+- [x] T047 [P] [US2] Create PUT /api/listings/{id}/custom-fields endpoint in src/api/custom_fields.py for updating fields
+- [x] T048 [US2] Implement authentication check for all admin endpoints using auth middleware in src/api/* routers
+- [x] T049 [P] [US2] Create HTML admin UI template in src/templates/admin.html with Jinja2
+- [x] T050 [P] [US2] Create CSS stylesheet in src/static/css/admin.css for admin UI styling
+- [x] T051 [P] [US2] Create JavaScript for admin UI in src/static/js/admin.js for API interactions
+- [x] T052 [US2] Add OAuth configuration form and flow in admin UI
+- [x] T053 [US2] Add listing management interface in admin UI with enable/disable toggles
+- [x] T054 [US2] Add custom field selection interface in admin UI with add/remove functionality
+- [x] T055 [US2] Add sync settings interface in admin UI with polling interval dropdown (1-60 minutes, default 5)
+- [x] T056 [US2] Implement ical_url_slug generation (slugify) in src/repositories/listing_repository.py
 
 **Checkpoint**: Admin portal fully functional - users can configure listings and customize fields via web UI
 
