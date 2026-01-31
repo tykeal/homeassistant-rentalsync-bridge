@@ -26,6 +26,7 @@ const elements = {
     syncInterval: document.getElementById('sync-interval'),
     saveSyncBtn: document.getElementById('save-sync-btn'),
     listingsContainer: document.getElementById('listings-container'),
+    syncPropertiesBtn: document.getElementById('sync-properties-btn'),
     bulkEnableBtn: document.getElementById('bulk-enable-btn'),
     bulkDisableBtn: document.getElementById('bulk-disable-btn'),
     selectedCount: document.getElementById('selected-count'),
@@ -215,9 +216,38 @@ async function loadListings() {
     }
 }
 
+/**
+ * Sync properties from Cloudbeds to the local database.
+ */
+async function syncPropertiesFromCloudbeds() {
+    const btn = elements.syncPropertiesBtn;
+    const originalText = btn.textContent;
+
+    try {
+        btn.disabled = true;
+        btn.textContent = 'Syncing...';
+
+        const result = await fetchAPI('/api/listings/sync-properties', { method: 'POST' });
+
+        btn.textContent = '✓ Done';
+        setTimeout(() => {
+            btn.textContent = originalText;
+            btn.disabled = false;
+        }, 2000);
+
+        // Show result and refresh listings
+        alert(`${result.message}\nCreated: ${result.created}, Updated: ${result.updated}`);
+        await loadListings();
+    } catch (error) {
+        btn.textContent = originalText;
+        btn.disabled = false;
+        alert(`Failed to sync properties: ${error.message}`);
+    }
+}
+
 function renderListings(listings) {
     if (listings.length === 0) {
-        elements.listingsContainer.innerHTML = '<p class="loading">No listings found. Sync with Cloudbeds to populate.</p>';
+        elements.listingsContainer.innerHTML = '<p class="loading">No listings found. Click "Sync Properties from Cloudbeds" to populate.</p>';
         updateBulkButtons();
         return;
     }
@@ -536,6 +566,7 @@ function initEventListeners() {
     elements.oauthForm.addEventListener('submit', saveOAuthCredentials);
     elements.refreshTokenBtn.addEventListener('click', refreshToken);
     elements.saveSyncBtn.addEventListener('click', saveSyncSettings);
+    elements.syncPropertiesBtn.addEventListener('click', syncPropertiesFromCloudbeds);
     elements.addFieldBtn.addEventListener('click', addField);
     elements.saveFieldsBtn.addEventListener('click', saveCustomFields);
     elements.bulkEnableBtn.addEventListener('click', bulkEnable);

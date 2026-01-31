@@ -13,9 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database import get_db
 from src.models.booking import Booking
+from src.models.listing import Listing
 from src.models.oauth_credential import OAuthCredential
 from src.repositories.listing_repository import MAX_LISTINGS, ListingRepository
 from src.services.calendar_service import get_calendar_cache
+from src.services.cloudbeds_service import CloudbedsService, CloudbedsServiceError
 from src.services.sync_service import SyncService, SyncServiceError
 
 logger = logging.getLogger(__name__)
@@ -83,6 +85,15 @@ class BookingsResponse(BaseModel):
     total: int = Field(description="Total count")
 
 
+class SyncPropertiesResponse(BaseModel):
+    """Response model for sync properties operation."""
+
+    success: bool = Field(description="Whether operation succeeded")
+    created: int = Field(description="Number of new listings created")
+    updated: int = Field(description="Number of existing listings updated")
+    message: str = Field(description="Status message")
+
+
 def _listing_to_response(listing: Any) -> dict[str, Any]:
     """Convert listing model to response dict."""
     return {
@@ -115,6 +126,90 @@ async def list_listings(
     return {
         "listings": [_listing_to_response(listing) for listing in listings],
         "total": len(listings),
+    }
+
+
+@router.post("/sync-properties", response_model=SyncPropertiesResponse)
+async def sync_properties(
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, Any]:
+    """Sync properties from Cloudbeds to the database.
+
+    Fetches all properties from Cloudbeds API and creates or updates
+    corresponding listings in the database. This populates the listings
+    that can then be enabled for iCal export.
+
+    Returns:
+        Summary of created and updated listings.
+
+    Raises:
+        HTTPException: 503 if OAuth not configured or API fails.
+    """
+    # Get OAuth credentials
+    result = await db.execute(select(OAuthCredential).limit(1))
+    credential = result.scalar_one_or_none()
+
+    if not credential or not credential.access_token:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="OAuth not configured. Please configure Cloudbeds OAuth first.",
+        )
+
+    # Fetch properties from Cloudbeds
+    try:
+        service = CloudbedsService(access_token=credential.access_token)
+        properties = await service.get_properties()
+    except CloudbedsServiceError as e:
+        logger.error("Failed to fetch properties from Cloudbeds: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to fetch properties from Cloudbeds: {e}",
+        ) from e
+
+    if not properties:
+        return {
+            "success": True,
+            "created": 0,
+            "updated": 0,
+            "message": "No properties found in Cloudbeds account",
+        }
+
+    # Create or update listings
+    repo = ListingRepository(db)
+    created = 0
+    updated = 0
+
+    for prop in properties:
+        cloudbeds_id = str(prop.get("propertyID", ""))
+        if not cloudbeds_id:
+            continue
+
+        existing = await repo.get_by_cloudbeds_id(cloudbeds_id)
+
+        if existing:
+            # Update existing listing
+            existing.name = prop.get("propertyName", existing.name)
+            existing.timezone = prop.get("propertyTimezone", existing.timezone)
+            updated += 1
+        else:
+            # Create new listing
+            new_listing = Listing(
+                cloudbeds_id=cloudbeds_id,
+                name=prop.get("propertyName", f"Property {cloudbeds_id}"),
+                timezone=prop.get("propertyTimezone", "UTC"),
+                enabled=False,
+                sync_enabled=False,
+            )
+            db.add(new_listing)
+            created += 1
+
+    await db.commit()
+
+    return {
+        "success": True,
+        "created": created,
+        "updated": updated,
+        "message": f"Synced {created + updated} properties from Cloudbeds",
     }
 
 

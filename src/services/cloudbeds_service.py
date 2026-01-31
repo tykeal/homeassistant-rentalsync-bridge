@@ -5,7 +5,10 @@
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
+from http import HTTPStatus
 from typing import Any
+
+import httpx
 
 from src.config import get_settings
 
@@ -111,10 +114,12 @@ class CloudbedsService:
         raise CloudbedsServiceError(msg) from last_error
 
     async def get_properties(self) -> list[dict[str, Any]]:
-        """Fetch all properties from Cloudbeds.
+        """Fetch all properties from Cloudbeds using OAuth metadata.
+
+        The OAuth metadata endpoint returns property info associated with the token.
 
         Returns:
-            List of property dictionaries with id, name, and other details.
+            List of property dictionaries with id, name, and timezone.
 
         Raises:
             CloudbedsServiceError: If API call fails.
@@ -123,10 +128,54 @@ class CloudbedsService:
             msg = "Access token not configured"
             raise CloudbedsServiceError(msg)
 
-        # TODO: Implement actual SDK call when cloudbeds-pms is available
-        # For now, return placeholder to allow structure to be built
-        logger.warning("CloudbedsService.get_properties: SDK not yet integrated")
-        return []
+        async def fetch_metadata() -> list[dict[str, Any]]:
+            """Fetch property metadata from Cloudbeds API."""
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    "https://api.cloudbeds.com/api/v1.3/oauth/metadata",
+                    headers={
+                        "Authorization": f"Bearer {self._access_token}",
+                        "Accept": "application/json",
+                    },
+                    timeout=30.0,
+                )
+
+                if response.status_code == HTTPStatus.TOO_MANY_REQUESTS:
+                    retry_after = response.headers.get("Retry-After")
+                    raise RateLimitError(
+                        "Rate limited",
+                        retry_after=float(retry_after) if retry_after else None,
+                    )
+
+                if response.status_code != HTTPStatus.OK:
+                    msg = f"API error: {response.status_code} {response.text}"
+                    raise CloudbedsServiceError(msg)
+
+                data = response.json()
+
+                # The metadata response contains property info
+                # Structure: {"success": true, "data": {"propertyID": "...", ...}}
+                if not data.get("success"):
+                    msg = f"API returned error: {data}"
+                    raise CloudbedsServiceError(msg)
+
+                prop_data = data.get("data", {})
+                if not prop_data:
+                    return []
+
+                # Convert to list format (API returns single property per token)
+                return [
+                    {
+                        "propertyID": prop_data.get("propertyID"),
+                        "propertyName": prop_data.get("propertyName"),
+                        "propertyTimezone": prop_data.get("propertyTimezone"),
+                    }
+                ]
+
+        result: list[dict[str, Any]] = await self._with_retry(
+            "get_properties", fetch_metadata
+        )
+        return result
 
     async def get_reservations(
         self,

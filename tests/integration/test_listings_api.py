@@ -736,3 +736,21 @@ class TestGetListingBookings:
         # Verify fields
         assert data["bookings"][0]["guest_name"] == "John Doe"
         assert data["bookings"][0]["guest_phone_last4"] == "1234"
+
+
+class TestSyncProperties:
+    """Tests for POST /api/listings/sync-properties endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_sync_properties_no_oauth(self, listings_app):
+        """Test returns 503 when OAuth not configured."""
+        async with AsyncClient(
+            transport=ASGITransport(app=listings_app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/listings/sync-properties",
+                headers={"Authorization": "Bearer test"},
+            )
+
+        assert response.status_code == 503
+        assert "oauth" in response.json()["detail"].lower()
