@@ -25,6 +25,9 @@ class OAuthStatusResponse(BaseModel):
 
     configured: bool = Field(description="Whether OAuth credentials are configured")
     connected: bool = Field(description="Whether OAuth connection is active")
+    auth_type: str | None = Field(
+        default=None, description="Authentication type: 'api_key' or 'oauth'"
+    )
     token_expires_at: datetime | None = Field(
         default=None, description="Token expiration time"
     )
@@ -38,8 +41,15 @@ class OAuthConfigureRequest(BaseModel):
     client_secret: str = Field(
         min_length=1, description="Cloudbeds OAuth client secret"
     )
-    access_token: str = Field(min_length=1, description="OAuth access token")
-    refresh_token: str = Field(min_length=1, description="OAuth refresh token")
+    api_key: str | None = Field(
+        default=None, description="Cloudbeds API key (alternative to OAuth tokens)"
+    )
+    access_token: str | None = Field(
+        default=None, description="OAuth access token (optional if using API key)"
+    )
+    refresh_token: str | None = Field(
+        default=None, description="OAuth refresh token (optional if using API key)"
+    )
     token_expires_at: datetime | None = Field(
         default=None, description="Token expiration time"
     )
@@ -78,15 +88,28 @@ async def get_oauth_status(
         return {
             "configured": False,
             "connected": False,
+            "auth_type": None,
             "token_expires_at": None,
             "token_expired": False,
         }
 
-    token_expired = credential.is_token_expired()
+    # Determine auth type and connection status
+    if credential.has_api_key():
+        # API key auth - always connected if configured
+        return {
+            "configured": True,
+            "connected": True,
+            "auth_type": "api_key",
+            "token_expires_at": None,
+            "token_expired": False,
+        }
 
+    # OAuth token auth
+    token_expired = credential.is_token_expired()
     return {
         "configured": True,
         "connected": not token_expired,
+        "auth_type": "oauth",
         "token_expires_at": credential.token_expires_at,
         "token_expired": token_expired,
     }
@@ -99,6 +122,10 @@ async def configure_oauth(
 ) -> dict[str, Any]:
     """Configure OAuth credentials.
 
+    Supports two authentication modes:
+    1. API Key: Provide client_id, client_secret, and api_key
+    2. OAuth: Provide client_id, client_secret, access_token, and refresh_token
+
     Args:
         request: OAuth credential configuration.
         db: Database session.
@@ -106,6 +133,13 @@ async def configure_oauth(
     Returns:
         Configuration status.
     """
+    # Validate that either api_key or tokens are provided
+    if not request.api_key and not request.access_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Either api_key or access_token must be provided",
+        )
+
     # Check for existing credential
     result = await db.execute(select(OAuthCredential).limit(1))
     credential = result.scalar_one_or_none()
@@ -114,6 +148,7 @@ async def configure_oauth(
         # Update existing
         credential.client_id = request.client_id
         credential.client_secret = request.client_secret
+        credential.api_key = request.api_key
         credential.access_token = request.access_token
         credential.refresh_token = request.refresh_token
         credential.token_expires_at = request.token_expires_at
@@ -122,6 +157,7 @@ async def configure_oauth(
         # Create new
         credential = OAuthCredential(client_id=request.client_id)
         credential.client_secret = request.client_secret
+        credential.api_key = request.api_key
         credential.access_token = request.access_token
         credential.refresh_token = request.refresh_token
         credential.token_expires_at = request.token_expires_at
@@ -130,9 +166,10 @@ async def configure_oauth(
 
     await db.commit()
 
+    auth_type = "API key" if request.api_key else "OAuth tokens"
     return {
         "success": True,
-        "message": "OAuth credentials configured successfully",
+        "message": f"Credentials configured successfully using {auth_type}",
     }
 
 

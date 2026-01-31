@@ -77,6 +77,7 @@ class OAuthCredential(Base):
     _client_secret: Mapped[str] = mapped_column(
         "client_secret", String(255), nullable=False
     )
+    _api_key: Mapped[str | None] = mapped_column("api_key", Text, nullable=True)
     _access_token: Mapped[str | None] = mapped_column(
         "access_token", Text, nullable=True
     )
@@ -102,6 +103,16 @@ class OAuthCredential(Base):
         self._client_secret = encrypt_value(value)  # type: ignore[assignment]
 
     @property
+    def api_key(self) -> str | None:
+        """Get decrypted API key."""
+        return decrypt_value(self._api_key)
+
+    @api_key.setter
+    def api_key(self, value: str | None) -> None:
+        """Set encrypted API key."""
+        self._api_key = encrypt_value(value)
+
+    @property
     def access_token(self) -> str | None:
         """Get decrypted access token."""
         return decrypt_value(self._access_token)
@@ -120,6 +131,14 @@ class OAuthCredential(Base):
     def refresh_token(self, value: str | None) -> None:
         """Set encrypted refresh token."""
         self._refresh_token = encrypt_value(value)
+
+    def has_api_key(self) -> bool:
+        """Check if API key authentication is configured.
+
+        Returns:
+            True if API key is set.
+        """
+        return self._api_key is not None
 
     def is_token_expired(self) -> bool:
         """Check if the access token is expired.

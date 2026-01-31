@@ -42,23 +42,40 @@ SPDX-License-Identifier: Apache-2.0
 
         <!-- OAuth Configuration -->
         <section id="oauth-section" class="card">
-            <h2>Cloudbeds OAuth</h2>
+            <h2>Cloudbeds Authentication</h2>
             <div id="oauth-status-display">
-                <p id="oauth-status-text">Checking OAuth status...</p>
+                <p id="oauth-status-text">Checking authentication status...</p>
             </div>
             <form id="oauth-form" class="hidden">
+                <p class="description">Enter your Cloudbeds credentials. You can use either an API Key (simpler) or OAuth tokens.</p>
                 <div class="form-group">
-                    <label for="client-id">Client ID</label>
+                    <label for="client-id">Client ID *</label>
                     <input type="text" id="client-id" required>
                 </div>
                 <div class="form-group">
-                    <label for="client-secret">Client Secret</label>
+                    <label for="client-secret">Client Secret *</label>
                     <input type="password" id="client-secret" required>
                 </div>
-                <button type="submit" class="btn primary">Save OAuth Credentials</button>
+                <div class="form-group">
+                    <label for="api-key">API Key (recommended)</label>
+                    <input type="text" id="api-key" placeholder="Use API Key OR OAuth tokens below">
+                </div>
+                <details>
+                    <summary>OAuth Tokens (alternative)</summary>
+                    <div class="form-group">
+                        <label for="access-token">Access Token</label>
+                        <input type="text" id="access-token">
+                    </div>
+                    <div class="form-group">
+                        <label for="refresh-token">Refresh Token</label>
+                        <input type="text" id="refresh-token">
+                    </div>
+                </details>
+                <button type="submit" class="btn primary">Save Credentials</button>
             </form>
             <div id="oauth-connected" class="hidden">
                 <p class="success">✓ Connected to Cloudbeds</p>
+                <p id="auth-type-display"></p>
                 <button id="refresh-token-btn" class="btn secondary">Refresh Token</button>
             </div>
         </section>

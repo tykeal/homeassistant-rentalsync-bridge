@@ -16,8 +16,12 @@ const elements = {
     oauthForm: document.getElementById('oauth-form'),
     oauthConnected: document.getElementById('oauth-connected'),
     oauthStatusText: document.getElementById('oauth-status-text'),
+    authTypeDisplay: document.getElementById('auth-type-display'),
     clientId: document.getElementById('client-id'),
     clientSecret: document.getElementById('client-secret'),
+    apiKey: document.getElementById('api-key'),
+    accessToken: document.getElementById('access-token'),
+    refreshToken: document.getElementById('refresh-token'),
     refreshTokenBtn: document.getElementById('refresh-token-btn'),
     syncInterval: document.getElementById('sync-interval'),
     saveSyncBtn: document.getElementById('save-sync-btn'),
@@ -80,37 +84,63 @@ async function loadOAuthStatus() {
             elements.oauthForm.classList.add('hidden');
             elements.oauthConnected.classList.remove('hidden');
             elements.oauthStatusText.textContent = 'Connected to Cloudbeds';
+            if (status.auth_type === 'api_key') {
+                elements.authTypeDisplay.textContent = 'Using API Key authentication';
+                elements.refreshTokenBtn.classList.add('hidden');
+            } else {
+                elements.authTypeDisplay.textContent = 'Using OAuth authentication';
+                elements.refreshTokenBtn.classList.remove('hidden');
+            }
         } else if (status.configured) {
             elements.oauthForm.classList.add('hidden');
-            elements.oauthStatusText.textContent = 'OAuth configured but not connected. Please refresh token.';
+            elements.oauthStatusText.textContent = 'Configured but not connected. Please refresh token.';
             elements.oauthConnected.classList.remove('hidden');
         } else {
             elements.oauthForm.classList.remove('hidden');
             elements.oauthConnected.classList.add('hidden');
-            elements.oauthStatusText.textContent = 'Enter your Cloudbeds OAuth credentials.';
+            elements.oauthStatusText.textContent = 'Enter your Cloudbeds credentials.';
         }
     } catch (error) {
         console.error('Failed to load OAuth status:', error);
-        elements.oauthStatusText.textContent = 'Failed to load OAuth status';
+        elements.oauthStatusText.textContent = 'Failed to load authentication status';
     }
 }
 
 async function saveOAuthCredentials(event) {
     event.preventDefault();
 
+    const apiKey = elements.apiKey.value.trim();
+    const accessToken = elements.accessToken.value.trim();
+
+    // Validate that either API key or access token is provided
+    if (!apiKey && !accessToken) {
+        alert('Please provide either an API Key or OAuth Access Token');
+        return;
+    }
+
     try {
+        const payload = {
+            client_id: elements.clientId.value,
+            client_secret: elements.clientSecret.value,
+        };
+
+        if (apiKey) {
+            payload.api_key = apiKey;
+        }
+        if (accessToken) {
+            payload.access_token = accessToken;
+            payload.refresh_token = elements.refreshToken.value.trim() || null;
+        }
+
         await fetchAPI('/api/oauth/configure', {
             method: 'POST',
-            body: JSON.stringify({
-                client_id: elements.clientId.value,
-                client_secret: elements.clientSecret.value,
-            }),
+            body: JSON.stringify(payload),
         });
 
         await loadOAuthStatus();
         await loadStatus();
     } catch (error) {
-        alert(`Failed to save OAuth credentials: ${error.message}`);
+        alert(`Failed to save credentials: ${error.message}`);
     }
 }
 
