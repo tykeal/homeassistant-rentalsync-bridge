@@ -20,13 +20,82 @@ subscription.
 - Web-based administrative interface
 - Home Assistant addon integration with Ingress authentication
 - Multi-listing support with independent configurations
-- Configurable sync intervals (1-60 minutes)
+- Automatic background sync with configurable intervals
 - Custom field selection for event descriptions
+- Privacy-focused: only phone last 4 digits exposed
+
+## Documentation
+
+- [Quick Start](specs/001-cloudbeds-ical-export/quickstart.md) - Standalone
+  deployment
+- [Home Assistant Add-on Setup](docs/homeassistant-addon-setup.md) - HA
+  installation guide
+- [API Usage](docs/api-usage.md) - REST API reference
+- [Deployment Guide](docs/deployment.md) - Production deployment and HTTPS
 
 ## Quick Start
 
-See [specs/001-cloudbeds-ical-export/quickstart.md](specs/001-cloudbeds-ical-export/quickstart.md)
-for standalone deployment instructions.
+### Docker/Podman
+
+```bash
+# Create data directory
+mkdir -p ./data
+
+# Run container
+docker run -d \
+  --name rentalsync-bridge \
+  -p 8099:8099 \
+  -v ./data:/data \
+  -e STANDALONE_MODE=true \
+  -e DATABASE_URL=sqlite:///data/rentalsync.db \
+  -e CLOUDBEDS_API_KEY=your-api-key \
+  ghcr.io/tykeal/rentalsync-bridge:latest
+
+# Access admin UI at http://localhost:8099/admin
+```
+
+### Home Assistant Add-on
+
+1. Add repository: `https://github.com/tykeal/homeassistant-addons`
+2. Install "RentalSync Bridge" add-on
+3. Configure API key and start
+4. Access via Home Assistant sidebar
+
+## Database Backup
+
+The SQLite database stores all configuration and cached bookings.
+
+### Backup Location
+
+- **Container**: `/data/rentalsync.db`
+- **Home Assistant**: `/config/addons_data/rentalsync-bridge/rentalsync.db`
+
+### Manual Backup
+
+```bash
+# Stop for consistent backup (optional - WAL mode allows hot backup)
+docker stop rentalsync-bridge
+
+# Copy database files
+cp /path/to/data/rentalsync.db ./backup/
+cp /path/to/data/rentalsync.db-wal ./backup/ 2>/dev/null || true
+
+docker start rentalsync-bridge
+```
+
+### Online Backup (No Downtime)
+
+```bash
+sqlite3 /path/to/data/rentalsync.db ".backup /backup/rentalsync-$(date +%Y%m%d).db"
+```
+
+### Restore
+
+```bash
+docker stop rentalsync-bridge
+cp /backup/rentalsync-20260131.db /path/to/data/rentalsync.db
+docker start rentalsync-bridge
+```
 
 ## Development
 
@@ -47,6 +116,21 @@ uv run pre-commit install
 
 # Run tests
 uv run pytest
+
+# Run development server
+uv run uvicorn src.main:app --reload
+```
+
+### Project Structure
+
+```
+src/
+├── api/          # FastAPI route handlers
+├── middleware/   # Authentication and error handling
+├── models/       # SQLAlchemy ORM models
+├── repositories/ # Database access layer
+├── services/     # Business logic
+└── templates/    # HTML templates for admin UI
 ```
 
 ## License
