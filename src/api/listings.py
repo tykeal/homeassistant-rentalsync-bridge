@@ -275,9 +275,10 @@ async def _process_bulk_listing(
         if not listing.ical_url_slug:
             slug = await repo.generate_unique_slug(listing.name)
             # Ensure slug doesn't collide with others in this transaction
+            # AND doesn't already exist in database
             base_slug = slug
             counter = 1
-            while slug in generated_slugs:
+            while slug in generated_slugs or await repo.get_by_slug(slug):
                 slug = f"{base_slug}-{counter}"
                 counter += 1
             generated_slugs.add(slug)
