@@ -129,7 +129,11 @@ class OAuthCredential(Base):
         """
         if self.token_expires_at is None:
             return True
-        return datetime.now(UTC) >= self.token_expires_at
+        # Handle timezone-naive datetimes from database
+        expires_at = self.token_expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        return datetime.now(UTC) >= expires_at
 
     def __repr__(self) -> str:
         """Return string representation."""
