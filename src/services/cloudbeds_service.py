@@ -53,16 +53,35 @@ class CloudbedsService:
         self,
         access_token: str | None = None,
         refresh_token: str | None = None,
+        api_key: str | None = None,
     ) -> None:
         """Initialize CloudbedsService.
 
         Args:
             access_token: OAuth access token for API calls.
             refresh_token: OAuth refresh token for token renewal.
+            api_key: API key for authentication (alternative to OAuth).
         """
         self._access_token = access_token
         self._refresh_token = refresh_token
+        self._api_key = api_key
         self._settings = get_settings()
+
+    def _get_auth_headers(self) -> dict[str, str]:
+        """Get authentication headers for API calls.
+
+        Returns:
+            Dict with Authorization header using either Bearer token or API key.
+
+        Raises:
+            CloudbedsServiceError: If no authentication is configured.
+        """
+        if self._access_token:
+            return {"Authorization": f"Bearer {self._access_token}"}
+        if self._api_key:
+            return {"Authorization": f"Bearer {self._api_key}"}
+        msg = "No authentication configured (access_token or api_key required)"
+        raise CloudbedsServiceError(msg)
 
     async def _with_retry(
         self,
@@ -124,9 +143,7 @@ class CloudbedsService:
         Raises:
             CloudbedsServiceError: If API call fails.
         """
-        if not self._access_token:
-            msg = "Access token not configured"
-            raise CloudbedsServiceError(msg)
+        auth_headers = self._get_auth_headers()
 
         async def fetch_metadata() -> list[dict[str, Any]]:
             """Fetch property metadata from Cloudbeds API."""
@@ -134,7 +151,7 @@ class CloudbedsService:
                 response = await client.get(
                     "https://api.cloudbeds.com/api/v1.3/oauth/metadata",
                     headers={
-                        "Authorization": f"Bearer {self._access_token}",
+                        **auth_headers,
                         "Accept": "application/json",
                     },
                     timeout=30.0,

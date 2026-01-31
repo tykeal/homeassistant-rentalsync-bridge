@@ -143,21 +143,25 @@ async def sync_properties(
         Summary of created and updated listings.
 
     Raises:
-        HTTPException: 503 if OAuth not configured or API fails.
+        HTTPException: 503 if authentication not configured or API fails.
     """
-    # Get OAuth credentials
+    # Get credentials
     result = await db.execute(select(OAuthCredential).limit(1))
     credential = result.scalar_one_or_none()
 
-    if not credential or not credential.access_token:
+    # Check for either access_token or api_key
+    if not credential or (not credential.access_token and not credential.api_key):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="OAuth not configured. Please configure Cloudbeds OAuth first.",
+            detail="Cloudbeds credentials not configured. Configure OAuth or API key.",
         )
 
     # Fetch properties from Cloudbeds
     try:
-        service = CloudbedsService(access_token=credential.access_token)
+        service = CloudbedsService(
+            access_token=credential.access_token,
+            api_key=credential.api_key,
+        )
         properties = await service.get_properties()
     except CloudbedsServiceError as e:
         logger.error("Failed to fetch properties from Cloudbeds: %s", e)
