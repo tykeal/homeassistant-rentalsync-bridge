@@ -37,6 +37,9 @@ class ListingResponse(BaseModel):
     timezone: str | None = Field(default=None, description="Property timezone")
     last_sync_at: str | None = Field(default=None, description="Last sync timestamp")
     last_sync_error: str | None = Field(default=None, description="Last sync error")
+    updated_at: str | None = Field(
+        default=None, description="Last configuration update timestamp"
+    )
 
 
 class ListingsResponse(BaseModel):
@@ -108,6 +111,7 @@ def _listing_to_response(listing: Any) -> dict[str, Any]:
             listing.last_sync_at.isoformat() if listing.last_sync_at else None
         ),
         "last_sync_error": listing.last_sync_error,
+        "updated_at": (listing.updated_at.isoformat() if listing.updated_at else None),
     }
 
 

@@ -190,6 +190,14 @@ function formatSyncStatus(listing) {
     } else {
         status = '<span class="sync-status pending">Never synced</span>';
     }
+
+    // Add config update timestamp for concurrent update awareness (T103)
+    if (listing.updated_at) {
+        const updateDate = new Date(listing.updated_at);
+        const updateTimeAgo = formatTimeAgo(updateDate);
+        status += `<span class="config-status" title="Last configuration change">⏱ Updated ${updateTimeAgo}</span>`;
+    }
+
     return status;
 }
 
