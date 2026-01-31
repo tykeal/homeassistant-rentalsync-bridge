@@ -70,10 +70,11 @@ class SyncService:
             return {"inserted": 0, "updated": 0, "cancelled": 0}
 
         try:
-            # Initialize Cloudbeds service with tokens
+            # Initialize Cloudbeds service with tokens or API key
             cloudbeds = CloudbedsService(
                 access_token=credential.access_token,
                 refresh_token=credential.refresh_token,
+                api_key=credential.api_key,
             )
 
             # Fetch reservations from Cloudbeds

@@ -195,7 +195,7 @@ class CloudbedsService:
 
     async def get_reservations(
         self,
-        property_id: str,  # noqa: ARG002
+        property_id: str,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
     ) -> list[dict[str, Any]]:
@@ -212,9 +212,7 @@ class CloudbedsService:
         Raises:
             CloudbedsServiceError: If API call fails.
         """
-        if not self._access_token:
-            msg = "Access token not configured"
-            raise CloudbedsServiceError(msg)
+        auth_headers = self._get_auth_headers()
 
         # Default date range: 24h ago to 365 days in future
         if start_date is None:
@@ -222,9 +220,48 @@ class CloudbedsService:
         if end_date is None:
             end_date = datetime.now(UTC) + timedelta(days=365)
 
-        # TODO: Implement actual SDK call when cloudbeds-pms is available
-        logger.warning("CloudbedsService.get_reservations: SDK not yet integrated")
-        return []
+        async def fetch_reservations() -> list[dict[str, Any]]:
+            """Fetch reservations from Cloudbeds API."""
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    "https://api.cloudbeds.com/api/v1.3/getReservations",
+                    headers={
+                        **auth_headers,
+                        "Accept": "application/json",
+                    },
+                    params={
+                        "propertyID": property_id,
+                        "startDate": start_date.strftime("%Y-%m-%d"),
+                        "endDate": end_date.strftime("%Y-%m-%d"),
+                        "status": "confirmed,checked_in,checked_out",
+                    },
+                    timeout=30.0,
+                )
+
+                if response.status_code == HTTPStatus.TOO_MANY_REQUESTS:
+                    retry_after = response.headers.get("Retry-After")
+                    raise RateLimitError(
+                        "Rate limited",
+                        retry_after=float(retry_after) if retry_after else None,
+                    )
+
+                if response.status_code != HTTPStatus.OK:
+                    msg = f"API error: {response.status_code} {response.text}"
+                    raise CloudbedsServiceError(msg)
+
+                data = response.json()
+
+                if not data.get("success"):
+                    msg = f"API returned error: {data}"
+                    raise CloudbedsServiceError(msg)
+
+                reservations: list[dict[str, Any]] = data.get("data", [])
+                return reservations
+
+        result: list[dict[str, Any]] = await self._with_retry(
+            "get_reservations", fetch_reservations
+        )
+        return result
 
     async def refresh_access_token(self) -> tuple[str, str, datetime]:
         """Refresh the OAuth access token.
