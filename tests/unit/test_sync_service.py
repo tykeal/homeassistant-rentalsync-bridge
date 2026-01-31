@@ -663,3 +663,98 @@ class TestBookingChangeDetection:
         assert result["inserted"] == 1
         assert result["updated"] == 0
         assert result["cancelled"] == 1
+
+
+class TestInvalidDateHandling:
+    """Tests for handling reservations with invalid dates (T088)."""
+
+    @pytest.mark.asyncio
+    async def test_sync_skips_reservation_with_missing_start_date(
+        self, sync_session, test_credential
+    ):
+        """Test that reservations with missing start date are skipped."""
+        listing = Listing(
+            cloudbeds_id="INVALID_DATE",
+            name="Invalid Date Test",
+            ical_url_slug="invalid-date",
+            enabled=True,
+            sync_enabled=True,
+        )
+        sync_session.add(listing)
+        await sync_session.commit()
+
+        # Reservation with missing startDate
+        mock_reservations = [
+            {
+                "id": "VALID_001",
+                "guestName": "Valid Guest",
+                "startDate": "2026-02-01",
+                "endDate": "2026-02-05",
+                "status": "confirmed",
+            },
+            {
+                "id": "INVALID_002",
+                "guestName": "Invalid Guest",
+                "startDate": None,  # Missing start date
+                "endDate": "2026-02-10",
+                "status": "confirmed",
+            },
+        ]
+
+        with patch(
+            "src.services.sync_service.CloudbedsService"
+        ) as mock_cloudbeds_class:
+            mock_cloudbeds = AsyncMock()
+            mock_cloudbeds.get_reservations = AsyncMock(return_value=mock_reservations)
+            mock_cloudbeds_class.return_value = mock_cloudbeds
+            mock_cloudbeds_class.extract_phone_last4 = (
+                CloudbedsService.extract_phone_last4
+            )
+
+            service = SyncService(sync_session)
+            result = await service.sync_listing(listing, test_credential)
+
+        # Only valid reservation should be inserted
+        assert result["inserted"] == 1
+
+    @pytest.mark.asyncio
+    async def test_sync_skips_reservation_with_unparseable_date(
+        self, sync_session, test_credential
+    ):
+        """Test that reservations with unparseable dates are skipped."""
+        listing = Listing(
+            cloudbeds_id="UNPARSEABLE",
+            name="Unparseable Date Test",
+            ical_url_slug="unparseable-date",
+            enabled=True,
+            sync_enabled=True,
+        )
+        sync_session.add(listing)
+        await sync_session.commit()
+
+        # Reservation with invalid date format
+        mock_reservations = [
+            {
+                "id": "BAD_DATE",
+                "guestName": "Bad Date Guest",
+                "startDate": "not-a-date",
+                "endDate": "also-not-a-date",
+                "status": "confirmed",
+            },
+        ]
+
+        with patch(
+            "src.services.sync_service.CloudbedsService"
+        ) as mock_cloudbeds_class:
+            mock_cloudbeds = AsyncMock()
+            mock_cloudbeds.get_reservations = AsyncMock(return_value=mock_reservations)
+            mock_cloudbeds_class.return_value = mock_cloudbeds
+            mock_cloudbeds_class.extract_phone_last4 = (
+                CloudbedsService.extract_phone_last4
+            )
+
+            service = SyncService(sync_session)
+            result = await service.sync_listing(listing, test_credential)
+
+        # No reservations should be inserted
+        assert result["inserted"] == 0
