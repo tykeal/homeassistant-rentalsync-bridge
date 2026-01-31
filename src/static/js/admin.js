@@ -184,15 +184,13 @@ function renderListings(listings) {
     }
 
     const html = listings.map(listing => {
-        // Use the ID directly - server is source of truth for validation
-        // escapeHtml handles any rendering concerns
-        const id = listing.id;
+        // Coerce ID to number - server is source of truth for validation
+        const id = Number(listing.id);
 
         return `
-        <div class="listing-item${selectedListings.has(id) ? ' selected' : ''}" data-id="${escapeHtml(String(id))}">
-            <input type="checkbox" class="listing-checkbox"
-                   ${selectedListings.has(id) ? 'checked' : ''}
-                   onchange="toggleSelection(${escapeHtml(String(id))}, this.checked)">
+        <div class="listing-item${selectedListings.has(id) ? ' selected' : ''}" data-id="${id}" data-enabled="${listing.enabled}">
+            <input type="checkbox" class="listing-checkbox" data-action="select"
+                   ${selectedListings.has(id) ? 'checked' : ''}>
             <div class="listing-info">
                 <h3>${escapeHtml(listing.name)}</h3>
                 ${listing.enabled && listing.ical_url_slug
@@ -200,9 +198,9 @@ function renderListings(listings) {
                     : '<span class="ical-url">Not enabled</span>'}
             </div>
             <div class="listing-actions">
-                <button class="btn secondary" onclick="openCustomFields(${escapeHtml(String(id))})">Fields</button>
+                <button class="btn secondary" data-action="fields">Fields</button>
                 <label class="toggle-switch">
-                    <input type="checkbox" ${listing.enabled ? 'checked' : ''} onchange="toggleListing(${escapeHtml(String(id))}, this.checked)">
+                    <input type="checkbox" data-action="toggle" ${listing.enabled ? 'checked' : ''}>
                     <span class="toggle-slider"></span>
                 </label>
             </div>
@@ -210,7 +208,39 @@ function renderListings(listings) {
     `}).join('');
 
     elements.listingsContainer.innerHTML = html;
+    attachListingEventHandlers();
     updateBulkButtons();
+}
+
+function attachListingEventHandlers() {
+    // Use event delegation for listing actions
+    elements.listingsContainer.querySelectorAll('.listing-item').forEach(item => {
+        const id = Number(item.dataset.id);
+
+        // Selection checkbox
+        const selectCheckbox = item.querySelector('[data-action="select"]');
+        if (selectCheckbox) {
+            selectCheckbox.addEventListener('change', (e) => {
+                toggleSelection(id, e.target.checked);
+            });
+        }
+
+        // Fields button
+        const fieldsBtn = item.querySelector('[data-action="fields"]');
+        if (fieldsBtn) {
+            fieldsBtn.addEventListener('click', () => {
+                openCustomFields(id);
+            });
+        }
+
+        // Toggle switch
+        const toggleCheckbox = item.querySelector('[data-action="toggle"]');
+        if (toggleCheckbox) {
+            toggleCheckbox.addEventListener('change', (e) => {
+                toggleListing(id, e.target.checked);
+            });
+        }
+    });
 }
 
 function toggleSelection(id, selected) {
