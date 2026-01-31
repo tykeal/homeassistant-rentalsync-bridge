@@ -183,12 +183,20 @@ function renderListings(listings) {
         return;
     }
 
+    let invalidCount = 0;
     const html = listings.map(listing => {
         // Validate listing.id is a number to prevent injection
         const id = Number.isInteger(listing.id) ? listing.id : parseInt(listing.id, 10);
         if (isNaN(id)) {
             console.error('Invalid listing ID:', listing.id);
-            return '';
+            invalidCount++;
+            return `
+            <div class="listing-item error-item">
+                <div class="listing-info">
+                    <h3>⚠️ Invalid Listing</h3>
+                    <span class="ical-url error">Data error: invalid ID "${escapeHtml(String(listing.id))}"</span>
+                </div>
+            </div>`;
         }
 
         return `
@@ -213,6 +221,11 @@ function renderListings(listings) {
     `}).join('');
 
     elements.listingsContainer.innerHTML = html;
+
+    if (invalidCount > 0) {
+        console.warn(`${invalidCount} listing(s) have invalid IDs and cannot be managed`);
+    }
+
     updateBulkButtons();
 }
 

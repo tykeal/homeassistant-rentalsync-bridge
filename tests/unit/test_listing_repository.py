@@ -142,3 +142,62 @@ class TestCountEnabled:
         repo = ListingRepository(repo_session)
         count = await repo.count_enabled()
         assert count == 2
+
+
+class TestGetByIds:
+    """Tests for get_by_ids bulk lookup method."""
+
+    @pytest.mark.asyncio
+    async def test_get_by_ids_returns_matching_listings(self, repo_session):
+        """Test bulk lookup returns requested listings."""
+        listings = [
+            Listing(
+                cloudbeds_id="BULK1",
+                name="Bulk 1",
+                ical_url_slug="bulk-1",
+                enabled=True,
+                sync_enabled=True,
+            ),
+            Listing(
+                cloudbeds_id="BULK2",
+                name="Bulk 2",
+                ical_url_slug="bulk-2",
+                enabled=False,
+                sync_enabled=False,
+            ),
+            Listing(
+                cloudbeds_id="BULK3",
+                name="Bulk 3",
+                ical_url_slug="bulk-3",
+                enabled=True,
+                sync_enabled=True,
+            ),
+        ]
+        for listing in listings:
+            repo_session.add(listing)
+        await repo_session.commit()
+        for listing in listings:
+            await repo_session.refresh(listing)
+
+        repo = ListingRepository(repo_session)
+        # Request only first two
+        result = await repo.get_by_ids([listings[0].id, listings[1].id])
+
+        assert len(result) == 2
+        assert listings[0].id in result
+        assert listings[1].id in result
+        assert listings[2].id not in result
+
+    @pytest.mark.asyncio
+    async def test_get_by_ids_empty_list(self, repo_session):
+        """Test bulk lookup with empty list returns empty dict."""
+        repo = ListingRepository(repo_session)
+        result = await repo.get_by_ids([])
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_get_by_ids_nonexistent(self, repo_session):
+        """Test bulk lookup with nonexistent IDs returns empty dict."""
+        repo = ListingRepository(repo_session)
+        result = await repo.get_by_ids([9999, 8888])
+        assert result == {}

@@ -217,6 +217,15 @@ header .subtitle {
     border-color: var(--primary-color);
 }
 
+.listing-item.error-item {
+    background-color: #fff3f3;
+    border-color: var(--danger-color);
+}
+
+.listing-item.error-item .ical-url.error {
+    color: var(--danger-color);
+}
+
 .listing-checkbox {
     margin-right: 10px;
 }

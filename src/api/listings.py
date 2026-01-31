@@ -262,19 +262,21 @@ async def bulk_update_listings(
     failed = 0
     details: list[dict[str, Any]] = []
 
+    # Fetch all requested listings in a single query
+    listings_map = await repo.get_by_ids(request.listing_ids)
+
     # Check max listings constraint if enabling
     if request.enabled:
         current_enabled = await repo.count_enabled()
-        listings_to_enable = len(request.listing_ids)
 
-        # Get how many of the requested listings are already enabled
-        already_enabled = 0
-        for listing_id in request.listing_ids:
-            listing = await repo.get_by_id(listing_id)
-            if listing and listing.enabled:
-                already_enabled += 1
+        # Count how many of the requested listings are already enabled
+        already_enabled = sum(
+            1
+            for lid in request.listing_ids
+            if lid in listings_map and listings_map[lid].enabled
+        )
 
-        new_enabled = listings_to_enable - already_enabled
+        new_enabled = len(request.listing_ids) - already_enabled
         if current_enabled + new_enabled > MAX_LISTINGS:
             msg = f"Cannot enable: would exceed maximum of {MAX_LISTINGS} listings"
             raise HTTPException(
@@ -283,7 +285,7 @@ async def bulk_update_listings(
             )
 
     for listing_id in request.listing_ids:
-        listing = await repo.get_by_id(listing_id)
+        listing = listings_map.get(listing_id)
         if not listing:
             failed += 1
             details.append(

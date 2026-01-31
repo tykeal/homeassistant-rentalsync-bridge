@@ -125,6 +125,24 @@ class ListingRepository:
         )
         return len(result.scalars().all())
 
+    async def get_by_ids(self, listing_ids: list[int]) -> dict[int, Listing]:
+        """Get multiple listings by their IDs in a single query.
+
+        Args:
+            listing_ids: List of listing IDs to fetch.
+
+        Returns:
+            Dictionary mapping listing ID to Listing object.
+        """
+        if not listing_ids:
+            return {}
+
+        result = await self._session.execute(
+            select(Listing).where(Listing.id.in_(listing_ids))
+        )
+        listings = result.scalars().all()
+        return {listing.id: listing for listing in listings}
+
     async def create(self, listing: Listing) -> Listing:
         """Create a new listing.
 
