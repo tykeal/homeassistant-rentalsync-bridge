@@ -612,8 +612,8 @@ class TestManualSync:
         assert "not found" in response.json()["detail"].lower()
 
     @pytest.mark.asyncio
-    async def test_sync_listing_no_oauth(self, listings_app, listings_session):
-        """Test sync returns 503 when OAuth not configured."""
+    async def test_sync_listing_no_credentials(self, listings_app, listings_session):
+        """Test sync returns 503 when Cloudbeds credentials not configured."""
         listing = Listing(
             cloudbeds_id="SYNC1",
             name="Sync Test Property",
@@ -634,7 +634,7 @@ class TestManualSync:
             )
 
         assert response.status_code == 503
-        assert "oauth" in response.json()["detail"].lower()
+        assert "credentials" in response.json()["detail"].lower()
 
 
 class TestGetListingBookings:
@@ -742,8 +742,8 @@ class TestSyncProperties:
     """Tests for POST /api/listings/sync-properties endpoint."""
 
     @pytest.mark.asyncio
-    async def test_sync_properties_no_oauth(self, listings_app):
-        """Test returns 503 when OAuth not configured."""
+    async def test_sync_properties_no_credentials(self, listings_app):
+        """Test returns 503 when Cloudbeds credentials not configured."""
         async with AsyncClient(
             transport=ASGITransport(app=listings_app), base_url="http://test"
         ) as client:
@@ -753,4 +753,4 @@ class TestSyncProperties:
             )
 
         assert response.status_code == 503
-        assert "oauth" in response.json()["detail"].lower()
+        assert "credentials" in response.json()["detail"].lower()

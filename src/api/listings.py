@@ -590,10 +590,10 @@ async def sync_listing(
     result = await db.execute(select(OAuthCredential).limit(1))
     credential = result.scalar_one_or_none()
 
-    if not credential:
+    if not credential or (not credential.access_token and not credential.api_key):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="OAuth credentials not configured",
+            detail="Cloudbeds credentials not configured. Configure OAuth or API key.",
         )
 
     # Run sync
