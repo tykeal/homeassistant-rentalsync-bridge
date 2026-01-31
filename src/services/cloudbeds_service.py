@@ -133,9 +133,7 @@ class CloudbedsService:
         raise CloudbedsServiceError(msg) from last_error
 
     async def get_properties(self) -> list[dict[str, Any]]:
-        """Fetch all properties from Cloudbeds using OAuth metadata.
-
-        The OAuth metadata endpoint returns property info associated with the token.
+        """Fetch all properties from Cloudbeds using getHotels endpoint.
 
         Returns:
             List of property dictionaries with id, name, and timezone.
@@ -145,11 +143,11 @@ class CloudbedsService:
         """
         auth_headers = self._get_auth_headers()
 
-        async def fetch_metadata() -> list[dict[str, Any]]:
-            """Fetch property metadata from Cloudbeds API."""
+        async def fetch_hotels() -> list[dict[str, Any]]:
+            """Fetch properties from Cloudbeds API."""
             async with httpx.AsyncClient() as client:
                 response = await client.get(
-                    "https://api.cloudbeds.com/api/v1.3/oauth/metadata",
+                    "https://api.cloudbeds.com/api/v1.3/getHotels",
                     headers={
                         **auth_headers,
                         "Accept": "application/json",
@@ -170,27 +168,28 @@ class CloudbedsService:
 
                 data = response.json()
 
-                # The metadata response contains property info
-                # Structure: {"success": true, "data": {"propertyID": "...", ...}}
+                # Check for API success
                 if not data.get("success"):
                     msg = f"API returned error: {data}"
                     raise CloudbedsServiceError(msg)
 
-                prop_data = data.get("data", {})
-                if not prop_data:
+                # getHotels returns {"success": true, "data": [...]}
+                hotels = data.get("data", [])
+                if not hotels:
                     return []
 
-                # Convert to list format (API returns single property per token)
+                # Convert to standardized format
                 return [
                     {
-                        "propertyID": prop_data.get("propertyID"),
-                        "propertyName": prop_data.get("propertyName"),
-                        "propertyTimezone": prop_data.get("propertyTimezone"),
+                        "propertyID": str(hotel.get("propertyID", "")),
+                        "propertyName": hotel.get("propertyName", ""),
+                        "propertyTimezone": hotel.get("propertyTimezone", "UTC"),
                     }
+                    for hotel in hotels
                 ]
 
         result: list[dict[str, Any]] = await self._with_retry(
-            "get_properties", fetch_metadata
+            "get_properties", fetch_hotels
         )
         return result
 
