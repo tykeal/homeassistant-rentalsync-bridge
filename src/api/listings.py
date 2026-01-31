@@ -163,9 +163,10 @@ async def enable_listing(
             # Re-check count in case of race condition
             enabled_count = await repo.count_enabled()
             if enabled_count >= MAX_LISTINGS:
+                msg = f"Maximum number of enabled listings ({MAX_LISTINGS}) reached"
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Maximum listings ({MAX_LISTINGS}) reached",
+                    detail=msg,
                 ) from e
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

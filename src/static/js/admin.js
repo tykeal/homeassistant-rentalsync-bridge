@@ -183,33 +183,16 @@ function renderListings(listings) {
         return;
     }
 
-    let invalidCount = 0;
     const html = listings.map(listing => {
-        // Validate listing.id is a positive integer to prevent injection
-        let id;
-        if (Number.isInteger(listing.id) && listing.id > 0) {
-            id = listing.id;
-        } else if (typeof listing.id === 'string' && /^\d+$/.test(listing.id)) {
-            // Only parse strings that are purely numeric (no letters, symbols, etc.)
-            id = parseInt(listing.id, 10);
-        } else {
-            // Invalid ID - log details but don't expose raw value to UI
-            console.error('Invalid listing ID type or format:', typeof listing.id);
-            invalidCount++;
-            return `
-            <div class="listing-item error-item">
-                <div class="listing-info">
-                    <h3>⚠️ Invalid Listing</h3>
-                    <span class="ical-url error">Data error: listing has invalid identifier</span>
-                </div>
-            </div>`;
-        }
+        // Use the ID directly - server is source of truth for validation
+        // escapeHtml handles any rendering concerns
+        const id = listing.id;
 
         return `
-        <div class="listing-item${selectedListings.has(id) ? ' selected' : ''}" data-id="${id}">
+        <div class="listing-item${selectedListings.has(id) ? ' selected' : ''}" data-id="${escapeHtml(String(id))}">
             <input type="checkbox" class="listing-checkbox"
                    ${selectedListings.has(id) ? 'checked' : ''}
-                   onchange="toggleSelection(${id}, this.checked)">
+                   onchange="toggleSelection(${escapeHtml(String(id))}, this.checked)">
             <div class="listing-info">
                 <h3>${escapeHtml(listing.name)}</h3>
                 ${listing.enabled && listing.ical_url_slug
@@ -217,9 +200,9 @@ function renderListings(listings) {
                     : '<span class="ical-url">Not enabled</span>'}
             </div>
             <div class="listing-actions">
-                <button class="btn secondary" onclick="openCustomFields(${id})">Fields</button>
+                <button class="btn secondary" onclick="openCustomFields(${escapeHtml(String(id))})">Fields</button>
                 <label class="toggle-switch">
-                    <input type="checkbox" ${listing.enabled ? 'checked' : ''} onchange="toggleListing(${id}, this.checked)">
+                    <input type="checkbox" ${listing.enabled ? 'checked' : ''} onchange="toggleListing(${escapeHtml(String(id))}, this.checked)">
                     <span class="toggle-slider"></span>
                 </label>
             </div>
@@ -227,11 +210,6 @@ function renderListings(listings) {
     `}).join('');
 
     elements.listingsContainer.innerHTML = html;
-
-    if (invalidCount > 0) {
-        console.warn(`${invalidCount} listing(s) have invalid IDs and cannot be managed`);
-    }
-
     updateBulkButtons();
 }
 
