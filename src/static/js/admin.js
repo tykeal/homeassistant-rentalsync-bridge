@@ -183,11 +183,19 @@ function renderListings(listings) {
         return;
     }
 
-    const html = listings.map(listing => `
-        <div class="listing-item${selectedListings.has(listing.id) ? ' selected' : ''}" data-id="${listing.id}">
+    const html = listings.map(listing => {
+        // Validate listing.id is a number to prevent injection
+        const id = Number.isInteger(listing.id) ? listing.id : parseInt(listing.id, 10);
+        if (isNaN(id)) {
+            console.error('Invalid listing ID:', listing.id);
+            return '';
+        }
+
+        return `
+        <div class="listing-item${selectedListings.has(id) ? ' selected' : ''}" data-id="${id}">
             <input type="checkbox" class="listing-checkbox"
-                   ${selectedListings.has(listing.id) ? 'checked' : ''}
-                   onchange="toggleSelection(${listing.id}, this.checked)">
+                   ${selectedListings.has(id) ? 'checked' : ''}
+                   onchange="toggleSelection(${id}, this.checked)">
             <div class="listing-info">
                 <h3>${escapeHtml(listing.name)}</h3>
                 ${listing.enabled && listing.ical_url_slug
@@ -195,14 +203,14 @@ function renderListings(listings) {
                     : '<span class="ical-url">Not enabled</span>'}
             </div>
             <div class="listing-actions">
-                <button class="btn secondary" onclick="openCustomFields(${listing.id})">Fields</button>
+                <button class="btn secondary" onclick="openCustomFields(${id})">Fields</button>
                 <label class="toggle-switch">
-                    <input type="checkbox" ${listing.enabled ? 'checked' : ''} onchange="toggleListing(${listing.id}, this.checked)">
+                    <input type="checkbox" ${listing.enabled ? 'checked' : ''} onchange="toggleListing(${id}, this.checked)">
                     <span class="toggle-slider"></span>
                 </label>
             </div>
         </div>
-    `).join('');
+    `}).join('');
 
     elements.listingsContainer.innerHTML = html;
     updateBulkButtons();

@@ -92,9 +92,11 @@ class TestGenerateUniqueSlug:
         repo = ListingRepository(repo_session)
         slug = await repo.generate_unique_slug("Mountain Cabin")
 
-        # Verify it's different and won't collide
+        # Generated slug should be different from the existing one
+        assert slug != "mountain-cabin"
+        # The new slug should not exist in the database (proves uniqueness)
         existing_check = await repo.get_by_slug(slug)
-        assert existing_check is None or existing_check.ical_url_slug != slug
+        assert existing_check is None
 
 
 class TestCountEnabled:
