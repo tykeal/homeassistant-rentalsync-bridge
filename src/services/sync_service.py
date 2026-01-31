@@ -79,7 +79,13 @@ class SyncService:
             # Fetch reservations from Cloudbeds
             reservations = await cloudbeds.get_reservations(listing.cloudbeds_id)
 
-            return await self._process_reservations(listing, reservations)
+            counts = await self._process_reservations(listing, reservations)
+
+            # Update sync status on success
+            listing.last_sync_at = datetime.now(UTC)
+            listing.last_sync_error = None
+
+            return counts
 
         except CloudbedsServiceError as e:
             logger.error("Failed to sync listing %s: %s", listing.cloudbeds_id, e)

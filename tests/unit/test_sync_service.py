@@ -482,3 +482,83 @@ class TestListingIsolation:
         await sync_session.refresh(booking2)
         assert booking1.status == "cancelled"
         assert booking2.status == "confirmed"  # Unaffected
+
+
+class TestSyncStatusTracking:
+    """Tests for sync status tracking (last_sync_at, last_sync_error)."""
+
+    @pytest.mark.asyncio
+    async def test_sync_updates_last_sync_at_on_success(
+        self, sync_session, test_credential
+    ):
+        """Test that last_sync_at is updated on successful sync."""
+        listing = Listing(
+            cloudbeds_id="SYNC_STATUS",
+            name="Sync Status Test",
+            ical_url_slug="sync-status",
+            enabled=True,
+            sync_enabled=True,
+            last_sync_at=None,
+            last_sync_error=None,
+        )
+        sync_session.add(listing)
+        await sync_session.commit()
+        await sync_session.refresh(listing)
+
+        assert listing.last_sync_at is None
+
+        with patch(
+            "src.services.sync_service.CloudbedsService"
+        ) as mock_cloudbeds_class:
+            mock_cloudbeds = AsyncMock()
+            mock_cloudbeds.get_reservations = AsyncMock(return_value=[])
+            mock_cloudbeds_class.return_value = mock_cloudbeds
+            mock_cloudbeds_class.extract_phone_last4 = (
+                CloudbedsService.extract_phone_last4
+            )
+
+            service = SyncService(sync_session)
+            result = await service.sync_listing(listing, test_credential)
+
+        assert result is not None
+        # last_sync_at should be set
+        assert listing.last_sync_at is not None
+        assert listing.last_sync_error is None
+
+    @pytest.mark.asyncio
+    async def test_sync_clears_last_sync_error_on_success(
+        self, sync_session, test_credential
+    ):
+        """Test that last_sync_error is cleared on successful sync."""
+        listing = Listing(
+            cloudbeds_id="SYNC_ERROR_CLEAR",
+            name="Sync Error Clear Test",
+            ical_url_slug="sync-error-clear",
+            enabled=True,
+            sync_enabled=True,
+            last_sync_at=None,
+            last_sync_error="Previous error",
+        )
+        sync_session.add(listing)
+        await sync_session.commit()
+        await sync_session.refresh(listing)
+
+        assert listing.last_sync_error == "Previous error"
+
+        with patch(
+            "src.services.sync_service.CloudbedsService"
+        ) as mock_cloudbeds_class:
+            mock_cloudbeds = AsyncMock()
+            mock_cloudbeds.get_reservations = AsyncMock(return_value=[])
+            mock_cloudbeds_class.return_value = mock_cloudbeds
+            mock_cloudbeds_class.extract_phone_last4 = (
+                CloudbedsService.extract_phone_last4
+            )
+
+            service = SyncService(sync_session)
+            result = await service.sync_listing(listing, test_credential)
+
+        assert result is not None
+        # last_sync_error should be cleared
+        assert listing.last_sync_error is None
+        assert listing.last_sync_at is not None
