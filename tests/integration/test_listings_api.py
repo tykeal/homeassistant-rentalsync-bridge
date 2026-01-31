@@ -148,6 +148,40 @@ class TestGetListing:
         assert data["timezone"] == "America/New_York"
 
     @pytest.mark.asyncio
+    async def test_get_includes_sync_status_fields(
+        self, listings_app, listings_session
+    ):
+        """Test that listing response includes sync status fields."""
+        from datetime import datetime
+
+        sync_time = datetime(2024, 1, 15, 10, 30, 0)
+        listing = Listing(
+            cloudbeds_id="SYNC_STATUS",
+            name="Sync Status Test",
+            ical_url_slug="sync-status-test",
+            enabled=True,
+            sync_enabled=True,
+            last_sync_at=sync_time,
+            last_sync_error="Test error message",
+        )
+        listings_session.add(listing)
+        await listings_session.commit()
+        await listings_session.refresh(listing)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=listings_app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                f"/api/listings/{listing.id}",
+                headers={"Authorization": "Bearer test"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "2024-01-15T10:30:00" in data["last_sync_at"]
+        assert data["last_sync_error"] == "Test error message"
+
+    @pytest.mark.asyncio
     async def test_get_not_found(self, listings_app):
         """Test getting non-existent listing."""
         async with AsyncClient(

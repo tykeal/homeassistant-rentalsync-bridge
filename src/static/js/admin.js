@@ -166,6 +166,45 @@ async function refreshToken() {
 }
 
 // Listings Functions
+
+/**
+ * Format sync status for display.
+ * @param {Object} listing - The listing object
+ * @returns {string} HTML for sync status display
+ */
+function formatSyncStatus(listing) {
+    if (!listing.enabled) {
+        return '';
+    }
+
+    let status = '';
+    if (listing.last_sync_at) {
+        const syncDate = new Date(listing.last_sync_at);
+        const timeAgo = formatTimeAgo(syncDate);
+        if (listing.last_sync_error) {
+            status = `<span class="sync-status error" title="${escapeHtml(listing.last_sync_error)}">⚠ Sync failed ${timeAgo}</span>`;
+        } else {
+            status = `<span class="sync-status success">✓ Synced ${timeAgo}</span>`;
+        }
+    } else {
+        status = '<span class="sync-status pending">Never synced</span>';
+    }
+    return status;
+}
+
+/**
+ * Format a date as relative time ago.
+ * @param {Date} date - The date to format
+ * @returns {string} Human readable time ago string
+ */
+function formatTimeAgo(date) {
+    const seconds = Math.floor((new Date() - date) / 1000);
+    if (seconds < 60) return 'just now';
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+    return `${Math.floor(seconds / 86400)}d ago`;
+}
+
 async function loadListings() {
     try {
         const data = await fetchAPI('/api/listings');
@@ -188,6 +227,7 @@ function renderListings(listings) {
         const id = Number(listing.id);
         // Coerce to boolean for safe attribute interpolation
         const enabled = Boolean(listing.enabled);
+        const syncStatus = formatSyncStatus(listing);
 
         return `
         <div class="listing-item${selectedListings.has(id) ? ' selected' : ''}" data-id="${id}" data-enabled="${enabled}">
@@ -198,8 +238,10 @@ function renderListings(listings) {
                 ${enabled && listing.ical_url_slug
                     ? `<span class="ical-url">/ical/${escapeHtml(listing.ical_url_slug)}.ics</span>`
                     : '<span class="ical-url">Not enabled</span>'}
+                ${syncStatus}
             </div>
             <div class="listing-actions">
+                ${enabled ? '<button class="btn secondary" data-action="sync">Sync Now</button>' : ''}
                 <button class="btn secondary" data-action="fields">Fields</button>
                 <label class="toggle-switch">
                     <input type="checkbox" data-action="toggle" ${listing.enabled ? 'checked' : ''}>
@@ -232,6 +274,14 @@ function attachListingEventHandlers() {
         if (fieldsBtn) {
             fieldsBtn.addEventListener('click', () => {
                 openCustomFields(id);
+            });
+        }
+
+        // Sync Now button
+        const syncBtn = item.querySelector('[data-action="sync"]');
+        if (syncBtn) {
+            syncBtn.addEventListener('click', () => {
+                syncListing(id, syncBtn);
             });
         }
 
@@ -347,6 +397,34 @@ async function toggleListing(id, enabled) {
     } catch (error) {
         alert(`Failed to update listing: ${error.message}`);
         await loadListings();
+    }
+}
+
+/**
+ * Trigger manual sync for a listing.
+ * @param {number} id - The listing ID
+ * @param {HTMLButtonElement} button - The sync button element
+ */
+async function syncListing(id, button) {
+    const originalText = button.textContent;
+    try {
+        button.disabled = true;
+        button.textContent = 'Syncing...';
+
+        const result = await fetchAPI(`/api/listings/${id}/sync`, { method: 'POST' });
+
+        button.textContent = '✓ Done';
+        setTimeout(() => {
+            button.textContent = originalText;
+            button.disabled = false;
+        }, 2000);
+
+        // Refresh to show updated sync status
+        await loadListings();
+    } catch (error) {
+        button.textContent = originalText;
+        button.disabled = false;
+        alert(`Sync failed: ${error.message}`);
     }
 }
 

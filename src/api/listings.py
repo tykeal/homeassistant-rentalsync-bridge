@@ -32,6 +32,8 @@ class ListingResponse(BaseModel):
     sync_enabled: bool = Field(description="Whether sync is enabled")
     ical_url_slug: str | None = Field(default=None, description="iCal URL slug")
     timezone: str | None = Field(default=None, description="Property timezone")
+    last_sync_at: str | None = Field(default=None, description="Last sync timestamp")
+    last_sync_error: str | None = Field(default=None, description="Last sync error")
 
 
 class ListingsResponse(BaseModel):
@@ -69,6 +71,10 @@ def _listing_to_response(listing: Any) -> dict[str, Any]:
         "sync_enabled": listing.sync_enabled,
         "ical_url_slug": listing.ical_url_slug,
         "timezone": listing.timezone,
+        "last_sync_at": (
+            listing.last_sync_at.isoformat() if listing.last_sync_at else None
+        ),
+        "last_sync_error": listing.last_sync_error,
     }
 
 

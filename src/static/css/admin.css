@@ -232,6 +232,25 @@ header .subtitle {
     word-break: break-all;
 }
 
+.listing-info .sync-status {
+    display: block;
+    font-size: 0.8rem;
+    margin-top: 4px;
+}
+
+.listing-info .sync-status.success {
+    color: var(--success-color);
+}
+
+.listing-info .sync-status.error {
+    color: var(--error-color);
+    cursor: help;
+}
+
+.listing-info .sync-status.pending {
+    color: var(--text-muted);
+}
+
 .listing-actions {
     display: flex;
     gap: 10px;
