@@ -67,8 +67,6 @@ podman run -d \
   -e STANDALONE_MODE=true \
   -e DATABASE_URL=sqlite:////data/rentalsync.db \
   -e ENCRYPTION_KEY="$ENCRYPTION_KEY" \
-  -e CLOUDBEDS_CLIENT_ID=placeholder \
-  -e CLOUDBEDS_CLIENT_SECRET=placeholder \
   rentalsync-bridge:latest
 ```
 
@@ -76,8 +74,8 @@ podman run -d \
 - `STANDALONE_MODE=true` - Disables Home Assistant authentication requirement
 - `DATABASE_URL` - SQLite database path (mounted volume)
 - `ENCRYPTION_KEY` - Required for encrypting OAuth tokens (generate with Fernet)
-- `CLOUDBEDS_CLIENT_ID` - Your Cloudbeds OAuth client ID (or placeholder for initial setup)
-- `CLOUDBEDS_CLIENT_SECRET` - Your Cloudbeds OAuth client secret (or placeholder)
+
+> **Note**: Cloudbeds credentials are configured through the Admin UI after startup.
 
 ### 4. Verify the Container is Running
 
