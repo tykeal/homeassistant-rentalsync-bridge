@@ -73,9 +73,11 @@ podman run -d \
 **Environment Variables Explained**:
 - `STANDALONE_MODE=true` - Disables Home Assistant authentication requirement
 - `DATABASE_URL` - SQLite database path (mounted volume)
-- `ENCRYPTION_KEY` - Required for encrypting OAuth tokens (generate with Fernet)
+- `ENCRYPTION_KEY` - Required for encrypting API keys/OAuth tokens stored in the database
 
-> **Note**: Cloudbeds credentials are configured through the Admin UI after startup.
+> **Note**: The encryption key is required in both standalone and Home Assistant modes.
+> For Home Assistant addon deployments, the key is auto-generated on first run.
+> Cloudbeds credentials are configured through the Admin UI after startup.
 
 ### 4. Verify the Container is Running
 
