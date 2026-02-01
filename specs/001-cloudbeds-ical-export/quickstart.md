@@ -57,26 +57,18 @@ chmod 777 ~/rentalsync-data
 ### 3. Run the Container
 
 ```bash
-# Generate an encryption key first
-ENCRYPTION_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
-
 podman run -d \
   --name rentalsync-bridge \
   -p 8099:8099 \
   -v ~/rentalsync-data:/data:Z \
   -e STANDALONE_MODE=true \
-  -e DATABASE_URL=sqlite:////data/rentalsync.db \
-  -e ENCRYPTION_KEY="$ENCRYPTION_KEY" \
   rentalsync-bridge:latest
 ```
 
 **Environment Variables Explained**:
 - `STANDALONE_MODE=true` - Disables Home Assistant authentication requirement
-- `DATABASE_URL` - SQLite database path (mounted volume)
-- `ENCRYPTION_KEY` - Required for encrypting API keys/OAuth tokens stored in the database
 
-> **Note**: The encryption key is required in both standalone and Home Assistant modes.
-> For Home Assistant addon deployments, the key is auto-generated on first run.
+> **Note**: The encryption key and database are auto-configured on first run.
 > Cloudbeds credentials are configured through the Admin UI after startup.
 
 ### 4. Verify the Container is Running
