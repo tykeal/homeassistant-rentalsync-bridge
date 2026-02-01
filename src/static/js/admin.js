@@ -597,8 +597,11 @@ document.addEventListener('DOMContentLoaded', () => {
     loadOAuthStatus();
     loadListings();
 
-    // Refresh status periodically
+    // Refresh status periodically (every 30 seconds)
     setInterval(loadStatus, 30000);
+
+    // Refresh listings periodically to update timestamps (every 60 seconds)
+    setInterval(loadListings, 60000);
 });
 
 // Export functions for inline handlers
