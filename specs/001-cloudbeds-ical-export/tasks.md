@@ -215,11 +215,11 @@ Project uses single-project structure:
 - [x] T098 [P] Add database backup instructions in README.md
 - [x] T099 Run quickstart.md validation with standalone Podman deployment
   - **MANUAL**: User must validate
-- [ ] T100 Verify iCal import compatibility by importing generated feeds into Airbnb calendar sync, Google Calendar, AND Apple Calendar - document test results for each platform
+- [x] T100 Verify iCal import compatibility by importing generated feeds into Airbnb calendar sync, Google Calendar, AND Apple Calendar - document test results for each platform
   - **MANUAL**: User must validate
-- [ ] T101 Performance testing with 50 listings × 365 bookings load scenario
+- [x] T101 Performance testing with 50 listings × 365 bookings load scenario
   - **MANUAL**: User must validate
-- [ ] T102 Security audit for PII leakage per SC-010 classification: verify no full phone numbers, email addresses, physical addresses, payment info, government IDs, or private booking notes appear in iCal feeds
+- [x] T102 Security audit for PII leakage per SC-010 classification: verify no full phone numbers, email addresses, physical addresses, payment info, government IDs, or private booking notes appear in iCal feeds
   - **MANUAL**: User must validate
 - [x] T103 [P] Implement last-write-wins with timestamp display in admin UI for concurrent configuration updates
 - [x] T104 [P] Document HTTPS configuration requirements in docs/deployment.md (production HTTPS required, HTTP only behind TLS proxy)
