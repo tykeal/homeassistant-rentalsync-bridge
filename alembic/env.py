@@ -14,7 +14,7 @@ from src.config import get_settings
 from src.database import Base
 
 # Import all models to register them with Base.metadata
-from src.models import booking, custom_field, listing, oauth_credential  # noqa: F401
+from src.models import booking, custom_field, listing, oauth_credential, room  # noqa: F401
 
 # Alembic Config object
 config = context.config

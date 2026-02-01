@@ -23,16 +23,16 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Tests for Phase 1
 
-- [ ] T001 [P] Create unit tests for Room model in tests/unit/test_room_model.py
-- [ ] T002 [P] Create unit tests for Room-Listing relationship in tests/unit/test_room_model.py
+- [x] T001 [P] Create unit tests for Room model in tests/unit/test_room_model.py
+- [x] T002 [P] Create unit tests for Room-Listing relationship in tests/unit/test_room_model.py
 
 ### Implementation for Phase 1
 
-- [ ] T003 Create Room model in src/models/room.py with fields: id, listing_id, cloudbeds_room_id, room_name, room_type_name, ical_url_slug, enabled, created_at, updated_at
-- [ ] T004 Add rooms relationship to Listing model in src/models/listing.py
-- [ ] T005 Add room_id nullable FK to Booking model in src/models/booking.py
-- [ ] T006 Update src/models/__init__.py to export Room model
-- [ ] T007 Create Alembic migration for rooms table and booking.room_id column in alembic/versions/
+- [x] T003 Create Room model in src/models/room.py with fields: id, listing_id, cloudbeds_room_id, room_name, room_type_name, ical_url_slug, enabled, created_at, updated_at
+- [x] T004 Add rooms relationship to Listing model in src/models/listing.py
+- [x] T005 Add room_id nullable FK to Booking model in src/models/booking.py
+- [x] T006 Update src/models/__init__.py to export Room model
+- [x] T007 Create Alembic migration for rooms table and booking.room_id column in alembic/versions/
 
 **Checkpoint**: Room model exists, migration runs successfully, tests pass
 

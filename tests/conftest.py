@@ -53,11 +53,22 @@ def setup_test_environment():
 @pytest.fixture
 async def async_engine():
     """Create an async test database engine."""
+    from sqlalchemy import event
+
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
         echo=False,
         connect_args={"check_same_thread": False},
     )
+
+    # Enable foreign key constraint enforcement for SQLite on every connection
+    @event.listens_for(engine.sync_engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, _connection_record):
+        """Enable SQLite FK constraints on each connection."""
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys = ON")
+        cursor.close()
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield engine

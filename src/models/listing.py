@@ -13,6 +13,7 @@ from src.database import Base
 if TYPE_CHECKING:
     from src.models.booking import Booking
     from src.models.custom_field import CustomField
+    from src.models.room import Room
 
 
 def _utc_now() -> datetime:
@@ -57,6 +58,12 @@ class Listing(Base):
     )
     custom_fields: Mapped[list["CustomField"]] = relationship(
         "CustomField",
+        back_populates="listing",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    rooms: Mapped[list["Room"]] = relationship(
+        "Room",
         back_populates="listing",
         cascade="all, delete-orphan",
         lazy="selectin",
