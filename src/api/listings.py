@@ -17,6 +17,7 @@ from src.models.booking import Booking
 from src.models.listing import Listing
 from src.models.oauth_credential import OAuthCredential
 from src.repositories.listing_repository import MAX_LISTINGS, ListingRepository
+from src.repositories.room_repository import RoomRepository
 from src.services.calendar_service import get_calendar_cache
 from src.services.cloudbeds_service import CloudbedsService, CloudbedsServiceError
 from src.services.sync_service import SyncService, SyncServiceError
@@ -96,6 +97,24 @@ class SyncPropertiesResponse(BaseModel):
     created: int = Field(description="Number of new listings created")
     updated: int = Field(description="Number of existing listings updated")
     message: str = Field(description="Status message")
+
+
+class RoomResponse(BaseModel):
+    """Response model for a room in listings context."""
+
+    id: int = Field(description="Room ID")
+    cloudbeds_room_id: str = Field(description="Cloudbeds room ID")
+    room_name: str = Field(description="Room name")
+    room_type_name: str | None = Field(default=None, description="Room type name")
+    ical_url_slug: str = Field(description="iCal URL slug")
+    enabled: bool = Field(description="Whether room is enabled for iCal export")
+
+
+class RoomsResponse(BaseModel):
+    """Response model for rooms collection."""
+
+    rooms: list[RoomResponse] = Field(description="List of rooms")
+    total: int = Field(description="Total count")
 
 
 def _format_datetime(dt: datetime | None) -> str | None:
@@ -684,4 +703,49 @@ async def get_listing_bookings(
             for b in bookings
         ],
         "total": len(bookings),
+    }
+
+
+@router.get("/{listing_id}/rooms", response_model=RoomsResponse)
+async def get_listing_rooms(
+    listing_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, Any]:
+    """Get all rooms for a listing.
+
+    Args:
+        listing_id: ID of the listing.
+        db: Database session.
+
+    Returns:
+        List of rooms for the listing.
+
+    Raises:
+        HTTPException: 404 if listing not found.
+    """
+    listing_repo = ListingRepository(db)
+    listing = await listing_repo.get_by_id(listing_id)
+
+    if not listing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Listing {listing_id} not found",
+        )
+
+    room_repo = RoomRepository(db)
+    rooms = await room_repo.get_by_listing_id(listing_id)
+
+    return {
+        "rooms": [
+            {
+                "id": r.id,
+                "cloudbeds_room_id": r.cloudbeds_room_id,
+                "room_name": r.room_name,
+                "room_type_name": r.room_type_name,
+                "ical_url_slug": r.ical_url_slug,
+                "enabled": r.enabled,
+            }
+            for r in rooms
+        ],
+        "total": len(rooms),
     }
