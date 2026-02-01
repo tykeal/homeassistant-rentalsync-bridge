@@ -48,6 +48,10 @@ podman build -t rentalsync-bridge:latest .
 ```bash
 # Create persistent storage for database and configuration
 mkdir -p ~/rentalsync-data
+
+# Ensure proper permissions (UID 1000 is used inside container)
+# This is needed for rootless Podman to work correctly
+chmod 777 ~/rentalsync-data
 ```
 
 ### 3. Run the Container

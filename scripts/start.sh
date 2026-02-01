@@ -7,6 +7,21 @@
 
 set -e
 
+# Ensure data directory exists and is writable
+DATA_DIR="/data"
+if [ ! -d "$DATA_DIR" ]; then
+    echo "Creating data directory..."
+    mkdir -p "$DATA_DIR"
+fi
+
+if [ ! -w "$DATA_DIR" ]; then
+    echo "ERROR: Data directory $DATA_DIR is not writable"
+    echo "Please ensure the volume mount has correct permissions"
+    exit 1
+fi
+
+echo "Data directory: $DATA_DIR (writable: yes)"
+
 echo "Running database migrations..."
 alembic upgrade head
 
