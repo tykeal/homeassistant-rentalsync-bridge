@@ -20,6 +20,7 @@ from src.database import Base
 
 if TYPE_CHECKING:
     from src.models.listing import Listing
+    from src.models.room import Room
 
 
 def _utc_now() -> datetime:
@@ -40,6 +41,9 @@ class Booking(Base):
     listing_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("listings.id", ondelete="CASCADE"), nullable=False
     )
+    room_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("rooms.id", ondelete="SET NULL"), nullable=True
+    )
     cloudbeds_booking_id: Mapped[str] = mapped_column(String(100), nullable=False)
     guest_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     guest_phone_last4: Mapped[str | None] = mapped_column(String(4), nullable=True)
@@ -59,12 +63,14 @@ class Booking(Base):
 
     # Relationships
     listing: Mapped["Listing"] = relationship("Listing", back_populates="bookings")
+    room: Mapped["Room | None"] = relationship("Room", back_populates="bookings")
 
     __table_args__ = (
         UniqueConstraint(
             "listing_id", "cloudbeds_booking_id", name="uq_booking_listing_cloudbeds"
         ),
         Index("idx_booking_listing", "listing_id"),
+        Index("idx_booking_room", "room_id"),
         Index("idx_booking_dates", "listing_id", "check_in_date", "check_out_date"),
         Index("idx_booking_status", "status"),
     )
