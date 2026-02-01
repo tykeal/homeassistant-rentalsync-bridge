@@ -73,6 +73,8 @@ AVAILABLE_FIELDS = {
     "source_name": "Booking Source",
     "special_requests": "Special Requests",
     "estimated_arrival": "Estimated Arrival",
+    "guest_phone_last4": "Phone Number (Last 4 Digits)",  # NEW
+}
 }
 ```
 
@@ -168,7 +170,25 @@ Note: Property-level iCal is removed (not deprecated) since this is pre-producti
 
 ### 4.2 Custom Fields UI Enhancement
 
-#### 4.2.1 New API Endpoint
+#### 4.2.1 New Custom Field: Guest Phone Last 4 Digits
+
+Add `guest_phone_last4` to `AVAILABLE_FIELDS` and make it a **default enabled field** alongside `booking_notes`.
+
+**Field Definition**:
+```python
+"guest_phone_last4": "Phone Number (Last 4 Digits)"
+```
+
+**iCal Output Format**:
+```
+Phone Number (Last 4 Digits): 1234
+```
+
+**Default Fields** (created when listing is enabled):
+1. `booking_notes` - "Booking Notes" (enabled)
+2. `guest_phone_last4` - "Phone Number (Last 4 Digits)" (enabled)
+
+#### 4.2.2 New API Endpoint
 
 ```
 GET /api/listings/{listing_id}/available-custom-fields
@@ -183,7 +203,7 @@ Returns available fields that are NOT already configured for the listing:
 }
 ```
 
-#### 4.2.2 Admin UI Changes
+#### 4.2.3 Admin UI Changes
 
 - Replace free-text `field_name` input with `<select>` dropdown
 - Dropdown populated with available (unconfigured) fields
