@@ -16,12 +16,10 @@ path = [
 SPDX-License-Identifier = "Apache-2.0"
 SPDX-FileCopyrightText = "2025 Andrew Grimberg <tykeal@bardicgrove.org>"
 
-# SQLite database files (WAL mode artifacts)
+# SQLite database files (placeholder - actual db files are gitignored)
 [[annotations]]
 path = [
-    "data/*.db",
-    "data/*.db-shm",
-    "data/*.db-wal"
+    "data/.gitkeep"
 ]
 SPDX-License-Identifier = "Apache-2.0"
 SPDX-FileCopyrightText = "2026 Andrew Grimberg <tykeal@bardicgrove.org>"
