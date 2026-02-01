@@ -44,17 +44,17 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Tests for Phase 2
 
-- [ ] T008 [P] Create unit tests for RoomRepository in tests/unit/test_room_repository.py
-- [ ] T009 [P] Create integration tests for room API endpoints in tests/integration/test_room_api.py
+- [x] T008 [P] Create unit tests for RoomRepository in tests/unit/test_room_repository.py
+- [x] T009 [P] Create integration tests for room API endpoints in tests/integration/test_room_api.py
 
 ### Implementation for Phase 2
 
-- [ ] T010 Create RoomRepository in src/repositories/room_repository.py with CRUD operations: create, get_by_id, get_by_listing_id, get_by_slug, update, delete
-- [ ] T011 Add slug generation utility function (room name to slug) in src/repositories/room_repository.py
-- [ ] T012 Create room API router in src/api/rooms.py with endpoints: GET /api/rooms/{id}, PATCH /api/rooms/{id}
-- [ ] T013 Add GET /api/listings/{id}/rooms endpoint to src/api/listings.py
-- [ ] T014 Update GET /api/listings/{id} to include rooms in response in src/api/listings.py
-- [ ] T015 Register room router in src/main.py
+- [x] T010 Create RoomRepository in src/repositories/room_repository.py with CRUD operations: create, get_by_id, get_by_listing_id, get_by_slug, update, delete
+- [x] T011 Add slug generation utility function (room name to slug) in src/repositories/room_repository.py
+- [x] T012 Create room API router in src/api/rooms.py with endpoints: GET /api/rooms/{id}, PATCH /api/rooms/{id}
+- [x] T013 Add GET /api/listings/{id}/rooms endpoint to src/api/listings.py
+- [x] T014 Update GET /api/listings/{id} to include rooms in response in src/api/listings.py
+- [x] T015 Register room router in src/main.py
 
 **Checkpoint**: Room CRUD works, API endpoints return room data, tests pass
 
