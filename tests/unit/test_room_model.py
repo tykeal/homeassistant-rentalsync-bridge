@@ -34,17 +34,32 @@ class TestRoom:
         assert room.ical_url_slug == "room-201"
         assert room.enabled is True
 
-    def test_room_default_enabled(self):
-        """Test room is enabled by default."""
+    @pytest.mark.asyncio
+    async def test_room_default_enabled(self, async_session):
+        """Test room is enabled by default when persisted."""
         from src.models import Room
 
+        listing = Listing(
+            cloudbeds_id="default_enabled_test",
+            name="Default Enabled Test",
+            ical_url_slug="default-enabled-test",
+            enabled=True,
+            sync_enabled=True,
+            timezone="UTC",
+        )
+        async_session.add(listing)
+        await async_session.flush()
+
         room = Room(
-            listing_id=1,
+            listing_id=listing.id,
             cloudbeds_room_id="room_456",
             room_name="Room 102",
             room_type_name="Standard",
             ical_url_slug="room-102",
+            # Not setting enabled - should default to True
         )
+        async_session.add(room)
+        await async_session.flush()
 
         assert room.enabled is True
 
