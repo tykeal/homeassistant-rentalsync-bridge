@@ -213,7 +213,7 @@ Project uses single-project structure:
   - All source files already have SPDX headers
 - [x] T097 [P] Add SQLite WAL mode configuration in src/database.py for concurrent reads
 - [x] T098 [P] Add database backup instructions in README.md
-- [ ] T099 Run quickstart.md validation with standalone Podman deployment
+- [x] T099 Run quickstart.md validation with standalone Podman deployment
   - **MANUAL**: User must validate
 - [ ] T100 Verify iCal import compatibility by importing generated feeds into Airbnb calendar sync, Google Calendar, AND Apple Calendar - document test results for each platform
   - **MANUAL**: User must validate
