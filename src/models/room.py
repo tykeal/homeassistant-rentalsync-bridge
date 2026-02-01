@@ -59,6 +59,7 @@ class Room(Base):
         "Booking",
         back_populates="room",
         lazy="selectin",
+        passive_deletes=True,  # Let database handle SET NULL on room delete
     )
 
     __table_args__ = (

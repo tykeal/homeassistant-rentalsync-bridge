@@ -42,7 +42,9 @@ class Booking(Base):
         Integer, ForeignKey("listings.id", ondelete="CASCADE"), nullable=False
     )
     room_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("rooms.id", ondelete="SET NULL"), nullable=True
+        Integer,
+        ForeignKey("rooms.id", ondelete="SET NULL", name="fk_booking_room_id"),
+        nullable=True,
     )
     cloudbeds_booking_id: Mapped[str] = mapped_column(String(100), nullable=False)
     guest_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
