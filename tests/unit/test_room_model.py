@@ -385,3 +385,64 @@ class TestRoomBookingRelationship:
         assert len(room.bookings) == 2
         assert booking1 in room.bookings
         assert booking2 in room.bookings
+
+    @pytest.mark.asyncio
+    async def test_room_deletion_sets_bookings_null(self, async_session):
+        """Test deleting a room sets booking.room_id to NULL."""
+        from sqlalchemy import select
+        from src.models import Booking, Room
+
+        listing = Listing(
+            cloudbeds_id="room_delete_test",
+            name="Room Delete Test",
+            ical_url_slug="room-delete-test",
+            enabled=True,
+            sync_enabled=True,
+            timezone="UTC",
+        )
+        async_session.add(listing)
+        await async_session.flush()
+
+        room = Room(
+            listing_id=listing.id,
+            cloudbeds_room_id="delete_room",
+            room_name="Delete Room",
+            ical_url_slug="delete-room",
+            enabled=True,
+        )
+        async_session.add(room)
+        await async_session.flush()
+
+        booking = Booking(
+            listing_id=listing.id,
+            room_id=room.id,
+            cloudbeds_booking_id="BK_DELETE_ROOM",
+            guest_name="Delete Room Guest",
+            check_in_date=datetime(2026, 6, 1),
+            check_out_date=datetime(2026, 6, 3),
+            status="confirmed",
+        )
+        async_session.add(booking)
+        await async_session.flush()
+
+        booking_id = booking.id
+        room_id = room.id
+
+        # Delete room - booking should remain with room_id=NULL
+        await async_session.delete(room)
+        await async_session.flush()
+
+        # Expire cached booking to force reload from database
+        async_session.expire(booking)
+
+        # Verify room is deleted
+        result = await async_session.execute(select(Room).where(Room.id == room_id))
+        assert result.scalar_one_or_none() is None
+
+        # Verify booking still exists with room_id=NULL
+        result = await async_session.execute(
+            select(Booking).where(Booking.id == booking_id)
+        )
+        preserved_booking = result.scalar_one()
+        assert preserved_booking is not None
+        assert preserved_booking.room_id is None
