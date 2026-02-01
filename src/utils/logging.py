@@ -4,13 +4,26 @@
 
 import logging
 import sys
+import time
+from datetime import UTC, datetime
 from typing import TextIO
 
 from src.config import get_settings
 
-# Default log format
-LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+# Default log format with UTC indicator
+LOG_FORMAT = "%(asctime)s UTC - %(name)s - %(levelname)s - %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+class UTCFormatter(logging.Formatter):
+    """Formatter that uses UTC timestamps."""
+
+    @staticmethod
+    def converter(timestamp: float | None) -> time.struct_time:
+        """Convert timestamp to UTC time tuple."""
+        if timestamp is None:
+            timestamp = time.time()
+        return datetime.fromtimestamp(timestamp, tz=UTC).timetuple()
 
 
 def get_log_level() -> int:
@@ -57,8 +70,8 @@ def setup_logging(
     console_handler = logging.StreamHandler(stream)
     console_handler.setLevel(level)
 
-    # Create formatter
-    formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
+    # Create UTC formatter
+    formatter = UTCFormatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
     console_handler.setFormatter(formatter)
 
     # Add handler to root logger

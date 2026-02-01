@@ -3,6 +3,7 @@
 """Listings management API endpoints."""
 
 import logging
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -97,6 +98,19 @@ class SyncPropertiesResponse(BaseModel):
     message: str = Field(description="Status message")
 
 
+def _format_datetime(dt: datetime | None) -> str | None:
+    """Format datetime to ISO string with UTC timezone.
+
+    SQLite stores naive datetimes, so we need to add UTC timezone info.
+    """
+    if dt is None:
+        return None
+    # If naive, assume UTC
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.isoformat()
+
+
 def _listing_to_response(listing: Any) -> dict[str, Any]:
     """Convert listing model to response dict."""
     return {
@@ -107,11 +121,9 @@ def _listing_to_response(listing: Any) -> dict[str, Any]:
         "sync_enabled": listing.sync_enabled,
         "ical_url_slug": listing.ical_url_slug,
         "timezone": listing.timezone,
-        "last_sync_at": (
-            listing.last_sync_at.isoformat() if listing.last_sync_at else None
-        ),
+        "last_sync_at": _format_datetime(listing.last_sync_at),
         "last_sync_error": listing.last_sync_error,
-        "updated_at": (listing.updated_at.isoformat() if listing.updated_at else None),
+        "updated_at": _format_datetime(listing.updated_at),
     }
 
 

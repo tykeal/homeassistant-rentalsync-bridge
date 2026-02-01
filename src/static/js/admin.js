@@ -202,16 +202,22 @@ function formatSyncStatus(listing) {
 }
 
 /**
- * Format a date as localized date/time string.
+ * Format a date as localized date/time string in local timezone.
  * @param {Date} date - The date to format
- * @returns {string} Formatted date/time string
+ * @returns {string} Formatted date/time string in local timezone
  */
 function formatDateTime(date) {
+    // Ensure we're working with a valid date
+    if (isNaN(date.getTime())) {
+        return 'Invalid date';
+    }
     return date.toLocaleString(undefined, {
+        year: 'numeric',
         month: 'short',
         day: 'numeric',
         hour: '2-digit',
-        minute: '2-digit'
+        minute: '2-digit',
+        hour12: true
     });
 }
 
