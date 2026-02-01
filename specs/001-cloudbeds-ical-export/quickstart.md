@@ -89,7 +89,7 @@ podman ps
 podman logs -f rentalsync-bridge
 
 # Test health endpoint
-curl http://localhost:8099/health
+curl http://127.0.0.1:8099/health
 ```
 
 Expected response:
@@ -104,7 +104,7 @@ Expected response:
 
 Open your browser and navigate to:
 ```
-http://localhost:8099/admin
+http://127.0.0.1:8099/admin
 ```
 
 You should see the RentalSync Bridge admin interface. In standalone mode, no authentication is required.
@@ -165,10 +165,10 @@ uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8099
 
 ```bash
 # Test health endpoint
-curl http://localhost:8099/health
+curl http://127.0.0.1:8099/health
 
 # View API documentation
-open http://localhost:8099/api/docs
+open http://127.0.0.1:8099/api/docs
 ```
 
 ---
@@ -186,14 +186,14 @@ If you don't have a Cloudbeds account, sign up at https://www.cloudbeds.com/
 3. Click **Create New Application**
 4. Fill in application details:
    - **Name**: RentalSync Bridge
-   - **Redirect URI**: `http://localhost:8099/oauth/callback` (for standalone testing)
+   - **Redirect URI**: `http://127.0.0.1:8099/oauth/callback` (for standalone testing)
 5. Click **Save**
 6. Copy the **Client ID** and **Client Secret**
 
 ### Step 3: Configure OAuth Credentials
 
 **Using Admin UI** (preferred):
-1. Navigate to http://localhost:8099/
+1. Navigate to http://127.0.0.1:8099/
 2. Go to **Settings** → **OAuth Configuration**
 3. Enter your Client ID and Client Secret
 4. Click **Save and Authorize**
@@ -201,7 +201,7 @@ If you don't have a Cloudbeds account, sign up at https://www.cloudbeds.com/
 
 **Using API** (for automation):
 ```bash
-curl -X POST http://localhost:8099/api/oauth/configure \
+curl -X POST http://127.0.0.1:8099/api/oauth/configure \
   -H "Content-Type: application/json" \
   -d '{
     "client_id": "your_client_id",
@@ -217,10 +217,10 @@ curl -X POST http://localhost:8099/api/oauth/configure \
 
 ```bash
 # Get all available listings
-curl http://localhost:8099/api/listings
+curl http://127.0.0.1:8099/api/listings
 
 # Enable a specific listing
-curl -X POST http://localhost:8099/api/listings/1/enable \
+curl -X POST http://127.0.0.1:8099/api/listings/1/enable \
   -H "Content-Type: application/json" \
   -d '{
     "enabled": true,
@@ -246,17 +246,17 @@ curl -X POST http://localhost:8099/api/listings/1/enable \
 
 ```bash
 # Sync a specific listing
-curl -X POST http://localhost:8099/api/listings/1/sync
+curl -X POST http://127.0.0.1:8099/api/listings/1/sync
 ```
 
 ### 3. Retrieve iCal Feed
 
 ```bash
 # Get iCal URL from listing details
-curl http://localhost:8099/api/listings/1 | jq -r '.ical_url'
+curl http://127.0.0.1:8099/api/listings/1 | jq -r '.ical_url'
 
 # Download the iCal file
-curl http://localhost:8099/ical/your-listing-slug.ics -o calendar.ics
+curl http://127.0.0.1:8099/ical/your-listing-slug.ics -o calendar.ics
 
 # Verify iCal format
 cat calendar.ics
@@ -264,7 +264,7 @@ cat calendar.ics
 
 ### 4. Import iCal into Google Calendar
 
-1. Copy the iCal URL: `http://localhost:8099/ical/your-listing-slug.ics`
+1. Copy the iCal URL: `http://127.0.0.1:8099/ical/your-listing-slug.ics`
 2. Note: **Local URLs won't work with Google Calendar**. Use a service like ngrok for testing:
    ```bash
    # Install ngrok: https://ngrok.com/
@@ -362,7 +362,7 @@ uv run alembic upgrade head
 3. Re-enter credentials via admin UI
 4. Review OAuth configuration:
    ```bash
-   curl http://localhost:8099/api/oauth/status
+   curl http://127.0.0.1:8099/api/oauth/status
    ```
 
 ---
@@ -379,16 +379,16 @@ uv run alembic upgrade head
 **Solution**:
 ```bash
 # Check listing status
-curl http://localhost:8099/api/listings/1
+curl http://127.0.0.1:8099/api/listings/1
 
 # Verify enabled status
 # Expected: "enabled": true
 
 # Trigger manual sync
-curl -X POST http://localhost:8099/api/listings/1/sync
+curl -X POST http://127.0.0.1:8099/api/listings/1/sync
 
 # Wait 10 seconds, then retry iCal URL
-curl http://localhost:8099/ical/your-listing-slug.ics
+curl http://127.0.0.1:8099/ical/your-listing-slug.ics
 ```
 
 ---
@@ -411,7 +411,7 @@ podman logs -f rentalsync-bridge | grep "Background sync"
 1. Verify `SYNC_INTERVAL_MINUTES` environment variable
 2. Check OAuth token validity:
    ```bash
-   curl http://localhost:8099/api/oauth/status
+   curl http://127.0.0.1:8099/api/oauth/status
    ```
 3. Restart container if scheduler is stuck
 
@@ -483,7 +483,7 @@ rm -rf ~/rentalsync-data
 
 ## Next Steps
 
-1. **Read the API documentation**: http://localhost:8099/api/docs
+1. **Read the API documentation**: http://127.0.0.1:8099/api/docs
 2. **Review the data model**: `specs/001-cloudbeds-ical-export/data-model.md`
 3. **Explore integration tests**: `tests/integration/`
 4. **Deploy to Home Assistant**: See `docs/homeassistant-addon-setup.md`
