@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """FastAPI application entry point for RentalSync Bridge."""
 
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -10,9 +11,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.api import admin, custom_fields, health, ical, listings, oauth, status
 from src.config import get_settings
+from src.database import get_session_factory
 from src.middleware.auth import AuthenticationMiddleware
 from src.middleware.error_handler import ErrorHandlerMiddleware
+from src.services.calendar_service import get_calendar_cache
+from src.services.scheduler import init_scheduler
 from src.utils.logging import setup_logging
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -31,10 +37,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # Store settings in app state
     app.state.settings = get_settings()
 
+    # Initialize and start the background sync scheduler
+    session_factory = get_session_factory()
+    calendar_cache = get_calendar_cache()
+    scheduler = init_scheduler(session_factory, calendar_cache)
+    scheduler.start()
+    logger.info("Background sync scheduler started")
+
     yield
 
     # Shutdown
-    # Add cleanup here if needed
+    scheduler.stop()
+    logger.info("Background sync scheduler stopped")
 
 
 def create_app() -> FastAPI:

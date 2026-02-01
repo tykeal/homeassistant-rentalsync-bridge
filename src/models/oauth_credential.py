@@ -152,7 +152,12 @@ class OAuthCredential(Base):
 
         Returns:
             True if token is expired or expiration is unknown.
+            Always returns False when using API key authentication.
         """
+        # API keys don't expire
+        if self.has_api_key():
+            return False
+
         if self.token_expires_at is None:
             return True
         # Handle timezone-naive datetimes from database

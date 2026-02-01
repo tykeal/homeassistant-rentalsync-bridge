@@ -181,29 +181,44 @@ function formatSyncStatus(listing) {
     let status = '';
     if (listing.last_sync_at) {
         const syncDate = new Date(listing.last_sync_at);
-        const timeAgo = formatTimeAgo(syncDate);
+        const formattedDate = formatDateTime(syncDate);
         if (listing.last_sync_error) {
-            status = `<span class="sync-status error" title="${escapeHtml(listing.last_sync_error)}">⚠ Sync failed ${timeAgo}</span>`;
+            status = `<span class="sync-status error" title="${escapeHtml(listing.last_sync_error)}">⚠ Sync failed ${formattedDate}</span>`;
         } else {
-            status = `<span class="sync-status success">✓ Synced ${timeAgo}</span>`;
+            status = `<span class="sync-status success">✓ Synced ${formattedDate}</span>`;
         }
     } else {
         status = '<span class="sync-status pending">Never synced</span>';
     }
+
+    // Add config update timestamp for concurrent update awareness (T103)
+    if (listing.updated_at) {
+        const updateDate = new Date(listing.updated_at);
+        const formattedUpdate = formatDateTime(updateDate);
+        status += `<span class="config-status" title="Last configuration change">⏱ Updated ${formattedUpdate}</span>`;
+    }
+
     return status;
 }
 
 /**
- * Format a date as relative time ago.
+ * Format a date as localized date/time string in local timezone.
  * @param {Date} date - The date to format
- * @returns {string} Human readable time ago string
+ * @returns {string} Formatted date/time string in local timezone
  */
-function formatTimeAgo(date) {
-    const seconds = Math.floor((new Date() - date) / 1000);
-    if (seconds < 60) return 'just now';
-    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-    return `${Math.floor(seconds / 86400)}d ago`;
+function formatDateTime(date) {
+    // Ensure we're working with a valid date
+    if (isNaN(date.getTime())) {
+        return 'Invalid date';
+    }
+    return date.toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+    });
 }
 
 async function loadListings() {
@@ -589,8 +604,11 @@ document.addEventListener('DOMContentLoaded', () => {
     loadOAuthStatus();
     loadListings();
 
-    // Refresh status periodically
+    // Refresh status periodically (every 30 seconds)
     setInterval(loadStatus, 30000);
+
+    // Refresh listings periodically to update timestamps (every 60 seconds)
+    setInterval(loadListings, 60000);
 });
 
 // Export functions for inline handlers

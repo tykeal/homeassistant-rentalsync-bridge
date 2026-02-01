@@ -38,6 +38,14 @@ COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/src /app/src
 COPY --from=builder /app/README.md /app/
 
+# Copy alembic for database migrations
+COPY alembic/ /app/alembic/
+COPY alembic.ini /app/
+
+# Copy startup script
+COPY scripts/start.sh /app/scripts/start.sh
+RUN chmod +x /app/scripts/start.sh
+
 # Set environment variables
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
@@ -57,5 +65,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 # Switch to non-root user
 USER rentalsync
 
-# Run the application
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8099"]
+# Run the application with migrations
+CMD ["/app/scripts/start.sh"]

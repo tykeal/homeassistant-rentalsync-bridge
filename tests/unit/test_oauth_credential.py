@@ -42,3 +42,25 @@ class TestApiKeySetter:
 
             with pytest.raises(ValueError, match="encrypt_value returned None"):
                 credential.api_key = "my_api_key"
+
+
+class TestIsTokenExpired:
+    """Tests for is_token_expired method."""
+
+    def test_is_token_expired_returns_false_when_api_key_set(self):
+        """Test that API key authentication never reports expired."""
+        credential = OAuthCredential(client_id="test")
+        credential._client_secret = "encrypted_secret"
+        credential._api_key = "encrypted_api_key"  # Has API key
+        credential.token_expires_at = None  # No OAuth token
+
+        assert credential.is_token_expired() is False
+
+    def test_is_token_expired_returns_true_when_no_expiry_and_no_api_key(self):
+        """Test that missing expiry with no API key reports expired."""
+        credential = OAuthCredential(client_id="test")
+        credential._client_secret = "encrypted_secret"
+        credential._api_key = None  # No API key
+        credential.token_expires_at = None
+
+        assert credential.is_token_expired() is True

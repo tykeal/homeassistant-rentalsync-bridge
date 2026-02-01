@@ -130,6 +130,13 @@ class SyncService:
             # Extract booking data
             booking_data = self._extract_booking_data(reservation)
 
+            # Skip reservations with invalid dates (T088)
+            if not booking_data["check_in_date"] or not booking_data["check_out_date"]:
+                logger.warning(
+                    "Skipping reservation %s with invalid dates", cloudbeds_booking_id
+                )
+                continue
+
             # Create Booking entity for upsert
             booking = Booking(
                 listing_id=listing.id,

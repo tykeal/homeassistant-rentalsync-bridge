@@ -31,9 +31,24 @@ class TestSyncScheduler:
         ):
             scheduler.start()
 
-        mock_add_job.assert_called_once()
+        # Two jobs: sync and purge
+        assert mock_add_job.call_count == 2
         mock_start.assert_called_once()
         assert scheduler.is_running is True
+
+    def test_start_schedules_purge_job(self, mock_session_factory):
+        """Test that starting scheduler adds purge job at 02:00 UTC."""
+        scheduler = SyncScheduler(mock_session_factory)
+
+        with (
+            patch.object(scheduler._scheduler, "add_job") as mock_add_job,
+            patch.object(scheduler._scheduler, "start"),
+        ):
+            scheduler.start()
+
+        # Verify purge job was added
+        job_ids = [call.kwargs.get("id") for call in mock_add_job.call_args_list]
+        assert "purge_old_bookings" in job_ids
 
     def test_start_already_running(self, mock_session_factory):
         """Test starting already running scheduler logs warning."""
@@ -105,3 +120,42 @@ class TestSchedulerGlobals:
         scheduler = init_scheduler(mock_factory, cache)
 
         assert scheduler._calendar_cache is cache
+
+
+class TestPurgeJob:
+    """Tests for the data purge job."""
+
+    @pytest.fixture
+    def mock_session_factory(self):
+        """Create mock session factory."""
+        return MagicMock(spec=async_sessionmaker)
+
+    @pytest.mark.asyncio
+    async def test_purge_old_bookings_calls_repository(self, mock_session_factory):
+        """Test purge job calls both repository methods."""
+        from unittest.mock import AsyncMock
+
+        # Create mock session with context manager support
+        mock_session = AsyncMock()
+        mock_session.commit = AsyncMock()
+
+        # Create mock context manager
+        mock_cm = MagicMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_session_factory.return_value = mock_cm
+
+        scheduler = SyncScheduler(mock_session_factory)
+
+        with patch(
+            "src.services.scheduler.BookingRepository"
+        ) as mock_booking_repo_class:
+            mock_repo = MagicMock()
+            mock_repo.purge_old_bookings = AsyncMock(return_value=5)
+            mock_repo.purge_cancelled_bookings = AsyncMock(return_value=3)
+            mock_booking_repo_class.return_value = mock_repo
+
+            await scheduler._purge_old_bookings()
+
+            mock_repo.purge_old_bookings.assert_called_once_with(days=90)
+            mock_repo.purge_cancelled_bookings.assert_called_once_with(days=30)
