@@ -104,7 +104,7 @@ Expected response:
 
 Open your browser and navigate to:
 ```
-http://127.0.0.1:8099/admin
+http://127.0.0.1:8099/
 ```
 
 You should see the RentalSync Bridge admin interface. In standalone mode, no authentication is required.
