@@ -2,23 +2,82 @@
 # SPDX-License-Identifier: Apache-2.0
 """Integration tests for room-level iCal endpoint."""
 
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 
 import pytest
-from fastapi import status
-from httpx import AsyncClient, Response
+from httpx import ASGITransport, AsyncClient
 from icalendar import Calendar
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import event
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from src.database import Base, get_db
+from src.main import create_app
 from src.models.booking import Booking
 from src.models.listing import Listing
 from src.models.room import Room
-from src.repositories.booking_repository import BookingRepository
-from src.repositories.listing_repository import ListingRepository
-from src.repositories.room_repository import RoomRepository
 
 
 @pytest.fixture
-async def listing_with_rooms(db: AsyncSession) -> Listing:
+async def ical_engine():
+    """Create test database engine with FK support."""
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        echo=False,
+        connect_args={"check_same_thread": False},
+    )
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def set_sqlite_pragma(dbapi_conn, connection_record):
+        """Enable SQLite foreign key constraints."""
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield engine
+    await engine.dispose()
+
+
+@pytest.fixture
+async def ical_session(ical_engine) -> AsyncGenerator[AsyncSession]:
+    """Create test database session."""
+    session_factory = async_sessionmaker(
+        ical_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+    async with session_factory() as session:
+        yield session
+
+
+@pytest.fixture
+async def ical_app(ical_engine) -> AsyncGenerator:
+    """Create test app with overridden DB dependency."""
+    app = create_app()
+    session_factory = async_sessionmaker(
+        ical_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
+    async def override_get_db() -> AsyncGenerator[AsyncSession]:
+        """Override database session."""
+        async with session_factory() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+
+    app.dependency_overrides[get_db] = override_get_db
+    yield app
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+async def listing_with_rooms(ical_session: AsyncSession) -> Listing:
     """Create a listing with multiple rooms for testing."""
     listing = Listing(
         cloudbeds_id="test-property-123",
@@ -27,50 +86,51 @@ async def listing_with_rooms(db: AsyncSession) -> Listing:
         timezone="America/Los_Angeles",
         enabled=True,
     )
-    listing_repo = ListingRepository(db)
-    listing = await listing_repo.create(listing)
-    await db.commit()
-    await db.refresh(listing)
+    ical_session.add(listing)
+    await ical_session.commit()
+    await ical_session.refresh(listing)
     return listing
 
 
 @pytest.fixture
-async def room1(db: AsyncSession, listing_with_rooms: Listing) -> Room:
+async def room1(ical_session: AsyncSession, listing_with_rooms: Listing) -> Room:
     """Create first test room."""
-    room_repo = RoomRepository(db)
-    room = await room_repo.create_room(
+    room = Room(
         listing_id=listing_with_rooms.id,
         cloudbeds_room_id="room-001",
         room_name="Ocean View Suite",
         room_type_name="Suite",
+        ical_url_slug="ocean-view-suite",
+        enabled=True,
     )
-    await db.commit()
-    await db.refresh(room)
+    ical_session.add(room)
+    await ical_session.commit()
+    await ical_session.refresh(room)
     return room
 
 
 @pytest.fixture
-async def room2(db: AsyncSession, listing_with_rooms: Listing) -> Room:
+async def room2(ical_session: AsyncSession, listing_with_rooms: Listing) -> Room:
     """Create second test room."""
-    room_repo = RoomRepository(db)
-    room = await room_repo.create_room(
+    room = Room(
         listing_id=listing_with_rooms.id,
         cloudbeds_room_id="room-002",
         room_name="Mountain View Deluxe",
         room_type_name="Deluxe",
+        ical_url_slug="mountain-view-deluxe",
+        enabled=True,
     )
-    await db.commit()
-    await db.refresh(room)
+    ical_session.add(room)
+    await ical_session.commit()
+    await ical_session.refresh(room)
     return room
 
 
 @pytest.fixture
 async def bookings_for_rooms(
-    db: AsyncSession, listing_with_rooms: Listing, room1: Room, room2: Room
+    ical_session: AsyncSession, listing_with_rooms: Listing, room1: Room, room2: Room
 ) -> list[Booking]:
     """Create bookings for different rooms."""
-    booking_repo = BookingRepository(db)
-
     bookings = [
         # Room 1 bookings
         Booking(
@@ -104,26 +164,13 @@ async def bookings_for_rooms(
             check_out_date=datetime(2026, 3, 8, 11, 0, tzinfo=UTC),
             status="confirmed",
         ),
-        # Booking without room assignment
-        Booking(
-            listing_id=listing_with_rooms.id,
-            room_id=None,
-            cloudbeds_booking_id="booking-no-room",
-            guest_name="David Lee",
-            guest_phone_last4="3456",
-            check_in_date=datetime(2026, 3, 20, 15, 0, tzinfo=UTC),
-            check_out_date=datetime(2026, 3, 25, 11, 0, tzinfo=UTC),
-            status="confirmed",
-        ),
     ]
 
-    created_bookings = []
     for booking in bookings:
-        created = await booking_repo.create(booking)
-        created_bookings.append(created)
+        ical_session.add(booking)
 
-    await db.commit()
-    return created_bookings
+    await ical_session.commit()
+    return bookings
 
 
 class TestRoomICalEndpoint:
@@ -132,17 +179,20 @@ class TestRoomICalEndpoint:
     @pytest.mark.asyncio
     async def test_get_room_ical_feed_success(
         self,
-        client: AsyncClient,
+        ical_app,
         listing_with_rooms: Listing,
         room1: Room,
         bookings_for_rooms: list[Booking],
     ) -> None:
         """Test successful retrieval of room-level iCal feed."""
-        response: Response = await client.get(
-            f"/ical/{listing_with_rooms.ical_url_slug}/{room1.ical_url_slug}.ics"
-        )
+        async with AsyncClient(
+            transport=ASGITransport(app=ical_app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                f"/ical/{listing_with_rooms.ical_url_slug}/{room1.ical_url_slug}.ics"
+            )
 
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == 200
         assert response.headers["content-type"] == "text/calendar; charset=utf-8"
         assert (
             response.headers["content-disposition"]
@@ -165,17 +215,20 @@ class TestRoomICalEndpoint:
     @pytest.mark.asyncio
     async def test_get_room_ical_feed_different_room(
         self,
-        client: AsyncClient,
+        ical_app,
         listing_with_rooms: Listing,
         room2: Room,
         bookings_for_rooms: list[Booking],
     ) -> None:
         """Test that different rooms return different bookings."""
-        response: Response = await client.get(
-            f"/ical/{listing_with_rooms.ical_url_slug}/{room2.ical_url_slug}.ics"
-        )
+        async with AsyncClient(
+            transport=ASGITransport(app=ical_app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                f"/ical/{listing_with_rooms.ical_url_slug}/{room2.ical_url_slug}.ics"
+            )
 
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == 200
 
         # Parse iCal content
         cal = Calendar.from_ical(response.content)
@@ -193,26 +246,31 @@ class TestRoomICalEndpoint:
     @pytest.mark.asyncio
     async def test_get_room_ical_feed_no_bookings(
         self,
-        client: AsyncClient,
+        ical_app,
+        ical_session: AsyncSession,
         listing_with_rooms: Listing,
-        db: AsyncSession,
     ) -> None:
         """Test room iCal feed with a room that has no bookings."""
         # Create a room with no bookings
-        room_repo = RoomRepository(db)
-        empty_room = await room_repo.create_room(
+        empty_room = Room(
             listing_id=listing_with_rooms.id,
             cloudbeds_room_id="room-empty",
             room_name="Empty Room",
+            ical_url_slug="empty-room",
+            enabled=True,
         )
-        await db.commit()
-        await db.refresh(empty_room)
+        ical_session.add(empty_room)
+        await ical_session.commit()
+        await ical_session.refresh(empty_room)
 
-        response: Response = await client.get(
-            f"/ical/{listing_with_rooms.ical_url_slug}/{empty_room.ical_url_slug}.ics"
-        )
+        async with AsyncClient(
+            transport=ASGITransport(app=ical_app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                f"/ical/{listing_with_rooms.ical_url_slug}/{empty_room.ical_url_slug}.ics"
+            )
 
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == 200
 
         # Parse iCal content
         cal = Calendar.from_ical(response.content)
@@ -223,83 +281,121 @@ class TestRoomICalEndpoint:
 
     @pytest.mark.asyncio
     async def test_get_room_ical_feed_invalid_listing_slug(
-        self, client: AsyncClient, room1: Room
+        self, ical_app, room1: Room
     ) -> None:
         """Test 404 error for invalid listing slug."""
-        response: Response = await client.get(
-            f"/ical/invalid-listing/{room1.ical_url_slug}.ics"
-        )
+        async with AsyncClient(
+            transport=ASGITransport(app=ical_app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                f"/ical/invalid-listing/{room1.ical_url_slug}.ics"
+            )
 
-        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert response.status_code == 404
         assert response.json()["detail"] == "Room not found"
 
     @pytest.mark.asyncio
     async def test_get_room_ical_feed_invalid_room_slug(
-        self, client: AsyncClient, listing_with_rooms: Listing
+        self, ical_app, listing_with_rooms: Listing
     ) -> None:
         """Test 404 error for invalid room slug."""
-        response: Response = await client.get(
-            f"/ical/{listing_with_rooms.ical_url_slug}/invalid-room.ics"
-        )
+        async with AsyncClient(
+            transport=ASGITransport(app=ical_app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                f"/ical/{listing_with_rooms.ical_url_slug}/invalid-room.ics"
+            )
 
-        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert response.status_code == 404
         assert response.json()["detail"] == "Room not found"
 
     @pytest.mark.asyncio
     async def test_get_room_ical_feed_disabled_room(
         self,
-        client: AsyncClient,
+        ical_app,
+        ical_session: AsyncSession,
         listing_with_rooms: Listing,
-        room1: Room,
-        db: AsyncSession,
     ) -> None:
         """Test 404 error for disabled room."""
-        # Disable the room
-        room_repo = RoomRepository(db)
-        await room_repo.toggle_room_enabled(room1.id, enabled=False)
-        await db.commit()
-
-        response: Response = await client.get(
-            f"/ical/{listing_with_rooms.ical_url_slug}/{room1.ical_url_slug}.ics"
+        # Create a disabled room
+        disabled_room = Room(
+            listing_id=listing_with_rooms.id,
+            cloudbeds_room_id="room-disabled",
+            room_name="Disabled Room",
+            ical_url_slug="disabled-room",
+            enabled=False,
         )
+        ical_session.add(disabled_room)
+        await ical_session.commit()
+        await ical_session.refresh(disabled_room)
 
-        assert response.status_code == status.HTTP_404_NOT_FOUND
+        async with AsyncClient(
+            transport=ASGITransport(app=ical_app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                f"/ical/{listing_with_rooms.ical_url_slug}/{disabled_room.ical_url_slug}.ics"
+            )
+
+        assert response.status_code == 404
         assert response.json()["detail"] == "Room not found"
 
     @pytest.mark.asyncio
     async def test_get_room_ical_feed_disabled_listing(
         self,
-        client: AsyncClient,
-        listing_with_rooms: Listing,
-        room1: Room,
-        db: AsyncSession,
+        ical_app,
+        ical_session: AsyncSession,
     ) -> None:
         """Test 404 error for room in disabled listing."""
-        # Disable the listing
-        listing_with_rooms.enabled = False
-        await db.commit()
-
-        response: Response = await client.get(
-            f"/ical/{listing_with_rooms.ical_url_slug}/{room1.ical_url_slug}.ics"
+        # Create a disabled listing with a room
+        disabled_listing = Listing(
+            cloudbeds_id="disabled-property",
+            name="Disabled Property",
+            ical_url_slug="disabled-property",
+            timezone="America/Los_Angeles",
+            enabled=False,
         )
+        ical_session.add(disabled_listing)
+        await ical_session.commit()
+        await ical_session.refresh(disabled_listing)
 
-        assert response.status_code == status.HTTP_404_NOT_FOUND
+        room = Room(
+            listing_id=disabled_listing.id,
+            cloudbeds_room_id="room-in-disabled",
+            room_name="Room in Disabled Listing",
+            ical_url_slug="room-in-disabled",
+            enabled=True,
+        )
+        ical_session.add(room)
+        await ical_session.commit()
+        await ical_session.refresh(room)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=ical_app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                f"/ical/{disabled_listing.ical_url_slug}/{room.ical_url_slug}.ics"
+            )
+
+        assert response.status_code == 404
         assert response.json()["detail"] == "Room not found"
 
     @pytest.mark.asyncio
     async def test_room_ical_calendar_metadata(
         self,
-        client: AsyncClient,
+        ical_app,
         listing_with_rooms: Listing,
         room1: Room,
         bookings_for_rooms: list[Booking],
     ) -> None:
         """Test that calendar metadata includes listing information."""
-        response: Response = await client.get(
-            f"/ical/{listing_with_rooms.ical_url_slug}/{room1.ical_url_slug}.ics"
-        )
+        async with AsyncClient(
+            transport=ASGITransport(app=ical_app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                f"/ical/{listing_with_rooms.ical_url_slug}/{room1.ical_url_slug}.ics"
+            )
 
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == 200
 
         # Parse iCal
         cal = Calendar.from_ical(response.content)
@@ -313,23 +409,26 @@ class TestRoomICalEndpoint:
     @pytest.mark.asyncio
     async def test_room_ical_event_details(
         self,
-        client: AsyncClient,
+        ical_app,
         listing_with_rooms: Listing,
         room1: Room,
         bookings_for_rooms: list[Booking],
     ) -> None:
         """Test that event details are correctly formatted."""
-        response: Response = await client.get(
-            f"/ical/{listing_with_rooms.ical_url_slug}/{room1.ical_url_slug}.ics"
-        )
+        async with AsyncClient(
+            transport=ASGITransport(app=ical_app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                f"/ical/{listing_with_rooms.ical_url_slug}/{room1.ical_url_slug}.ics"
+            )
 
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == 200
 
         # Parse iCal
         cal = Calendar.from_ical(response.content)
         events = [c for c in cal.walk() if c.name == "VEVENT"]
 
-        # Get first event (Alice Johnson)
+        # Get first event
         event = events[0]
 
         # Verify event structure
@@ -351,7 +450,7 @@ class TestRoomICalCaching:
     @pytest.mark.asyncio
     async def test_room_ical_uses_cache(
         self,
-        client: AsyncClient,
+        ical_app,
         listing_with_rooms: Listing,
         room1: Room,
         bookings_for_rooms: list[Booking],
@@ -359,15 +458,18 @@ class TestRoomICalCaching:
         """Test that subsequent requests use cached iCal."""
         url = f"/ical/{listing_with_rooms.ical_url_slug}/{room1.ical_url_slug}.ics"
 
-        # First request - generates and caches
-        response1: Response = await client.get(url)
-        assert response1.status_code == status.HTTP_200_OK
-        content1 = response1.content
+        async with AsyncClient(
+            transport=ASGITransport(app=ical_app), base_url="http://test"
+        ) as client:
+            # First request - generates and caches
+            response1 = await client.get(url)
+            assert response1.status_code == 200
+            content1 = response1.content
 
-        # Second request - should return cached result
-        response2: Response = await client.get(url)
-        assert response2.status_code == status.HTTP_200_OK
-        content2 = response2.content
+            # Second request - should return cached result
+            response2 = await client.get(url)
+            assert response2.status_code == 200
+            content2 = response2.content
 
         # Content should be identical (from cache)
         assert content1 == content2
@@ -375,7 +477,7 @@ class TestRoomICalCaching:
     @pytest.mark.asyncio
     async def test_room_ical_separate_cache_per_room(
         self,
-        client: AsyncClient,
+        ical_app,
         listing_with_rooms: Listing,
         room1: Room,
         room2: Room,
@@ -385,12 +487,15 @@ class TestRoomICalCaching:
         url1 = f"/ical/{listing_with_rooms.ical_url_slug}/{room1.ical_url_slug}.ics"
         url2 = f"/ical/{listing_with_rooms.ical_url_slug}/{room2.ical_url_slug}.ics"
 
-        # Request both room calendars
-        response1: Response = await client.get(url1)
-        response2: Response = await client.get(url2)
+        async with AsyncClient(
+            transport=ASGITransport(app=ical_app), base_url="http://test"
+        ) as client:
+            # Request both room calendars
+            response1 = await client.get(url1)
+            response2 = await client.get(url2)
 
-        assert response1.status_code == status.HTTP_200_OK
-        assert response2.status_code == status.HTTP_200_OK
+        assert response1.status_code == 200
+        assert response2.status_code == 200
 
         # Content should be different (different bookings)
         assert response1.content != response2.content
