@@ -66,16 +66,16 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Tests for Phase 3
 
-- [ ] T016 [P] Create unit tests for get_rooms() in tests/unit/test_cloudbeds_service.py
-- [ ] T017 [P] Create integration tests for room sync in tests/integration/test_room_sync.py
+- [x] T016 [P] Create unit tests for get_rooms() in tests/unit/test_cloudbeds_service.py
+- [x] T017 [P] Create integration tests for room sync in tests/integration/test_room_sync.py
 
 ### Implementation for Phase 3
 
-- [ ] T018 Add get_rooms(property_id) method to CloudbedsService in src/services/cloudbeds_service.py
-- [ ] T019 Add room sync logic to SyncService in src/services/sync_service.py - fetch rooms for each property
-- [ ] T020 Update booking sync to associate bookings with rooms based on roomID in reservation data in src/services/sync_service.py
-- [ ] T021 Update POST /api/sync/properties endpoint to sync rooms in src/api/sync.py
-- [ ] T022 Rename sync button text from "Sync Properties" to "Sync Rooms" in admin UI src/static/js/admin.js
+- [x] T018 Add get_rooms(property_id) method to CloudbedsService in src/services/cloudbeds_service.py
+- [x] T019 Add room sync logic to SyncService in src/services/sync_service.py - fetch rooms for each property
+- [x] T020 Update booking sync to associate bookings with rooms based on roomID in reservation data in src/services/sync_service.py
+- [x] T021 Update POST /api/sync/properties endpoint to sync rooms in src/api/listings.py
+- [x] T022 Rename sync button text from "Sync Properties" to "Sync Rooms" in admin UI src/static/js/admin.js
 
 **Checkpoint**: Syncing from Cloudbeds creates Room records, bookings linked to rooms
 

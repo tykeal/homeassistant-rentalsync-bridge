@@ -758,3 +758,254 @@ class TestInvalidDateHandling:
 
         # No reservations should be inserted
         assert result["inserted"] == 0
+
+
+class TestRoomAssociation:
+    """Tests for booking room association during sync (T020)."""
+
+    @pytest.mark.asyncio
+    async def test_sync_associates_booking_with_room(
+        self, sync_session, test_credential
+    ):
+        """Test that sync associates booking with room when roomID is present."""
+        from src.models.room import Room
+
+        # Create listing with a room
+        listing = Listing(
+            cloudbeds_id="ROOM_TEST",
+            name="Room Test Property",
+            ical_url_slug="room-test",
+            enabled=True,
+            sync_enabled=True,
+        )
+        sync_session.add(listing)
+        await sync_session.commit()
+        await sync_session.refresh(listing)
+
+        room = Room(
+            listing_id=listing.id,
+            cloudbeds_room_id="ROOM_123",
+            room_name="Suite 101",
+            ical_url_slug="suite-101",
+            enabled=True,
+        )
+        sync_session.add(room)
+        await sync_session.commit()
+        await sync_session.refresh(room)
+
+        mock_reservations = [
+            {
+                "id": "RES_WITH_ROOM",
+                "guestName": "Room Guest",
+                "roomID": "ROOM_123",  # Matches our room
+                "startDate": "2026-03-01",
+                "endDate": "2026-03-05",
+                "status": "confirmed",
+            }
+        ]
+
+        with patch(
+            "src.services.sync_service.CloudbedsService"
+        ) as mock_cloudbeds_class:
+            mock_cloudbeds = AsyncMock()
+            mock_cloudbeds.get_reservations = AsyncMock(return_value=mock_reservations)
+            mock_cloudbeds_class.return_value = mock_cloudbeds
+            mock_cloudbeds_class.extract_phone_last4 = (
+                CloudbedsService.extract_phone_last4
+            )
+
+            service = SyncService(sync_session)
+            result = await service.sync_listing(listing, test_credential)
+
+        assert result["inserted"] == 1
+
+        # Verify booking is associated with room
+        from sqlalchemy import select
+
+        stmt = select(Booking).where(Booking.cloudbeds_booking_id == "RES_WITH_ROOM")
+        db_result = await sync_session.execute(stmt)
+        booking = db_result.scalar_one()
+
+        assert booking.room_id == room.id
+
+    @pytest.mark.asyncio
+    async def test_sync_booking_without_room_id(self, sync_session, test_credential):
+        """Test that sync handles bookings without roomID."""
+        listing = Listing(
+            cloudbeds_id="NO_ROOM_TEST",
+            name="No Room Test",
+            ical_url_slug="no-room-test",
+            enabled=True,
+            sync_enabled=True,
+        )
+        sync_session.add(listing)
+        await sync_session.commit()
+        await sync_session.refresh(listing)
+
+        mock_reservations = [
+            {
+                "id": "RES_NO_ROOM",
+                "guestName": "No Room Guest",
+                # No roomID field
+                "startDate": "2026-03-01",
+                "endDate": "2026-03-05",
+                "status": "confirmed",
+            }
+        ]
+
+        with patch(
+            "src.services.sync_service.CloudbedsService"
+        ) as mock_cloudbeds_class:
+            mock_cloudbeds = AsyncMock()
+            mock_cloudbeds.get_reservations = AsyncMock(return_value=mock_reservations)
+            mock_cloudbeds_class.return_value = mock_cloudbeds
+            mock_cloudbeds_class.extract_phone_last4 = (
+                CloudbedsService.extract_phone_last4
+            )
+
+            service = SyncService(sync_session)
+            result = await service.sync_listing(listing, test_credential)
+
+        assert result["inserted"] == 1
+
+        # Verify booking has no room_id
+        from sqlalchemy import select
+
+        stmt = select(Booking).where(Booking.cloudbeds_booking_id == "RES_NO_ROOM")
+        db_result = await sync_session.execute(stmt)
+        booking = db_result.scalar_one()
+
+        assert booking.room_id is None
+
+    @pytest.mark.asyncio
+    async def test_sync_booking_with_unknown_room_id(
+        self, sync_session, test_credential
+    ):
+        """Test that sync handles bookings with unknown roomID."""
+        listing = Listing(
+            cloudbeds_id="UNKNOWN_ROOM",
+            name="Unknown Room Test",
+            ical_url_slug="unknown-room",
+            enabled=True,
+            sync_enabled=True,
+        )
+        sync_session.add(listing)
+        await sync_session.commit()
+        await sync_session.refresh(listing)
+
+        mock_reservations = [
+            {
+                "id": "RES_UNKNOWN_ROOM",
+                "guestName": "Unknown Room Guest",
+                "roomID": "NONEXISTENT_ROOM",  # Room doesn't exist
+                "startDate": "2026-03-01",
+                "endDate": "2026-03-05",
+                "status": "confirmed",
+            }
+        ]
+
+        with patch(
+            "src.services.sync_service.CloudbedsService"
+        ) as mock_cloudbeds_class:
+            mock_cloudbeds = AsyncMock()
+            mock_cloudbeds.get_reservations = AsyncMock(return_value=mock_reservations)
+            mock_cloudbeds_class.return_value = mock_cloudbeds
+            mock_cloudbeds_class.extract_phone_last4 = (
+                CloudbedsService.extract_phone_last4
+            )
+
+            service = SyncService(sync_session)
+            result = await service.sync_listing(listing, test_credential)
+
+        assert result["inserted"] == 1
+
+        # Verify booking has no room_id (room wasn't found)
+        from sqlalchemy import select
+
+        stmt = select(Booking).where(Booking.cloudbeds_booking_id == "RES_UNKNOWN_ROOM")
+        db_result = await sync_session.execute(stmt)
+        booking = db_result.scalar_one()
+
+        assert booking.room_id is None
+
+    @pytest.mark.asyncio
+    async def test_sync_updates_room_id_on_room_change(
+        self, sync_session, test_credential
+    ):
+        """Test that sync updates room_id when booking is moved to different room."""
+        from src.models.room import Room
+
+        # Create listing with two rooms
+        listing = Listing(
+            cloudbeds_id="ROOM_CHANGE_TEST",
+            name="Room Change Test",
+            ical_url_slug="room-change-test",
+            enabled=True,
+            sync_enabled=True,
+        )
+        sync_session.add(listing)
+        await sync_session.commit()
+        await sync_session.refresh(listing)
+
+        room1 = Room(
+            listing_id=listing.id,
+            cloudbeds_room_id="ROOM_A",
+            room_name="Room A",
+            ical_url_slug="room-a",
+            enabled=True,
+        )
+        room2 = Room(
+            listing_id=listing.id,
+            cloudbeds_room_id="ROOM_B",
+            room_name="Room B",
+            ical_url_slug="room-b",
+            enabled=True,
+        )
+        sync_session.add_all([room1, room2])
+        await sync_session.commit()
+        await sync_session.refresh(room1)
+        await sync_session.refresh(room2)
+
+        # Create existing booking in Room A
+        existing_booking = Booking(
+            listing_id=listing.id,
+            room_id=room1.id,
+            cloudbeds_booking_id="RES_ROOM_CHANGE",
+            guest_name="Moving Guest",
+            check_in_date=datetime(2026, 3, 1, tzinfo=UTC),
+            check_out_date=datetime(2026, 3, 5, tzinfo=UTC),
+            status="confirmed",
+        )
+        sync_session.add(existing_booking)
+        await sync_session.commit()
+
+        # Sync with booking now in Room B
+        mock_reservations = [
+            {
+                "id": "RES_ROOM_CHANGE",
+                "guestName": "Moving Guest",
+                "roomID": "ROOM_B",  # Changed from ROOM_A to ROOM_B
+                "startDate": "2026-03-01",
+                "endDate": "2026-03-05",
+                "status": "confirmed",
+            }
+        ]
+
+        with patch(
+            "src.services.sync_service.CloudbedsService"
+        ) as mock_cloudbeds_class:
+            mock_cloudbeds = AsyncMock()
+            mock_cloudbeds.get_reservations = AsyncMock(return_value=mock_reservations)
+            mock_cloudbeds_class.return_value = mock_cloudbeds
+            mock_cloudbeds_class.extract_phone_last4 = (
+                CloudbedsService.extract_phone_last4
+            )
+
+            service = SyncService(sync_session)
+            result = await service.sync_listing(listing, test_credential)
+
+        assert result["updated"] == 1
+
+        # Verify booking is now associated with Room B
+        await sync_session.refresh(existing_booking)
+        assert existing_booking.room_id == room2.id

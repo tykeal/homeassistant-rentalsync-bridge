@@ -11,6 +11,7 @@ from src.models.booking import Booking
 from src.models.listing import Listing
 from src.models.oauth_credential import OAuthCredential
 from src.repositories.booking_repository import BookingRepository
+from src.repositories.room_repository import RoomRepository
 from src.services.calendar_service import CalendarCache
 from src.services.cloudbeds_service import CloudbedsService, CloudbedsServiceError
 
@@ -47,6 +48,7 @@ class SyncService:
         self._session = session
         self._calendar_cache = calendar_cache
         self._booking_repo = BookingRepository(session)
+        self._room_repo = RoomRepository(session)
 
     async def sync_listing(
         self,
@@ -137,9 +139,20 @@ class SyncService:
                 )
                 continue
 
+            # Look up room by cloudbeds_room_id if present (T020)
+            room_id: int | None = None
+            cloudbeds_room_id = booking_data.get("cloudbeds_room_id")
+            if cloudbeds_room_id:
+                room = await self._room_repo.get_by_cloudbeds_id(
+                    listing.id, cloudbeds_room_id
+                )
+                if room:
+                    room_id = room.id
+
             # Create Booking entity for upsert
             booking = Booking(
                 listing_id=listing.id,
+                room_id=room_id,
                 cloudbeds_booking_id=str(cloudbeds_booking_id),
                 guest_name=booking_data["guest_name"],
                 guest_phone_last4=booking_data["guest_phone_last4"],
@@ -213,6 +226,11 @@ class SyncService:
         if status not in ("confirmed", "checked_in", "checked_out", "cancelled"):
             status = "confirmed"
 
+        # Extract room ID from reservation (T020)
+        cloudbeds_room_id = reservation.get("roomID") or reservation.get("roomId")
+        if cloudbeds_room_id:
+            cloudbeds_room_id = str(cloudbeds_room_id)
+
         # Build custom data from available fields
         custom_data = {}
         custom_field_mapping = {
@@ -237,6 +255,7 @@ class SyncService:
             "check_in_date": check_in,
             "check_out_date": check_out,
             "status": status,
+            "cloudbeds_room_id": cloudbeds_room_id,
             "custom_data": custom_data if custom_data else None,
         }
 

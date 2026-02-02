@@ -235,6 +235,7 @@ class BookingRepository:
             return (created, True)
 
         # Update existing booking
+        existing.room_id = booking.room_id
         existing.guest_name = booking.guest_name
         existing.guest_phone_last4 = booking.guest_phone_last4
         existing.check_in_date = booking.check_in_date
