@@ -1169,3 +1169,122 @@ class TestRoomAssociation:
         # Check room associations
         room_ids = {b.room_id for b in bookings}
         assert room_ids == {room1.id, room2.id}
+
+    @pytest.mark.asyncio
+    async def test_sync_handles_room_count_transition(
+        self, sync_session, test_credential
+    ):
+        """Test that changing room count properly cancels old bookings."""
+        from src.models.room import Room
+
+        listing = Listing(
+            cloudbeds_id="PROP_TRANSITION",
+            name="Transition Property",
+            ical_url_slug="transition-prop",
+            timezone="UTC",
+            enabled=True,
+            sync_enabled=True,
+        )
+        sync_session.add(listing)
+        await sync_session.commit()
+        await sync_session.refresh(listing)
+
+        # Create two rooms
+        room1 = Room(
+            listing_id=listing.id,
+            cloudbeds_room_id="200-0",
+            room_name="Room X",
+            ical_url_slug="room-x",
+            enabled=True,
+        )
+        room2 = Room(
+            listing_id=listing.id,
+            cloudbeds_room_id="200-1",
+            room_name="Room Y",
+            ical_url_slug="room-y",
+            enabled=True,
+        )
+        sync_session.add_all([room1, room2])
+        await sync_session.commit()
+        await sync_session.refresh(room1)
+        await sync_session.refresh(room2)
+
+        # First sync: single-room reservation
+        single_room_reservation = [
+            {
+                "id": "RES_TRANSITION",
+                "guestName": "Test Guest",
+                "startDate": "2026-05-01",
+                "endDate": "2026-05-05",
+                "status": "confirmed",
+                "rooms": [{"roomID": "200-0", "roomName": "Room X"}],
+            }
+        ]
+
+        with patch(
+            "src.services.sync_service.CloudbedsService"
+        ) as mock_cloudbeds_class:
+            mock_cloudbeds = AsyncMock()
+            mock_cloudbeds.get_reservations = AsyncMock(
+                return_value=single_room_reservation
+            )
+            mock_cloudbeds_class.return_value = mock_cloudbeds
+            mock_cloudbeds_class.extract_phone_last4 = (
+                CloudbedsService.extract_phone_last4
+            )
+
+            service = SyncService(sync_session)
+            result = await service.sync_listing(listing, test_credential)
+
+        assert result["inserted"] == 1
+
+        # Second sync: same reservation now spans TWO rooms
+        multi_room_reservation = [
+            {
+                "id": "RES_TRANSITION",
+                "guestName": "Test Guest",
+                "startDate": "2026-05-01",
+                "endDate": "2026-05-05",
+                "status": "confirmed",
+                "rooms": [
+                    {"roomID": "200-0", "roomName": "Room X"},
+                    {"roomID": "200-1", "roomName": "Room Y"},
+                ],
+            }
+        ]
+
+        with patch(
+            "src.services.sync_service.CloudbedsService"
+        ) as mock_cloudbeds_class:
+            mock_cloudbeds = AsyncMock()
+            mock_cloudbeds.get_reservations = AsyncMock(
+                return_value=multi_room_reservation
+            )
+            mock_cloudbeds_class.return_value = mock_cloudbeds
+            mock_cloudbeds_class.extract_phone_last4 = (
+                CloudbedsService.extract_phone_last4
+            )
+
+            service = SyncService(sync_session)
+            result = await service.sync_listing(listing, test_credential)
+
+        # Should create 2 new bookings and cancel the old single-room one
+        assert result["inserted"] == 2
+        assert result["cancelled"] == 1
+
+        # Verify final state: 2 active bookings + 1 cancelled
+        from sqlalchemy import select
+
+        stmt = select(Booking).where(Booking.listing_id == listing.id)
+        db_result = await sync_session.execute(stmt)
+        bookings = db_result.scalars().all()
+
+        assert len(bookings) == 3
+        active_bookings = [b for b in bookings if b.status != "cancelled"]
+        cancelled_bookings = [b for b in bookings if b.status == "cancelled"]
+
+        assert len(active_bookings) == 2
+        assert len(cancelled_bookings) == 1
+
+        # The cancelled one should be the original single-room booking
+        assert cancelled_bookings[0].cloudbeds_booking_id == "RES_TRANSITION"

@@ -3,6 +3,7 @@
 """Sync service for synchronizing bookings from Cloudbeds."""
 
 import logging
+import re
 from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -118,6 +119,7 @@ class SyncService:
         """
         counts = {"inserted": 0, "updated": 0, "cancelled": 0}
         seen_booking_ids: set[str] = set()
+        seen_reservation_ids: set[str] = set()  # Track base reservation IDs
 
         for reservation in reservations:
             cloudbeds_booking_id = reservation.get("id") or reservation.get(
@@ -126,6 +128,9 @@ class SyncService:
             if not cloudbeds_booking_id:
                 logger.warning("Skipping reservation with no ID")
                 continue
+
+            # Track the base reservation ID
+            seen_reservation_ids.add(str(cloudbeds_booking_id))
 
             # Extract booking data
             booking_data = self._extract_booking_data(reservation)
@@ -146,14 +151,28 @@ class SyncService:
             seen_booking_ids.update(new_ids)
 
         # Mark cancelled bookings (not in current fetch)
+        # A booking is cancelled if neither its exact ID nor its base reservation ID
+        # is in the seen sets. This handles transitions between single/multi-room.
         existing_bookings = await self._booking_repo.get_for_listing(listing.id)
         for existing_booking in existing_bookings:
-            if (
-                existing_booking.cloudbeds_booking_id not in seen_booking_ids
-                and existing_booking.status != "cancelled"
-            ):
+            if existing_booking.status == "cancelled":
+                continue
+
+            booking_id = existing_booking.cloudbeds_booking_id
+            # Extract base reservation ID (before any -roomID suffix)
+            base_reservation_id = self._extract_base_reservation_id(booking_id)
+
+            # Keep if exact ID is seen OR if base reservation still exists
+            if booking_id in seen_booking_ids:
+                continue
+            if base_reservation_id in seen_reservation_ids:
+                # Room config changed - cancel old booking
                 await self._booking_repo.mark_cancelled(existing_booking)
                 counts["cancelled"] += 1
+                continue
+            # Reservation no longer exists at all
+            await self._booking_repo.mark_cancelled(existing_booking)
+            counts["cancelled"] += 1
 
         # Invalidate calendar cache if any changes
         # Use prefix invalidation to clear all room-level caches for this listing
@@ -274,6 +293,28 @@ class SyncService:
         )
         _, was_created = await self._booking_repo.upsert(booking)
         return was_created
+
+    @staticmethod
+    def _extract_base_reservation_id(booking_id: str) -> str:
+        """Extract the base Cloudbeds reservation ID from a booking ID.
+
+        For multi-room bookings, the ID format is "{reservationID}-{roomID}".
+        This extracts just the reservation ID portion.
+
+        Args:
+            booking_id: The booking ID (may be composite).
+
+        Returns:
+            The base reservation ID.
+        """
+        # Cloudbeds room IDs are typically in format "123456-0" (typeID-index)
+        # So multi-room booking IDs look like "RES123-123456-0"
+        # We need to find the reservation ID which comes before the room ID
+        # The room ID pattern is typically digits-digit at the end
+        match = re.match(r"^(.+)-(\d+-\d+)$", booking_id)
+        if match:
+            return match.group(1)
+        return booking_id
 
     def _extract_booking_data(self, reservation: dict) -> dict:
         """Extract booking data from Cloudbeds reservation.
