@@ -308,11 +308,8 @@ class SyncService:
             The base reservation ID.
         """
         # Multi-room booking IDs use "::" delimiter to separate reservation and room
-        # Use rsplit with maxsplit=1 to handle edge case where reservation ID
-        # might contain "::" (split from right to get everything before last "::")
-        if "::" in booking_id:
-            return booking_id.rsplit("::", 1)[0]
-        return booking_id
+        # rsplit with maxsplit=1 splits at the last "::", returning original if none
+        return booking_id.rsplit("::", 1)[0]
 
     def _extract_booking_data(self, reservation: dict) -> dict:
         """Extract booking data from Cloudbeds reservation.
