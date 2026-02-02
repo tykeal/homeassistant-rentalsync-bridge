@@ -234,6 +234,7 @@ class CloudbedsService:
                         "startDate": start_date.strftime("%Y-%m-%d"),
                         "endDate": end_date.strftime("%Y-%m-%d"),
                         "status": "confirmed,checked_in,checked_out",
+                        "includeAllRooms": "true",
                     },
                     timeout=30.0,
                 )
@@ -257,8 +258,14 @@ class CloudbedsService:
 
                 reservations: list[dict[str, Any]] = data.get("data", [])
                 if reservations:
-                    # Log first reservation to see structure
-                    logger.debug("Sample reservation data: %s", reservations[0])
+                    # Log first reservation to see structure including room keys
+                    first_res = reservations[0]
+                    room_keys = [k for k in first_res if "room" in k.lower()]
+                    logger.debug(
+                        "Sample reservation data: %s (room-related keys: %s)",
+                        first_res,
+                        room_keys,
+                    )
                 return reservations
 
         result: list[dict[str, Any]] = await self._with_retry(
