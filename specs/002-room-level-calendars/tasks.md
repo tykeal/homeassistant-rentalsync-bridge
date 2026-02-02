@@ -108,12 +108,12 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Implementation for Phase 5
 
-- [ ] T030 Add expandable room list to listing cards in src/static/js/admin.js
-- [ ] T031 Add room iCal URL display with copy button in src/static/js/admin.js
-- [ ] T032 Add room enable/disable toggle in src/static/js/admin.js
-- [ ] T033 Add room slug edit functionality in src/static/js/admin.js
-- [ ] T034 [P] Add CSS styles for room list display in src/static/css/admin.css
-- [ ] T035 Update listing card template in src/templates/admin.html if needed
+- [X] T030 Add expandable room list to listing cards in src/static/js/admin.js
+- [X] T031 Add room iCal URL display with copy button in src/static/js/admin.js
+- [X] T032 Add room enable/disable toggle in src/static/js/admin.js
+- [X] T033 Add room slug edit functionality in src/static/js/admin.js
+- [X] T034 [P] Add CSS styles for room list display in src/static/css/admin.css
+- [X] T035 Update listing card template in src/templates/admin.html if needed
 
 **Checkpoint**: Admin UI shows rooms per listing with working controls
 
