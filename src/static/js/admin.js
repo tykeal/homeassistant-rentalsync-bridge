@@ -867,7 +867,7 @@ function renderCustomFields(fields) {
                 <input type="checkbox" ${field.enabled ? 'checked' : ''} data-field="enabled">
                 <span class="toggle-slider"></span>
             </label>
-            <button class="remove-btn" onclick="removeField(${index})">&times;</button>
+            <button class="remove-btn" onclick="this.parentElement.remove()">&times;</button>
         </div>
     `).join('');
 
@@ -921,13 +921,6 @@ function populateDisplayLabel(selectElement) {
         if (displayLabelInput && !displayLabelInput.value) {
             displayLabelInput.value = displayLabel;
         }
-    }
-}
-
-function removeField(index) {
-    const fieldItems = elements.customFieldsList.querySelectorAll('.field-item');
-    if (fieldItems[index]) {
-        fieldItems[index].remove();
     }
 }
 
