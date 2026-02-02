@@ -304,12 +304,14 @@ class CloudbedsService:
                     raise CloudbedsServiceError(msg)
 
                 data = response.json()
+                logger.debug("getRooms response for property %s: %s", property_id, data)
 
                 if not data.get("success"):
                     msg = f"API returned error: {data}"
                     raise CloudbedsServiceError(msg)
 
                 rooms: list[dict[str, Any]] = data.get("data", [])
+                logger.info("Fetched %d rooms for property %s", len(rooms), property_id)
                 return rooms
 
         result: list[dict[str, Any]] = await self._with_retry("get_rooms", fetch_rooms)
