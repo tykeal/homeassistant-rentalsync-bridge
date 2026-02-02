@@ -96,6 +96,10 @@ class SyncPropertiesResponse(BaseModel):
     success: bool = Field(description="Whether operation succeeded")
     created: int = Field(description="Number of new listings created")
     updated: int = Field(description="Number of existing listings updated")
+    rooms_created: int = Field(default=0, description="Number of new rooms created")
+    rooms_updated: int = Field(
+        default=0, description="Number of existing rooms updated"
+    )
     message: str = Field(description="Status message")
 
 
@@ -164,6 +168,60 @@ async def list_listings(
     }
 
 
+async def _sync_rooms_for_listing(
+    service: CloudbedsService,
+    room_repo: RoomRepository,
+    listing: Listing,
+    cloudbeds_id: str,
+) -> tuple[int, int]:
+    """Sync rooms for a single listing from Cloudbeds.
+
+    Args:
+        service: CloudbedsService instance.
+        room_repo: RoomRepository instance.
+        listing: Listing to sync rooms for.
+        cloudbeds_id: Cloudbeds property ID.
+
+    Returns:
+        Tuple of (rooms_created, rooms_updated).
+    """
+    rooms_created = 0
+    rooms_updated = 0
+
+    try:
+        rooms = await service.get_rooms(cloudbeds_id)
+        for room_data in rooms:
+            room_id = str(room_data.get("roomID", ""))
+            if not room_id:
+                continue
+
+            room_name = room_data.get("roomName", f"Room {room_id}")
+            room_type = room_data.get("roomTypeName")
+
+            # Check if room exists
+            existing_room = await room_repo.get_by_cloudbeds_id(listing.id, room_id)
+
+            if existing_room:
+                # Update existing room (preserve enabled state and slug)
+                existing_room.room_name = room_name
+                existing_room.room_type_name = room_type
+                rooms_updated += 1
+            else:
+                # Create new room
+                await room_repo.upsert_room(
+                    listing_id=listing.id,
+                    cloudbeds_room_id=room_id,
+                    room_name=room_name,
+                    room_type_name=room_type,
+                )
+                rooms_created += 1
+
+    except CloudbedsServiceError as e:
+        logger.warning("Failed to fetch rooms for property %s: %s", cloudbeds_id, e)
+
+    return rooms_created, rooms_updated
+
+
 @router.post("/sync-properties", response_model=SyncPropertiesResponse)
 async def sync_properties(
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -210,13 +268,18 @@ async def sync_properties(
             "success": True,
             "created": 0,
             "updated": 0,
+            "rooms_created": 0,
+            "rooms_updated": 0,
             "message": "No properties found in Cloudbeds account",
         }
 
     # Create or update listings
     repo = ListingRepository(db)
+    room_repo = RoomRepository(db)
     created = 0
     updated = 0
+    rooms_created = 0
+    rooms_updated = 0
 
     for prop in properties:
         cloudbeds_id = str(prop.get("propertyID", ""))
@@ -224,17 +287,19 @@ async def sync_properties(
             continue
 
         existing = await repo.get_by_cloudbeds_id(cloudbeds_id)
+        listing: Listing
 
         if existing:
             # Update existing listing
             existing.name = prop.get("propertyName", existing.name)
             existing.timezone = prop.get("propertyTimezone", existing.timezone)
+            listing = existing
             updated += 1
         else:
             # Create new listing with generated slug
             name = prop.get("propertyName", f"Property {cloudbeds_id}")
             slug = await repo.generate_unique_slug(name)
-            new_listing = Listing(
+            listing = Listing(
                 cloudbeds_id=cloudbeds_id,
                 name=name,
                 ical_url_slug=slug,
@@ -242,16 +307,33 @@ async def sync_properties(
                 enabled=False,
                 sync_enabled=False,
             )
-            db.add(new_listing)
+            db.add(listing)
             created += 1
+
+        # Commit to get listing ID if new
+        await db.flush()
+        if not existing:
+            await db.refresh(listing)
+
+        # Fetch and sync rooms for this property
+        r_created, r_updated = await _sync_rooms_for_listing(
+            service, room_repo, listing, cloudbeds_id
+        )
+        rooms_created += r_created
+        rooms_updated += r_updated
 
     await db.commit()
 
+    total_props = created + updated
+    total_rooms = rooms_created + rooms_updated
+    msg = f"Synced {total_props} properties and {total_rooms} rooms from Cloudbeds"
     return {
         "success": True,
         "created": created,
         "updated": updated,
-        "message": f"Synced {created + updated} properties from Cloudbeds",
+        "rooms_created": rooms_created,
+        "rooms_updated": rooms_updated,
+        "message": msg,
     }
 
 
