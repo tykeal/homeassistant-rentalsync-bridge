@@ -337,30 +337,67 @@ class SyncService:
         if status not in ("confirmed", "checked_in", "checked_out", "cancelled"):
             status = "confirmed"
 
-        # Extract ALL room IDs from reservation (T020)
-        # Prefer nested rooms array (authoritative), fallback to top-level roomID
+        # Extract room IDs
+        cloudbeds_room_ids = self._extract_room_ids(reservation)
+
+        # Build custom data from available fields
+        custom_data = self._extract_custom_data(reservation, phone_last4)
+
+        return {
+            "guest_name": guest_name,
+            "guest_phone_last4": phone_last4,
+            "check_in_date": check_in,
+            "check_out_date": check_out,
+            "status": status,
+            "cloudbeds_room_ids": cloudbeds_room_ids,
+            "custom_data": custom_data if custom_data else None,
+        }
+
+    @staticmethod
+    def _extract_room_ids(reservation: dict) -> list[str]:
+        """Extract room IDs from Cloudbeds reservation.
+
+        Prefers nested rooms array (authoritative), falls back to top-level roomID.
+
+        Args:
+            reservation: Reservation dict from Cloudbeds API.
+
+        Returns:
+            List of room ID strings.
+        """
         cloudbeds_room_ids: list[str] = []
         seen_room_ids: set[str] = set()
         rooms = reservation.get("rooms", [])
+
         if rooms and isinstance(rooms, list):
-            # Extract room IDs from nested array (multi-room reservations)
             for room in rooms:
                 if isinstance(room, dict):
                     room_id = room.get("roomID") or room.get("roomId")
                     if room_id:
                         room_id_str = str(room_id)
-                        # Deduplicate room IDs to avoid double-processing
                         if room_id_str not in seen_room_ids:
                             seen_room_ids.add(room_id_str)
                             cloudbeds_room_ids.append(room_id_str)
+
         if not cloudbeds_room_ids:
-            # Fallback to top-level room ID (legacy single-room format)
             top_level_room_id = reservation.get("roomID") or reservation.get("roomId")
             if top_level_room_id:
                 cloudbeds_room_ids.append(str(top_level_room_id))
 
-        # Build custom data from available fields
-        custom_data = {}
+        return cloudbeds_room_ids
+
+    @staticmethod
+    def _extract_custom_data(reservation: dict, phone_last4: str | None) -> dict:
+        """Extract custom field data from Cloudbeds reservation.
+
+        Args:
+            reservation: Reservation dict from Cloudbeds API.
+            phone_last4: Extracted phone last 4 digits.
+
+        Returns:
+            Dict of custom field values.
+        """
+        custom_data: dict[str, str] = {}
         custom_field_mapping = {
             "booking_notes": ["notes", "bookingNotes"],
             "arrival_time": ["arrivalTime", "estimatedArrivalTime"],
@@ -377,15 +414,11 @@ class SyncService:
                     custom_data[field_name] = str(reservation[key])
                     break
 
-        return {
-            "guest_name": guest_name,
-            "guest_phone_last4": phone_last4,
-            "check_in_date": check_in,
-            "check_out_date": check_out,
-            "status": status,
-            "cloudbeds_room_ids": cloudbeds_room_ids,
-            "custom_data": custom_data if custom_data else None,
-        }
+        # Add guest_phone_last4 to custom_data for custom field display
+        if phone_last4:
+            custom_data["guest_phone_last4"] = phone_last4
+
+        return custom_data
 
     @staticmethod
     def _parse_date(date_str: str | None) -> datetime | None:
