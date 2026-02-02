@@ -156,6 +156,7 @@ class CustomFieldRepository:
 
         Creates the default set of custom fields when a listing is enabled:
         - booking_notes (enabled by default)
+        - guest_phone_last4 (enabled by default)
 
         Args:
             listing_id: Listing ID to create fields for.
@@ -165,6 +166,7 @@ class CustomFieldRepository:
         """
         defaults = [
             ("booking_notes", "Booking Notes", True, 0),
+            ("guest_phone_last4", "Guest Phone (Last 4 Digits)", True, 1),
         ]
 
         created: list[CustomField] = []
