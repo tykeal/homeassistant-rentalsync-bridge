@@ -76,11 +76,15 @@ class CalendarCache:
         """Remove all cache entries with keys starting with prefix.
 
         Used to invalidate all room-level caches for a listing when bookings change.
+        Only invalidates exact matches or keys with a "/" separator after the prefix
+        to avoid false matches (e.g., "beach-house" won't match "beach-house-deluxe").
 
         Args:
             prefix: Key prefix to match (e.g., listing slug).
         """
-        keys_to_remove = [k for k in self._cache if k.startswith(prefix)]
+        keys_to_remove = [
+            k for k in self._cache if k == prefix or k.startswith(prefix + "/")
+        ]
         for key in keys_to_remove:
             self._cache.pop(key, None)
 

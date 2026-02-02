@@ -63,6 +63,22 @@ class TestCalendarCache:
         # listing-2 entries should remain
         assert cache.get("listing-2/room-a") == "value3"
 
+    def test_invalidate_prefix_does_not_match_similar_slugs(self):
+        """Test prefix invalidation doesn't affect similar but distinct slugs."""
+        cache = CalendarCache()
+        # Similar slug prefixes that should NOT be invalidated together
+        cache.set("beach-house/room-1", "value1")
+        cache.set("beach-house-deluxe/room-1", "value2")
+        cache.set("beach-house-premium/room-1", "value3")
+
+        cache.invalidate_prefix("beach-house")
+
+        # Only beach-house entries should be gone
+        assert cache.get("beach-house/room-1") is None
+        # Similar slugs should remain untouched
+        assert cache.get("beach-house-deluxe/room-1") == "value2"
+        assert cache.get("beach-house-premium/room-1") == "value3"
+
     def test_clear(self):
         """Test clearing all cache entries."""
         cache = CalendarCache()
