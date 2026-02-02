@@ -449,12 +449,8 @@ async function saveRoomSlug(roomId, newSlug) {
         return;
     }
 
-    if (!newSlug) {
-        alert('Slug cannot be empty');
-        return;
-    }
-
     // Validate slug format - must start/end with alphanumeric, no consecutive hyphens
+    // NOTE: This pattern must match SLUG_PATTERN in src/api/rooms.py
     if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(newSlug)) {
         alert('Slug must start and end with a letter or number, and contain only lowercase letters, numbers, and hyphens');
         return;
