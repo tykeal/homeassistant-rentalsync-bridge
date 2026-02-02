@@ -21,6 +21,7 @@ router = APIRouter(prefix="/api/rooms", tags=["Rooms"])
 
 # Valid slug pattern: must start/end with alphanumeric, allows hyphens in middle
 # Single character slugs like "a" or "1" are allowed
+# NOTE: This pattern is duplicated in src/static/js/admin.js - keep in sync
 SLUG_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
 
