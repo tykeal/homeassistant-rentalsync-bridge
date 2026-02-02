@@ -168,9 +168,19 @@ async def update_room(
         await db.commit()
     except IntegrityError as err:
         await db.rollback()
+        # Check which constraint was violated for accurate error message
+        error_msg = str(err.orig) if err.orig else str(err)
+        if "uq_room_listing_slug" in error_msg or "ical_url_slug" in error_msg:
+            detail = "Slug already in use by another room (conflict during update)"
+        elif (
+            "uq_room_listing_cloudbeds" in error_msg or "cloudbeds_room_id" in error_msg
+        ):
+            detail = "Cloudbeds room ID conflict"
+        else:
+            detail = f"Database constraint violation: {error_msg}"
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Slug already in use by another room (conflict during update)",
+            detail=detail,
         ) from err
     await db.refresh(room)
 
