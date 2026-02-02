@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database import get_db
 from src.models.custom_field import CustomField
+from src.repositories.custom_field_repository import CustomFieldRepository
 from src.repositories.listing_repository import ListingRepository
 
 logger = logging.getLogger(__name__)
@@ -180,5 +181,52 @@ async def update_custom_fields(
             }
             for field in fields
         ],
+        "listing_id": listing_id,
+    }
+
+
+class AvailableCustomFieldsResponse(BaseModel):
+    """Response model for available custom fields."""
+
+    available_fields: dict[str, str] = Field(
+        description="Dictionary of field_name to display_label"
+    )
+    listing_id: int = Field(description="Listing ID")
+
+
+@router.get(
+    "/{listing_id}/available-custom-fields",
+    response_model=AvailableCustomFieldsResponse,
+)
+async def get_available_custom_fields(
+    listing_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, Any]:
+    """Get available custom fields that can be configured for a listing.
+
+    Args:
+        listing_id: Listing ID.
+        db: Database session.
+
+    Returns:
+        Dictionary of all available custom field names and their display labels.
+
+    Raises:
+        HTTPException: 404 if listing not found.
+    """
+    repo = ListingRepository(db)
+    listing = await repo.get_by_id(listing_id)
+
+    if not listing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Listing not found",
+        )
+
+    # Get all available fields from the repository
+    available_fields = CustomFieldRepository.get_available_fields()
+
+    return {
+        "available_fields": available_fields,
         "listing_id": listing_id,
     }
