@@ -445,6 +445,18 @@ async function saveRoomSlug(roomId, newSlug) {
         return;
     }
 
+    // Find and disable buttons to prevent concurrent operations
+    const editor = document.querySelector(
+        `.room-item[data-room-id="${roomId}"] .room-slug-editor`
+    );
+    const saveBtn = editor?.querySelector('[data-action="save-room-slug"]');
+    const cancelBtn = editor?.querySelector('[data-action="cancel-room-slug"]');
+    const input = editor?.querySelector('input');
+
+    if (saveBtn) saveBtn.disabled = true;
+    if (cancelBtn) cancelBtn.disabled = true;
+    if (input) input.disabled = true;
+
     try {
         await fetchAPI(`/api/rooms/${roomId}`, {
             method: 'PATCH',
@@ -456,6 +468,10 @@ async function saveRoomSlug(roomId, newSlug) {
     } catch (error) {
         console.error('Failed to update room slug:', error);
         alert(`Failed to update slug: ${error.message}`);
+        // Re-enable on error (success reloads the page anyway)
+        if (saveBtn) saveBtn.disabled = false;
+        if (cancelBtn) cancelBtn.disabled = false;
+        if (input) input.disabled = false;
     }
 }
 
