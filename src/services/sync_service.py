@@ -324,8 +324,8 @@ class SyncService:
             last = reservation.get("guestLastName", "")
             guest_name = f"{first} {last}".strip() or None
 
-        # Extract phone last 4
-        phone = reservation.get("guestPhone") or reservation.get("guestCellPhone")
+        # Extract phone last 4 - prefer mobile (guestCellPhone), fallback to generic
+        phone = reservation.get("guestCellPhone") or reservation.get("guestPhone")
         phone_last4 = CloudbedsService.extract_phone_last4(phone)
 
         # Parse dates

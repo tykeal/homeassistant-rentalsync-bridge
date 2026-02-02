@@ -302,10 +302,32 @@ class TestExtractBookingData:
         assert result["guest_name"] == "Jane Doe"
 
     def test_extract_phone_last4(self, service):
-        """Test extracting phone last 4."""
+        """Test extracting phone last 4 from generic phone."""
         reservation = {"guestPhone": "+1 (555) 123-4567"}
         result = service._extract_booking_data(reservation)
 
+        assert result["guest_phone_last4"] == "4567"
+
+    def test_extract_phone_last4_prefers_mobile(self, service):
+        """Test that mobile phone (guestCellPhone) is preferred over generic."""
+        reservation = {
+            "guestPhone": "+1 (555) 123-4567",
+            "guestCellPhone": "+1 (555) 987-6543",
+        }
+        result = service._extract_booking_data(reservation)
+
+        # Should use mobile phone's last 4 digits
+        assert result["guest_phone_last4"] == "6543"
+
+    def test_extract_phone_last4_falls_back_to_generic(self, service):
+        """Test fallback to generic phone when mobile is empty."""
+        reservation = {
+            "guestPhone": "+1 (555) 123-4567",
+            "guestCellPhone": "",
+        }
+        result = service._extract_booking_data(reservation)
+
+        # Should fall back to generic phone
         assert result["guest_phone_last4"] == "4567"
 
     def test_extract_status_normalization(self, service):
