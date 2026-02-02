@@ -46,7 +46,7 @@ class Booking(Base):
         ForeignKey("rooms.id", ondelete="SET NULL", name="fk_booking_room_id"),
         nullable=True,
     )
-    cloudbeds_booking_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    cloudbeds_booking_id: Mapped[str] = mapped_column(String(255), nullable=False)
     guest_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     guest_phone_last4: Mapped[str | None] = mapped_column(String(4), nullable=True)
     check_in_date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
