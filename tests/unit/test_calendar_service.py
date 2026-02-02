@@ -48,6 +48,21 @@ class TestCalendarCache:
 
         assert cache.get("key") is None
 
+    def test_invalidate_prefix(self):
+        """Test invalidating cache entries by prefix."""
+        cache = CalendarCache()
+        cache.set("listing-1/room-a", "value1")
+        cache.set("listing-1/room-b", "value2")
+        cache.set("listing-2/room-a", "value3")
+
+        cache.invalidate_prefix("listing-1")
+
+        # listing-1 entries should be gone
+        assert cache.get("listing-1/room-a") is None
+        assert cache.get("listing-1/room-b") is None
+        # listing-2 entries should remain
+        assert cache.get("listing-2/room-a") == "value3"
+
     def test_clear(self):
         """Test clearing all cache entries."""
         cache = CalendarCache()

@@ -72,6 +72,18 @@ class CalendarCache:
         """
         self._cache.pop(key, None)
 
+    def invalidate_prefix(self, prefix: str) -> None:
+        """Remove all cache entries with keys starting with prefix.
+
+        Used to invalidate all room-level caches for a listing when bookings change.
+
+        Args:
+            prefix: Key prefix to match (e.g., listing slug).
+        """
+        keys_to_remove = [k for k in self._cache if k.startswith(prefix)]
+        for key in keys_to_remove:
+            self._cache.pop(key, None)
+
     def clear(self) -> None:
         """Clear all cache entries."""
         self._cache.clear()
