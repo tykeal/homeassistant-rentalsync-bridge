@@ -235,7 +235,17 @@ class SyncService:
             status = "confirmed"
 
         # Extract room ID from reservation (T020)
+        # Room ID can be at top level or in nested rooms array
         cloudbeds_room_id = reservation.get("roomID") or reservation.get("roomId")
+        if not cloudbeds_room_id:
+            # Check nested rooms array - use first room's ID
+            rooms = reservation.get("rooms", [])
+            if rooms and isinstance(rooms, list) and len(rooms) > 0:
+                first_room = rooms[0]
+                if isinstance(first_room, dict):
+                    cloudbeds_room_id = first_room.get("roomID") or first_room.get(
+                        "roomId"
+                    )
         if cloudbeds_room_id:
             cloudbeds_room_id = str(cloudbeds_room_id)
 

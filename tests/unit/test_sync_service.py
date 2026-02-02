@@ -1009,3 +1009,76 @@ class TestRoomAssociation:
         # Verify booking is now associated with Room B
         await sync_session.refresh(existing_booking)
         assert existing_booking.room_id == room2.id
+
+    @pytest.mark.asyncio
+    async def test_sync_extracts_room_id_from_nested_rooms_array(
+        self, sync_session, test_credential
+    ):
+        """Test that sync extracts roomID from nested rooms array structure."""
+        from src.models.room import Room
+
+        # Create listing with a room
+        listing = Listing(
+            cloudbeds_id="NESTED_ROOM_TEST",
+            name="Nested Room Test Property",
+            ical_url_slug="nested-room-test",
+            enabled=True,
+            sync_enabled=True,
+        )
+        sync_session.add(listing)
+        await sync_session.commit()
+        await sync_session.refresh(listing)
+
+        room = Room(
+            listing_id=listing.id,
+            cloudbeds_room_id="662541-0",
+            room_name="Suite 01",
+            ical_url_slug="suite-01",
+            enabled=True,
+        )
+        sync_session.add(room)
+        await sync_session.commit()
+        await sync_session.refresh(room)
+
+        # Reservation with nested rooms array (real Cloudbeds format)
+        mock_reservations = [
+            {
+                "id": "RES_NESTED_ROOM",
+                "guestName": "Nested Room Guest",
+                "startDate": "2026-03-01",
+                "endDate": "2026-03-05",
+                "status": "confirmed",
+                "rooms": [
+                    {
+                        "roomTypeID": "662541",
+                        "roomTypeName": "Suite 01",
+                        "roomID": "662541-0",
+                        "roomName": "Suite 01",
+                    }
+                ],
+            }
+        ]
+
+        with patch(
+            "src.services.sync_service.CloudbedsService"
+        ) as mock_cloudbeds_class:
+            mock_cloudbeds = AsyncMock()
+            mock_cloudbeds.get_reservations = AsyncMock(return_value=mock_reservations)
+            mock_cloudbeds_class.return_value = mock_cloudbeds
+            mock_cloudbeds_class.extract_phone_last4 = (
+                CloudbedsService.extract_phone_last4
+            )
+
+            service = SyncService(sync_session)
+            result = await service.sync_listing(listing, test_credential)
+
+        assert result["inserted"] == 1
+
+        # Verify booking is associated with room from nested structure
+        from sqlalchemy import select
+
+        stmt = select(Booking).where(Booking.cloudbeds_booking_id == "RES_NESTED_ROOM")
+        db_result = await sync_session.execute(stmt)
+        booking = db_result.scalar_one()
+
+        assert booking.room_id == room.id
