@@ -1082,3 +1082,90 @@ class TestRoomAssociation:
         booking = db_result.scalar_one()
 
         assert booking.room_id == room.id
+
+    @pytest.mark.asyncio
+    async def test_sync_creates_booking_per_room_for_multi_room_reservation(
+        self, sync_session, test_credential
+    ):
+        """Test that multi-room reservations create a booking for each room."""
+        from src.models.room import Room
+
+        listing = Listing(
+            cloudbeds_id="PROP_MULTI_ROOM",
+            name="Multi Room Property",
+            ical_url_slug="multi-room-prop",
+            timezone="UTC",
+            enabled=True,
+            sync_enabled=True,
+        )
+        sync_session.add(listing)
+        await sync_session.commit()
+        await sync_session.refresh(listing)
+
+        # Create two rooms
+        room1 = Room(
+            listing_id=listing.id,
+            cloudbeds_room_id="100-0",
+            room_name="Room A",
+            ical_url_slug="room-a",
+            enabled=True,
+        )
+        room2 = Room(
+            listing_id=listing.id,
+            cloudbeds_room_id="100-1",
+            room_name="Room B",
+            ical_url_slug="room-b",
+            enabled=True,
+        )
+        sync_session.add_all([room1, room2])
+        await sync_session.commit()
+        await sync_session.refresh(room1)
+        await sync_session.refresh(room2)
+
+        # Reservation spanning TWO rooms
+        mock_reservations = [
+            {
+                "id": "RES_MULTI_ROOM",
+                "guestName": "Multi Room Guest",
+                "startDate": "2026-04-01",
+                "endDate": "2026-04-05",
+                "status": "confirmed",
+                "rooms": [
+                    {"roomID": "100-0", "roomName": "Room A"},
+                    {"roomID": "100-1", "roomName": "Room B"},
+                ],
+            }
+        ]
+
+        with patch(
+            "src.services.sync_service.CloudbedsService"
+        ) as mock_cloudbeds_class:
+            mock_cloudbeds = AsyncMock()
+            mock_cloudbeds.get_reservations = AsyncMock(return_value=mock_reservations)
+            mock_cloudbeds_class.return_value = mock_cloudbeds
+            mock_cloudbeds_class.extract_phone_last4 = (
+                CloudbedsService.extract_phone_last4
+            )
+
+            service = SyncService(sync_session)
+            result = await service.sync_listing(listing, test_credential)
+
+        # Should create 2 bookings (one per room)
+        assert result["inserted"] == 2
+
+        # Verify both bookings exist with correct room associations
+        from sqlalchemy import select
+
+        stmt = select(Booking).where(Booking.listing_id == listing.id)
+        db_result = await sync_session.execute(stmt)
+        bookings = db_result.scalars().all()
+
+        assert len(bookings) == 2
+
+        # Check booking IDs are composite for multi-room
+        booking_ids = {b.cloudbeds_booking_id for b in bookings}
+        assert booking_ids == {"RES_MULTI_ROOM-100-0", "RES_MULTI_ROOM-100-1"}
+
+        # Check room associations
+        room_ids = {b.room_id for b in bookings}
+        assert room_ids == {room1.id, room2.id}

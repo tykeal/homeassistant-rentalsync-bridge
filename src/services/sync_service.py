@@ -127,8 +127,6 @@ class SyncService:
                 logger.warning("Skipping reservation with no ID")
                 continue
 
-            seen_booking_ids.add(str(cloudbeds_booking_id))
-
             # Extract booking data
             booking_data = self._extract_booking_data(reservation)
 
@@ -139,43 +137,13 @@ class SyncService:
                 )
                 continue
 
-            # Look up room by cloudbeds_room_id if present (T020)
-            room_id: int | None = None
-            cloudbeds_room_id = booking_data.get("cloudbeds_room_id")
-            if cloudbeds_room_id:
-                room = await self._room_repo.get_by_cloudbeds_id(
-                    listing.id, cloudbeds_room_id
-                )
-                if room:
-                    room_id = room.id
-                else:
-                    logger.warning(
-                        "Room %s not found for booking %s - booking will not "
-                        "appear in room calendars. Sync rooms first.",
-                        cloudbeds_room_id,
-                        cloudbeds_booking_id,
-                    )
-
-            # Create Booking entity for upsert
-            booking = Booking(
-                listing_id=listing.id,
-                room_id=room_id,
-                cloudbeds_booking_id=str(cloudbeds_booking_id),
-                guest_name=booking_data["guest_name"],
-                guest_phone_last4=booking_data["guest_phone_last4"],
-                check_in_date=booking_data["check_in_date"],
-                check_out_date=booking_data["check_out_date"],
-                status=booking_data["status"],
-                custom_data=booking_data["custom_data"],
+            # Create bookings for this reservation
+            inserted, updated, new_ids = await self._create_bookings_for_reservation(
+                listing, cloudbeds_booking_id, booking_data
             )
-
-            # Upsert booking
-            _, was_created = await self._booking_repo.upsert(booking)
-
-            if was_created:
-                counts["inserted"] += 1
-            else:
-                counts["updated"] += 1
+            counts["inserted"] += inserted
+            counts["updated"] += updated
+            seen_booking_ids.update(new_ids)
 
         # Mark cancelled bookings (not in current fetch)
         existing_bookings = await self._booking_repo.get_for_listing(listing.id)
@@ -204,6 +172,108 @@ class SyncService:
         )
 
         return counts
+
+    async def _create_bookings_for_reservation(
+        self,
+        listing: Listing,
+        cloudbeds_booking_id: str,
+        booking_data: dict,
+    ) -> tuple[int, int, set[str]]:
+        """Create booking records for a reservation.
+
+        For multi-room reservations, creates one booking per room.
+
+        Args:
+            listing: The listing being synced.
+            cloudbeds_booking_id: The Cloudbeds reservation ID.
+            booking_data: Extracted booking data from _extract_booking_data.
+
+        Returns:
+            Tuple of (inserted_count, updated_count, set of booking IDs created).
+        """
+        inserted = 0
+        updated = 0
+        booking_ids: set[str] = set()
+
+        cloudbeds_room_ids = booking_data.get("cloudbeds_room_ids", [])
+
+        # If no rooms specified, create booking without room association
+        if not cloudbeds_room_ids:
+            booking_id = str(cloudbeds_booking_id)
+            booking_ids.add(booking_id)
+            was_created = await self._upsert_single_booking(
+                listing, booking_id, None, booking_data
+            )
+            if was_created:
+                inserted += 1
+            else:
+                updated += 1
+        else:
+            # Create a booking for EACH room in the reservation
+            for cloudbeds_room_id in cloudbeds_room_ids:
+                # Use composite booking ID for multi-room reservations
+                booking_id = (
+                    f"{cloudbeds_booking_id}-{cloudbeds_room_id}"
+                    if len(cloudbeds_room_ids) > 1
+                    else str(cloudbeds_booking_id)
+                )
+                booking_ids.add(booking_id)
+
+                room = await self._room_repo.get_by_cloudbeds_id(
+                    listing.id, cloudbeds_room_id
+                )
+                room_id: int | None = None
+                if room:
+                    room_id = room.id
+                else:
+                    logger.warning(
+                        "Room %s not found for booking %s - booking will not "
+                        "appear in room calendars. Sync rooms first.",
+                        cloudbeds_room_id,
+                        cloudbeds_booking_id,
+                    )
+
+                was_created = await self._upsert_single_booking(
+                    listing, booking_id, room_id, booking_data
+                )
+                if was_created:
+                    inserted += 1
+                else:
+                    updated += 1
+
+        return inserted, updated, booking_ids
+
+    async def _upsert_single_booking(
+        self,
+        listing: Listing,
+        booking_id: str,
+        room_id: int | None,
+        booking_data: dict,
+    ) -> bool:
+        """Create or update a single booking record.
+
+        Args:
+            listing: The listing for this booking.
+            booking_id: The unique booking ID (may be composite for multi-room).
+            room_id: The room ID (None if no room association).
+            booking_data: Extracted booking data.
+
+        Returns:
+            True if booking was created, False if updated.
+        """
+        booking = Booking(
+            listing_id=listing.id,
+            room_id=room_id,
+            cloudbeds_booking_id=booking_id,
+            guest_name=booking_data["guest_name"],
+            guest_phone_last4=booking_data["guest_phone_last4"],
+            check_in_date=booking_data["check_in_date"],
+            check_out_date=booking_data["check_out_date"],
+            status=booking_data["status"],
+            custom_data=booking_data["custom_data"],
+        )
+        _, was_created = await self._booking_repo.upsert(booking)
+        return was_created
 
     def _extract_booking_data(self, reservation: dict) -> dict:
         """Extract booking data from Cloudbeds reservation.
@@ -234,28 +304,21 @@ class SyncService:
         if status not in ("confirmed", "checked_in", "checked_out", "cancelled"):
             status = "confirmed"
 
-        # Extract room ID from reservation (T020)
+        # Extract ALL room IDs from reservation (T020)
         # Room ID can be at top level or in nested rooms array
-        cloudbeds_room_id = reservation.get("roomID") or reservation.get("roomId")
-        if not cloudbeds_room_id:
-            # Check nested rooms array - use first room's ID
+        cloudbeds_room_ids: list[str] = []
+        top_level_room_id = reservation.get("roomID") or reservation.get("roomId")
+        if top_level_room_id:
+            cloudbeds_room_ids.append(str(top_level_room_id))
+        else:
+            # Check nested rooms array - extract ALL rooms
             rooms = reservation.get("rooms", [])
-            if rooms and isinstance(rooms, list) and len(rooms) > 0:
-                first_room = rooms[0]
-                if isinstance(first_room, dict):
-                    cloudbeds_room_id = first_room.get("roomID") or first_room.get(
-                        "roomId"
-                    )
-                # Log warning if reservation spans multiple rooms
-                if len(rooms) > 1:
-                    res_id = reservation.get("reservationID", "unknown")
-                    logger.warning(
-                        "Reservation %s has %d rooms - only first room will be linked",
-                        res_id,
-                        len(rooms),
-                    )
-        if cloudbeds_room_id:
-            cloudbeds_room_id = str(cloudbeds_room_id)
+            if rooms and isinstance(rooms, list):
+                for room in rooms:
+                    if isinstance(room, dict):
+                        room_id = room.get("roomID") or room.get("roomId")
+                        if room_id:
+                            cloudbeds_room_ids.append(str(room_id))
 
         # Build custom data from available fields
         custom_data = {}
@@ -281,7 +344,7 @@ class SyncService:
             "check_in_date": check_in,
             "check_out_date": check_out,
             "status": status,
-            "cloudbeds_room_id": cloudbeds_room_id,
+            "cloudbeds_room_ids": cloudbeds_room_ids,
             "custom_data": custom_data if custom_data else None,
         }
 
