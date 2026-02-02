@@ -128,7 +128,7 @@ class SyncService:
                 logger.warning("Skipping reservation with no ID")
                 continue
 
-            # Track the base reservation ID
+            # Track the reservation ID from API for cancellation detection
             seen_reservation_ids.add(str(cloudbeds_booking_id))
 
             # Extract booking data
