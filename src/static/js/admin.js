@@ -297,6 +297,12 @@ async function copyRoomUrl(url, button) {
     try {
         // Get the full URL including origin
         const fullUrl = window.location.origin + url;
+
+        // Check if clipboard API is available (requires HTTPS or localhost)
+        if (!navigator.clipboard) {
+            throw new Error('Clipboard API requires HTTPS');
+        }
+
         await navigator.clipboard.writeText(fullUrl);
 
         const originalText = button.textContent;
@@ -309,7 +315,10 @@ async function copyRoomUrl(url, button) {
         }, 2000);
     } catch (error) {
         console.error('Failed to copy URL:', error);
-        alert('Failed to copy URL to clipboard');
+        const message = error.message.includes('HTTPS')
+            ? 'Copy failed: Clipboard requires HTTPS'
+            : 'Failed to copy URL to clipboard';
+        alert(message);
     }
 }
 
@@ -319,6 +328,12 @@ async function copyRoomUrl(url, button) {
  * @param {boolean} enabled - Whether to enable or disable
  */
 async function toggleRoom(roomId, enabled) {
+    // Find and disable toggle to prevent concurrent operations
+    const toggle = document.querySelector(
+        `.room-item[data-room-id="${roomId}"] input[data-action="toggle-room"]`
+    );
+    if (toggle) toggle.disabled = true;
+
     try {
         await fetchAPI(`/api/rooms/${roomId}`, {
             method: 'PATCH',
@@ -332,6 +347,8 @@ async function toggleRoom(roomId, enabled) {
         alert(`Failed to ${enabled ? 'enable' : 'disable'} room: ${error.message}`);
         // Reload to restore correct state
         await loadListings();
+    } finally {
+        if (toggle) toggle.disabled = false;
     }
 }
 
@@ -413,6 +430,18 @@ function attachRoomSlugEditorHandlers(slugDisplay) {
 async function saveRoomSlug(roomId, newSlug) {
     if (!newSlug) {
         alert('Slug cannot be empty');
+        return;
+    }
+
+    // Validate slug format - only lowercase letters, numbers, and hyphens
+    if (!/^[a-z0-9-]+$/.test(newSlug)) {
+        alert('Slug must contain only lowercase letters, numbers, and hyphens');
+        return;
+    }
+
+    // Validate slug length
+    if (newSlug.length > 100) {
+        alert('Slug must be 100 characters or less');
         return;
     }
 
