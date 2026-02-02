@@ -34,7 +34,27 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Downgrade database schema."""
+    """Downgrade database schema.
+
+    WARNING: This downgrade may cause data loss if any composite booking IDs
+    (from multi-room reservations) exceed 100 characters. Such IDs will be
+    truncated, potentially corrupting the database.
+    """
+    # Check for IDs that would be truncated
+    connection = op.get_bind()
+    result = connection.execute(
+        sa.text(
+            "SELECT COUNT(*) FROM bookings WHERE LENGTH(cloudbeds_booking_id) > 100"
+        )
+    )
+    count = result.scalar()
+    if count and count > 0:
+        raise RuntimeError(
+            f"Cannot downgrade: {count} booking(s) have cloudbeds_booking_id "
+            "longer than 100 characters. Delete these bookings first or "
+            "manually truncate the IDs."
+        )
+
     with op.batch_alter_table("bookings", schema=None) as batch_op:
         batch_op.alter_column(
             "cloudbeds_booking_id",
