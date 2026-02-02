@@ -229,13 +229,10 @@ class SyncService:
         else:
             # Create a booking for EACH room in the reservation
             for cloudbeds_room_id in cloudbeds_room_ids:
-                # Use composite booking ID for multi-room reservations
+                # Always use composite booking ID when room ID is present
+                # This ensures consistent ID format regardless of room count changes
                 # Use "::" delimiter to avoid ambiguity with IDs containing hyphens
-                booking_id = (
-                    f"{cloudbeds_booking_id}::{cloudbeds_room_id}"
-                    if len(cloudbeds_room_ids) > 1
-                    else str(cloudbeds_booking_id)
-                )
+                booking_id = f"{cloudbeds_booking_id}::{cloudbeds_room_id}"
                 booking_ids.add(booking_id)
 
                 room = await self._room_repo.get_by_cloudbeds_id(
