@@ -346,6 +346,7 @@ class SyncService:
         # Extract ALL room IDs from reservation (T020)
         # Prefer nested rooms array (authoritative), fallback to top-level roomID
         cloudbeds_room_ids: list[str] = []
+        seen_room_ids: set[str] = set()
         rooms = reservation.get("rooms", [])
         if rooms and isinstance(rooms, list):
             # Extract room IDs from nested array (multi-room reservations)
@@ -353,7 +354,11 @@ class SyncService:
                 if isinstance(room, dict):
                     room_id = room.get("roomID") or room.get("roomId")
                     if room_id:
-                        cloudbeds_room_ids.append(str(room_id))
+                        room_id_str = str(room_id)
+                        # Deduplicate room IDs to avoid double-processing
+                        if room_id_str not in seen_room_ids:
+                            seen_room_ids.add(room_id_str)
+                            cloudbeds_room_ids.append(room_id_str)
         if not cloudbeds_room_ids:
             # Fallback to top-level room ID (legacy single-room format)
             top_level_room_id = reservation.get("roomID") or reservation.get("roomId")
