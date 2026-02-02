@@ -246,6 +246,14 @@ class SyncService:
                     cloudbeds_room_id = first_room.get("roomID") or first_room.get(
                         "roomId"
                     )
+                # Log warning if reservation spans multiple rooms
+                if len(rooms) > 1:
+                    res_id = reservation.get("reservationID", "unknown")
+                    logger.warning(
+                        "Reservation %s has %d rooms - only first room will be linked",
+                        res_id,
+                        len(rooms),
+                    )
         if cloudbeds_room_id:
             cloudbeds_room_id = str(cloudbeds_room_id)
 
