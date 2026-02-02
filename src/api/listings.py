@@ -191,9 +191,10 @@ async def _sync_rooms_for_listing(
     try:
         rooms = await service.get_rooms(cloudbeds_id)
         for room_data in rooms:
-            room_id = str(room_data.get("roomID", ""))
-            if not room_id:
+            room_id_raw = room_data.get("roomID")
+            if room_id_raw is None:
                 continue
+            room_id = str(room_id_raw)
 
             room_name = room_data.get("roomName", f"Room {room_id}")
             room_type = room_data.get("roomTypeName")
@@ -282,9 +283,10 @@ async def sync_properties(
     rooms_updated = 0
 
     for prop in properties:
-        cloudbeds_id = str(prop.get("propertyID", ""))
-        if not cloudbeds_id:
+        property_id_raw = prop.get("propertyID")
+        if property_id_raw is None:
             continue
+        cloudbeds_id = str(property_id_raw)
 
         existing = await repo.get_by_cloudbeds_id(cloudbeds_id)
         listing: Listing
