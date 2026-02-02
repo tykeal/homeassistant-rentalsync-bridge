@@ -77,7 +77,9 @@ class BookingRepository:
         )
         return result.scalars().all()
 
-    async def get_confirmed_for_listing(self, listing_id: int) -> Sequence[Booking]:
+    async def get_confirmed_for_listing(
+        self, listing_id: int, room_id: int | None = None
+    ) -> Sequence[Booking]:
         """Get confirmed bookings for a listing (for iCal generation).
 
         Only returns bookings with status 'confirmed' and checkout in future
@@ -85,20 +87,27 @@ class BookingRepository:
 
         Args:
             listing_id: Listing ID to filter by.
+            room_id: Optional room ID to filter by. If None, returns all bookings.
 
         Returns:
             Sequence of confirmed bookings.
         """
         cutoff_date = datetime.now(UTC) - timedelta(days=7)
-        result = await self._session.execute(
-            select(Booking)
-            .where(
-                Booking.listing_id == listing_id,
-                Booking.status.in_(["confirmed", "checked_in", "checked_out"]),
-                Booking.check_out_date >= cutoff_date,
-            )
-            .order_by(Booking.check_in_date)
+
+        # Build query with optional room filter
+        query = select(Booking).where(
+            Booking.listing_id == listing_id,
+            Booking.status.in_(["confirmed", "checked_in", "checked_out"]),
+            Booking.check_out_date >= cutoff_date,
         )
+
+        # Add room filter if provided
+        if room_id is not None:
+            query = query.where(Booking.room_id == room_id)
+
+        query = query.order_by(Booking.check_in_date)
+
+        result = await self._session.execute(query)
         return result.scalars().all()
 
     async def get_for_listing_in_range(
