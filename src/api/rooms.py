@@ -3,11 +3,13 @@
 """Room management API endpoints."""
 
 import logging
+import re
 from datetime import UTC
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database import get_db
@@ -16,6 +18,11 @@ from src.repositories.room_repository import RoomRepository
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/rooms", tags=["Rooms"])
+
+# Valid slug pattern: must start/end with alphanumeric, allows hyphens in middle
+# Single character slugs like "a" or "1" are allowed
+# NOTE: This pattern is duplicated in src/static/js/admin.js - keep in sync
+SLUG_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
 
 class RoomResponse(BaseModel):
@@ -36,7 +43,25 @@ class RoomUpdateRequest(BaseModel):
     """Request model for updating a room."""
 
     enabled: bool | None = Field(default=None, description="Enable/disable room")
-    ical_url_slug: str | None = Field(default=None, description="Custom iCal URL slug")
+    ical_url_slug: str | None = Field(
+        default=None,
+        description="Custom iCal URL slug",
+        max_length=100,
+    )
+
+    @field_validator("ical_url_slug")
+    @classmethod
+    def validate_slug_format(cls, v: str | None) -> str | None:
+        """Validate slug contains only URL-safe characters."""
+        if v is not None:
+            if not SLUG_PATTERN.match(v):
+                raise ValueError(
+                    "Slug must start and end with a letter or number, "
+                    "and contain only lowercase letters, numbers, and hyphens"
+                )
+            if "--" in v:
+                raise ValueError("Slug cannot contain consecutive hyphens")
+        return v
 
 
 def _format_datetime(dt: Any) -> str | None:
@@ -139,7 +164,39 @@ async def update_room(
             )
         room.ical_url_slug = request.ical_url_slug
 
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as err:
+        await db.rollback()
+        # Check which constraint was violated for accurate error message
+        # Handle various error types safely - some drivers may not have orig
+        try:
+            error_msg = str(err.orig) if err.orig else str(err)
+        except Exception:
+            error_msg = str(err)
+        if "uq_room_listing_slug" in error_msg or "ical_url_slug" in error_msg:
+            attempted_slug = (
+                request.ical_url_slug if request.ical_url_slug else "unknown"
+            )
+            detail = f"Slug '{attempted_slug}' is already in use by another room"
+        elif (
+            "uq_room_listing_cloudbeds" in error_msg or "cloudbeds_room_id" in error_msg
+        ):
+            # This shouldn't happen during normal updates since we don't modify
+            # cloudbeds_room_id. Log for debugging and provide generic message.
+            logger.error(
+                "Unexpected cloudbeds_room_id conflict during room update: %s",
+                error_msg,
+            )
+            detail = "Unexpected database conflict. Please try again."
+        else:
+            # Log the full error for debugging but don't expose to client
+            logger.error("Unexpected IntegrityError during room update: %s", error_msg)
+            detail = "Database constraint violation. Please try again."
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=detail,
+        ) from err
     await db.refresh(room)
 
     logger.info("Updated room %s (listing %s)", room.id, room.listing_id)

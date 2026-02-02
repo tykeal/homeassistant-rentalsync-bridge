@@ -331,3 +331,84 @@ class TestPatchRoom:
 
         assert response.status_code == 400
         assert "already in use" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_patch_room_slug_invalid_format(self, rooms_app, rooms_session):
+        """Test updating room slug with invalid characters."""
+        listing = Listing(
+            cloudbeds_id="PROP_INVALID_SLUG",
+            name="Invalid Slug Property",
+            ical_url_slug="invalid-slug-property",
+            enabled=True,
+            sync_enabled=True,
+            timezone="UTC",
+        )
+        rooms_session.add(listing)
+        await rooms_session.flush()
+
+        room = Room(
+            listing_id=listing.id,
+            cloudbeds_room_id="INVALID_SLUG_ROOM",
+            room_name="Invalid Slug Room",
+            ical_url_slug="valid-slug",
+            enabled=True,
+        )
+        rooms_session.add(room)
+        await rooms_session.commit()
+
+        transport = ASGITransport(app=rooms_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            # Test slug with spaces
+            response = await client.patch(
+                f"/api/rooms/{room.id}",
+                json={"ical_url_slug": "invalid slug"},
+            )
+            assert response.status_code == 422
+
+            # Test slug with uppercase
+            response = await client.patch(
+                f"/api/rooms/{room.id}",
+                json={"ical_url_slug": "InvalidSlug"},
+            )
+            assert response.status_code == 422
+
+            # Test slug with special characters
+            response = await client.patch(
+                f"/api/rooms/{room.id}",
+                json={"ical_url_slug": "slug/with/slashes"},
+            )
+            assert response.status_code == 422
+
+            # Test slug starting with hyphen
+            response = await client.patch(
+                f"/api/rooms/{room.id}",
+                json={"ical_url_slug": "-invalid-start"},
+            )
+            assert response.status_code == 422
+
+            # Test slug ending with hyphen
+            response = await client.patch(
+                f"/api/rooms/{room.id}",
+                json={"ical_url_slug": "invalid-end-"},
+            )
+            assert response.status_code == 422
+
+            # Test slug with consecutive hyphens
+            response = await client.patch(
+                f"/api/rooms/{room.id}",
+                json={"ical_url_slug": "invalid--slug"},
+            )
+            assert response.status_code == 422
+            assert "consecutive hyphens" in response.json()["detail"][0]["msg"]
+
+            # Test slug that is only hyphens
+            response = await client.patch(
+                f"/api/rooms/{room.id}",
+                json={"ical_url_slug": "---"},
+            )
+            assert response.status_code == 422
+            # Only hyphens fails the start/end alphanumeric requirement
+            assert (
+                "start and end with a letter or number"
+                in response.json()["detail"][0]["msg"]
+            )

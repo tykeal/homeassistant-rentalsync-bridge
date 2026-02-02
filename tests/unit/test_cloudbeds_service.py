@@ -134,15 +134,20 @@ class TestGetRooms:
             "success": True,
             "data": [
                 {
-                    "roomID": "123",
-                    "roomName": "Room 101",
-                    "roomTypeName": "Standard Room",
-                },
-                {
-                    "roomID": "456",
-                    "roomName": "Room 102",
-                    "roomTypeName": "Deluxe Suite",
-                },
+                    "propertyID": "PROP123",
+                    "rooms": [
+                        {
+                            "roomID": "123",
+                            "roomName": "Room 101",
+                            "roomTypeName": "Standard Room",
+                        },
+                        {
+                            "roomID": "456",
+                            "roomName": "Room 102",
+                            "roomTypeName": "Deluxe Suite",
+                        },
+                    ],
+                }
             ],
         }
 
@@ -173,7 +178,7 @@ class TestGetRooms:
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "success": True,
-            "data": [],
+            "data": [{"propertyID": "EMPTY_PROP", "rooms": []}],
         }
 
         mock_client = AsyncMock()
@@ -210,7 +215,12 @@ class TestGetRooms:
                 mock_response.status_code = 200
                 mock_response.json.return_value = {
                     "success": True,
-                    "data": [{"roomID": "123", "roomName": "Room 1"}],
+                    "data": [
+                        {
+                            "propertyID": "PROP123",
+                            "rooms": [{"roomID": "123", "roomName": "Room 1"}],
+                        }
+                    ],
                 }
             return mock_response
 
@@ -282,4 +292,4 @@ class TestGetRooms:
         await service.get_rooms("PROP_ABC")
 
         assert "params" in captured_kwargs
-        assert captured_kwargs["params"]["propertyID"] == "PROP_ABC"
+        assert captured_kwargs["params"]["propertyIDs"] == "PROP_ABC"

@@ -819,10 +819,12 @@ class TestRoomAssociation:
 
         assert result["inserted"] == 1
 
-        # Verify booking is associated with room
+        # Verify booking is associated with room (uses composite ID format)
         from sqlalchemy import select
 
-        stmt = select(Booking).where(Booking.cloudbeds_booking_id == "RES_WITH_ROOM")
+        stmt = select(Booking).where(
+            Booking.cloudbeds_booking_id == "RES_WITH_ROOM::ROOM_123"
+        )
         db_result = await sync_session.execute(stmt)
         booking = db_result.scalar_one()
 
@@ -919,10 +921,12 @@ class TestRoomAssociation:
 
         assert result["inserted"] == 1
 
-        # Verify booking has no room_id (room wasn't found)
+        # Verify booking has no room_id (room wasn't found) but still uses composite ID
         from sqlalchemy import select
 
-        stmt = select(Booking).where(Booking.cloudbeds_booking_id == "RES_UNKNOWN_ROOM")
+        stmt = select(Booking).where(
+            Booking.cloudbeds_booking_id == "RES_UNKNOWN_ROOM::NONEXISTENT_ROOM"
+        )
         db_result = await sync_session.execute(stmt)
         booking = db_result.scalar_one()
 
@@ -932,7 +936,11 @@ class TestRoomAssociation:
     async def test_sync_updates_room_id_on_room_change(
         self, sync_session, test_credential
     ):
-        """Test that sync updates room_id when booking is moved to different room."""
+        """Test that sync handles booking moved to a different room.
+
+        With composite IDs, a room change creates a new booking ID, so the old
+        booking is cancelled and a new one is created.
+        """
         from src.models.room import Room
 
         # Create listing with two rooms
@@ -966,11 +974,11 @@ class TestRoomAssociation:
         await sync_session.refresh(room1)
         await sync_session.refresh(room2)
 
-        # Create existing booking in Room A
+        # Create existing booking in Room A (uses composite ID)
         existing_booking = Booking(
             listing_id=listing.id,
             room_id=room1.id,
-            cloudbeds_booking_id="RES_ROOM_CHANGE",
+            cloudbeds_booking_id="RES_ROOM_CHANGE::ROOM_A",
             guest_name="Moving Guest",
             check_in_date=datetime(2026, 3, 1, tzinfo=UTC),
             check_out_date=datetime(2026, 3, 5, tzinfo=UTC),
@@ -979,7 +987,7 @@ class TestRoomAssociation:
         sync_session.add(existing_booking)
         await sync_session.commit()
 
-        # Sync with booking now in Room B
+        # Sync with booking now in Room B (different composite ID)
         mock_reservations = [
             {
                 "id": "RES_ROOM_CHANGE",
@@ -1004,8 +1012,303 @@ class TestRoomAssociation:
             service = SyncService(sync_session)
             result = await service.sync_listing(listing, test_credential)
 
-        assert result["updated"] == 1
+        # Room change with composite IDs: old booking cancelled, new one created
+        assert result["inserted"] == 1
+        assert result["cancelled"] == 1
 
-        # Verify booking is now associated with Room B
+        # Verify old booking is cancelled
         await sync_session.refresh(existing_booking)
-        assert existing_booking.room_id == room2.id
+        assert existing_booking.status == "cancelled"
+
+        # Verify new booking in Room B exists
+        from sqlalchemy import select
+
+        stmt = select(Booking).where(
+            Booking.cloudbeds_booking_id == "RES_ROOM_CHANGE::ROOM_B"
+        )
+        db_result = await sync_session.execute(stmt)
+        new_booking = db_result.scalar_one()
+        assert new_booking.room_id == room2.id
+
+    @pytest.mark.asyncio
+    async def test_sync_extracts_room_id_from_nested_rooms_array(
+        self, sync_session, test_credential
+    ):
+        """Test that sync extracts roomID from nested rooms array structure."""
+        from src.models.room import Room
+
+        # Create listing with a room
+        listing = Listing(
+            cloudbeds_id="NESTED_ROOM_TEST",
+            name="Nested Room Test Property",
+            ical_url_slug="nested-room-test",
+            enabled=True,
+            sync_enabled=True,
+        )
+        sync_session.add(listing)
+        await sync_session.commit()
+        await sync_session.refresh(listing)
+
+        room = Room(
+            listing_id=listing.id,
+            cloudbeds_room_id="662541-0",
+            room_name="Suite 01",
+            ical_url_slug="suite-01",
+            enabled=True,
+        )
+        sync_session.add(room)
+        await sync_session.commit()
+        await sync_session.refresh(room)
+
+        # Reservation with nested rooms array (real Cloudbeds format)
+        mock_reservations = [
+            {
+                "id": "RES_NESTED_ROOM",
+                "guestName": "Nested Room Guest",
+                "startDate": "2026-03-01",
+                "endDate": "2026-03-05",
+                "status": "confirmed",
+                "rooms": [
+                    {
+                        "roomTypeID": "662541",
+                        "roomTypeName": "Suite 01",
+                        "roomID": "662541-0",
+                        "roomName": "Suite 01",
+                    }
+                ],
+            }
+        ]
+
+        with patch(
+            "src.services.sync_service.CloudbedsService"
+        ) as mock_cloudbeds_class:
+            mock_cloudbeds = AsyncMock()
+            mock_cloudbeds.get_reservations = AsyncMock(return_value=mock_reservations)
+            mock_cloudbeds_class.return_value = mock_cloudbeds
+            mock_cloudbeds_class.extract_phone_last4 = (
+                CloudbedsService.extract_phone_last4
+            )
+
+            service = SyncService(sync_session)
+            result = await service.sync_listing(listing, test_credential)
+
+        assert result["inserted"] == 1
+
+        # Verify booking is associated with room from nested structure
+        # Now uses composite ID format: {reservationID}::{roomID}
+        from sqlalchemy import select
+
+        stmt = select(Booking).where(
+            Booking.cloudbeds_booking_id == "RES_NESTED_ROOM::662541-0"
+        )
+        db_result = await sync_session.execute(stmt)
+        booking = db_result.scalar_one()
+
+        assert booking.room_id == room.id
+
+    @pytest.mark.asyncio
+    async def test_sync_creates_booking_per_room_for_multi_room_reservation(
+        self, sync_session, test_credential
+    ):
+        """Test that multi-room reservations create a booking for each room."""
+        from src.models.room import Room
+
+        listing = Listing(
+            cloudbeds_id="PROP_MULTI_ROOM",
+            name="Multi Room Property",
+            ical_url_slug="multi-room-prop",
+            timezone="UTC",
+            enabled=True,
+            sync_enabled=True,
+        )
+        sync_session.add(listing)
+        await sync_session.commit()
+        await sync_session.refresh(listing)
+
+        # Create two rooms
+        room1 = Room(
+            listing_id=listing.id,
+            cloudbeds_room_id="100-0",
+            room_name="Room A",
+            ical_url_slug="room-a",
+            enabled=True,
+        )
+        room2 = Room(
+            listing_id=listing.id,
+            cloudbeds_room_id="100-1",
+            room_name="Room B",
+            ical_url_slug="room-b",
+            enabled=True,
+        )
+        sync_session.add_all([room1, room2])
+        await sync_session.commit()
+        await sync_session.refresh(room1)
+        await sync_session.refresh(room2)
+
+        # Reservation spanning TWO rooms
+        mock_reservations = [
+            {
+                "id": "RES_MULTI_ROOM",
+                "guestName": "Multi Room Guest",
+                "startDate": "2026-04-01",
+                "endDate": "2026-04-05",
+                "status": "confirmed",
+                "rooms": [
+                    {"roomID": "100-0", "roomName": "Room A"},
+                    {"roomID": "100-1", "roomName": "Room B"},
+                ],
+            }
+        ]
+
+        with patch(
+            "src.services.sync_service.CloudbedsService"
+        ) as mock_cloudbeds_class:
+            mock_cloudbeds = AsyncMock()
+            mock_cloudbeds.get_reservations = AsyncMock(return_value=mock_reservations)
+            mock_cloudbeds_class.return_value = mock_cloudbeds
+            mock_cloudbeds_class.extract_phone_last4 = (
+                CloudbedsService.extract_phone_last4
+            )
+
+            service = SyncService(sync_session)
+            result = await service.sync_listing(listing, test_credential)
+
+        # Should create 2 bookings (one per room)
+        assert result["inserted"] == 2
+
+        # Verify both bookings exist with correct room associations
+        from sqlalchemy import select
+
+        stmt = select(Booking).where(Booking.listing_id == listing.id)
+        db_result = await sync_session.execute(stmt)
+        bookings = db_result.scalars().all()
+
+        assert len(bookings) == 2
+
+        # Check booking IDs are composite for multi-room (uses :: delimiter)
+        booking_ids = {b.cloudbeds_booking_id for b in bookings}
+        assert booking_ids == {"RES_MULTI_ROOM::100-0", "RES_MULTI_ROOM::100-1"}
+
+        # Check room associations
+        room_ids = {b.room_id for b in bookings}
+        assert room_ids == {room1.id, room2.id}
+
+    @pytest.mark.asyncio
+    async def test_sync_handles_room_count_transition(
+        self, sync_session, test_credential
+    ):
+        """Test that changing room count properly cancels old bookings."""
+        from src.models.room import Room
+
+        listing = Listing(
+            cloudbeds_id="PROP_TRANSITION",
+            name="Transition Property",
+            ical_url_slug="transition-prop",
+            timezone="UTC",
+            enabled=True,
+            sync_enabled=True,
+        )
+        sync_session.add(listing)
+        await sync_session.commit()
+        await sync_session.refresh(listing)
+
+        # Create two rooms
+        room1 = Room(
+            listing_id=listing.id,
+            cloudbeds_room_id="200-0",
+            room_name="Room X",
+            ical_url_slug="room-x",
+            enabled=True,
+        )
+        room2 = Room(
+            listing_id=listing.id,
+            cloudbeds_room_id="200-1",
+            room_name="Room Y",
+            ical_url_slug="room-y",
+            enabled=True,
+        )
+        sync_session.add_all([room1, room2])
+        await sync_session.commit()
+        await sync_session.refresh(room1)
+        await sync_session.refresh(room2)
+
+        # First sync: single-room reservation
+        single_room_reservation = [
+            {
+                "id": "RES_TRANSITION",
+                "guestName": "Test Guest",
+                "startDate": "2026-05-01",
+                "endDate": "2026-05-05",
+                "status": "confirmed",
+                "rooms": [{"roomID": "200-0", "roomName": "Room X"}],
+            }
+        ]
+
+        with patch(
+            "src.services.sync_service.CloudbedsService"
+        ) as mock_cloudbeds_class:
+            mock_cloudbeds = AsyncMock()
+            mock_cloudbeds.get_reservations = AsyncMock(
+                return_value=single_room_reservation
+            )
+            mock_cloudbeds_class.return_value = mock_cloudbeds
+            mock_cloudbeds_class.extract_phone_last4 = (
+                CloudbedsService.extract_phone_last4
+            )
+
+            service = SyncService(sync_session)
+            result = await service.sync_listing(listing, test_credential)
+
+        assert result["inserted"] == 1
+
+        # Second sync: same reservation now spans TWO rooms
+        multi_room_reservation = [
+            {
+                "id": "RES_TRANSITION",
+                "guestName": "Test Guest",
+                "startDate": "2026-05-01",
+                "endDate": "2026-05-05",
+                "status": "confirmed",
+                "rooms": [
+                    {"roomID": "200-0", "roomName": "Room X"},
+                    {"roomID": "200-1", "roomName": "Room Y"},
+                ],
+            }
+        ]
+
+        with patch(
+            "src.services.sync_service.CloudbedsService"
+        ) as mock_cloudbeds_class:
+            mock_cloudbeds = AsyncMock()
+            mock_cloudbeds.get_reservations = AsyncMock(
+                return_value=multi_room_reservation
+            )
+            mock_cloudbeds_class.return_value = mock_cloudbeds
+            mock_cloudbeds_class.extract_phone_last4 = (
+                CloudbedsService.extract_phone_last4
+            )
+
+            service = SyncService(sync_session)
+            result = await service.sync_listing(listing, test_credential)
+
+        # With consistent composite IDs:
+        # - First booking RES_TRANSITION::200-0 gets updated (same ID)
+        # - Second booking RES_TRANSITION::200-1 is new
+        assert result["inserted"] == 1
+        assert result["updated"] == 1
+        assert result["cancelled"] == 0
+
+        # Verify final state: 2 active bookings
+        from sqlalchemy import select
+
+        stmt = select(Booking).where(Booking.listing_id == listing.id)
+        db_result = await sync_session.execute(stmt)
+        bookings = db_result.scalars().all()
+
+        assert len(bookings) == 2
+        active_bookings = [b for b in bookings if b.status != "cancelled"]
+        assert len(active_bookings) == 2
+
+        # Both should use composite IDs
+        booking_ids = {b.cloudbeds_booking_id for b in bookings}
+        assert booking_ids == {"RES_TRANSITION::200-0", "RES_TRANSITION::200-1"}

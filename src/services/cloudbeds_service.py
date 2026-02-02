@@ -234,6 +234,7 @@ class CloudbedsService:
                         "startDate": start_date.strftime("%Y-%m-%d"),
                         "endDate": end_date.strftime("%Y-%m-%d"),
                         "status": "confirmed,checked_in,checked_out",
+                        "includeAllRooms": "true",
                     },
                     timeout=30.0,
                 )
@@ -256,6 +257,15 @@ class CloudbedsService:
                     raise CloudbedsServiceError(msg)
 
                 reservations: list[dict[str, Any]] = data.get("data", [])
+                if reservations:
+                    # Log first reservation to see structure including room keys
+                    first_res = reservations[0]
+                    room_keys = [k for k in first_res if "room" in k.lower()]
+                    logger.debug(
+                        "Sample reservation data: %s (room-related keys: %s)",
+                        first_res,
+                        room_keys,
+                    )
                 return reservations
 
         result: list[dict[str, Any]] = await self._with_retry(
@@ -287,7 +297,7 @@ class CloudbedsService:
                         "Accept": "application/json",
                     },
                     params={
-                        "propertyID": property_id,
+                        "propertyIDs": property_id,
                     },
                     timeout=30.0,
                 )
@@ -304,12 +314,20 @@ class CloudbedsService:
                     raise CloudbedsServiceError(msg)
 
                 data = response.json()
+                logger.debug("getRooms response for property %s: %s", property_id, data)
 
                 if not data.get("success"):
                     msg = f"API returned error: {data}"
                     raise CloudbedsServiceError(msg)
 
-                rooms: list[dict[str, Any]] = data.get("data", [])
+                # Response structure: {"data": [{"propertyID": "...", "rooms": [...]}]}
+                # Extract rooms from the nested structure
+                rooms: list[dict[str, Any]] = []
+                properties_data = data.get("data", [])
+                for prop in properties_data:
+                    if isinstance(prop, dict) and "rooms" in prop:
+                        rooms.extend(prop["rooms"])
+                logger.info("Fetched %d rooms for property %s", len(rooms), property_id)
                 return rooms
 
         result: list[dict[str, Any]] = await self._with_retry("get_rooms", fetch_rooms)

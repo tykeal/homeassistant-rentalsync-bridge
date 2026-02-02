@@ -221,10 +221,326 @@ function formatDateTime(date) {
     });
 }
 
+// Room Management Functions
+
+/**
+ * Render rooms HTML for a listing.
+ * @param {number} listingId - The listing ID
+ * @param {string} listingSlug - The listing slug
+ * @param {Array} rooms - Array of room objects
+ * @returns {string} HTML for rooms section
+ */
+function renderRoomsSection(listingId, listingSlug, rooms) {
+    if (!rooms || rooms.length === 0) {
+        return '';
+    }
+
+    const roomsHtml = rooms.map(room => {
+        const roomUrl = `/ical/${escapeHtml(listingSlug)}/${escapeHtml(room.ical_url_slug)}.ics`;
+        const safeRoomId = escapeHtml(String(room.id));
+        return `
+            <div class="room-item" data-room-id="${safeRoomId}">
+                <div class="room-info">
+                    <h5>${escapeHtml(room.room_name)}</h5>
+                    ${room.room_type_name ? `<div class="room-type">${escapeHtml(room.room_type_name)}</div>` : ''}
+                    <div class="room-ical-url">
+                        <code>${escapeHtml(roomUrl)}</code>
+                        <button class="copy-btn" data-action="copy-room-url" data-url="${escapeHtml(roomUrl)}">Copy</button>
+                    </div>
+                    <div class="room-slug-display" data-slug="${escapeHtml(room.ical_url_slug)}">
+                        <code>Slug: ${escapeHtml(room.ical_url_slug)}</code>
+                        <button class="edit-btn" data-action="edit-room-slug">Edit</button>
+                    </div>
+                </div>
+                <div class="room-actions">
+                    <label class="toggle-switch">
+                        <input type="checkbox" data-action="toggle-room" ${room.enabled ? 'checked' : ''}>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    return `
+        <div class="rooms-section">
+            <div class="rooms-header" data-action="toggle-rooms">
+                <span class="rooms-toggle">▶</span>
+                <h4>${rooms.length} Room${rooms.length !== 1 ? 's' : ''}</h4>
+            </div>
+            <div class="rooms-list">
+                ${roomsHtml}
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * Toggle room list expansion.
+ * @param {HTMLElement} listingItem - The listing item element
+ */
+function toggleRoomsList(listingItem) {
+    const toggle = listingItem.querySelector('.rooms-toggle');
+    const roomsList = listingItem.querySelector('.rooms-list');
+
+    if (toggle && roomsList) {
+        toggle.classList.toggle('expanded');
+        roomsList.classList.toggle('expanded');
+    }
+}
+
+/**
+ * Copy room iCal URL to clipboard.
+ * @param {string} url - The URL to copy
+ * @param {HTMLButtonElement} button - The button element
+ */
+async function copyRoomUrl(url, button) {
+    try {
+        // Get the full URL including origin
+        const fullUrl = window.location.origin + url;
+
+        // Check if clipboard API is available (requires HTTPS or localhost)
+        if (!navigator.clipboard) {
+            throw new Error('Clipboard API requires HTTPS');
+        }
+
+        await navigator.clipboard.writeText(fullUrl);
+
+        const originalText = button.textContent;
+        button.textContent = 'Copied!';
+        button.classList.add('copied');
+
+        setTimeout(() => {
+            button.textContent = originalText;
+            button.classList.remove('copied');
+        }, 2000);
+    } catch (error) {
+        console.error('Failed to copy URL:', error);
+        const message = error.message.includes('HTTPS')
+            ? 'Copy failed: Clipboard requires HTTPS'
+            : 'Failed to copy URL to clipboard';
+        alert(message);
+    }
+}
+
+/**
+ * Toggle room enable/disable.
+ * @param {number} roomId - The room ID
+ * @param {boolean} enabled - Whether to enable or disable
+ */
+async function toggleRoom(roomId, enabled) {
+    // Validate roomId to prevent selector injection and path traversal
+    const validRoomId = validatePositiveInt(roomId);
+    if (!validRoomId) {
+        console.error('Invalid roomId:', roomId);
+        return;
+    }
+
+    // Find and disable toggle to prevent concurrent operations
+    const toggle = document.querySelector(
+        `.room-item[data-room-id="${validRoomId}"] input[data-action="toggle-room"]`
+    );
+    if (toggle) toggle.disabled = true;
+
+    try {
+        await fetchAPI(`/api/rooms/${validRoomId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ enabled }),
+        });
+
+        // No need to reload - the toggle is already updated
+        console.log(`Room ${validRoomId} ${enabled ? 'enabled' : 'disabled'}`);
+    } catch (error) {
+        console.error('Failed to toggle room:', error);
+        alert(`Failed to ${enabled ? 'enable' : 'disable'} room: ${error.message}`);
+        // Reload to restore correct state
+        await loadListings();
+    } finally {
+        if (toggle) toggle.disabled = false;
+    }
+}
+
+/**
+ * Enter edit mode for room slug.
+ * @param {HTMLElement} roomItem - The room item element
+ */
+function enterRoomSlugEdit(roomItem) {
+    const slugDisplay = roomItem.querySelector('.room-slug-display');
+    if (!slugDisplay) return;
+
+    const currentSlug = slugDisplay.dataset.slug;
+    const roomId = roomItem.dataset.roomId;
+
+    // Validate roomId before using in HTML
+    if (!validatePositiveInt(roomId)) {
+        console.error('Invalid roomId:', roomId);
+        return;
+    }
+
+    const editorHtml = `
+        <div class="room-slug-editor" data-original-slug="${escapeHtml(currentSlug)}">
+            <input type="text" value="${escapeHtml(currentSlug)}" data-room-id="${escapeHtml(roomId)}">
+            <button class="save-btn" data-action="save-room-slug">Save</button>
+            <button class="cancel-btn" data-action="cancel-room-slug">Cancel</button>
+        </div>
+    `;
+
+    slugDisplay.innerHTML = editorHtml;
+
+    // Focus the input
+    const input = slugDisplay.querySelector('input');
+    if (input) {
+        input.focus();
+        input.select();
+    }
+
+    // Attach event handlers
+    attachRoomSlugEditorHandlers(slugDisplay);
+}
+
+/**
+ * Attach event handlers to room slug editor.
+ * @param {HTMLElement} slugDisplay - The slug display element
+ */
+function attachRoomSlugEditorHandlers(slugDisplay) {
+    const saveBtn = slugDisplay.querySelector('[data-action="save-room-slug"]');
+    const cancelBtn = slugDisplay.querySelector('[data-action="cancel-room-slug"]');
+    const input = slugDisplay.querySelector('input');
+
+    if (saveBtn) {
+        saveBtn.addEventListener('click', async () => {
+            const roomId = input.dataset.roomId;
+            const newSlug = input.value.trim();
+            await saveRoomSlug(roomId, newSlug);
+        });
+    }
+
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', () => {
+            cancelRoomSlugEdit(slugDisplay);
+        });
+    }
+
+    if (input) {
+        input.addEventListener('keydown', async (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const roomId = input.dataset.roomId;
+                const newSlug = input.value.trim();
+                await saveRoomSlug(roomId, newSlug);
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                cancelRoomSlugEdit(slugDisplay);
+            }
+        });
+    }
+}
+
+/**
+ * Save room slug changes.
+ * @param {number} roomId - The room ID
+ * @param {string} newSlug - The new slug value
+ */
+async function saveRoomSlug(roomId, newSlug) {
+    // Validate roomId to prevent selector injection and path traversal
+    const validRoomId = validatePositiveInt(roomId);
+    if (!validRoomId) {
+        console.error('Invalid roomId:', roomId);
+        return;
+    }
+
+    // Validate slug format - must start/end with alphanumeric, no consecutive hyphens
+    // NOTE: This pattern must match SLUG_PATTERN in src/api/rooms.py
+    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(newSlug)) {
+        alert('Slug must start and end with a letter or number, and contain only lowercase letters, numbers, and hyphens');
+        return;
+    }
+
+    if (/--/.test(newSlug)) {
+        alert('Slug cannot contain consecutive hyphens');
+        return;
+    }
+
+    // Validate slug length
+    if (newSlug.length > 100) {
+        alert('Slug must be 100 characters or less');
+        return;
+    }
+
+    // Find and disable buttons to prevent concurrent operations
+    const editor = document.querySelector(
+        `.room-item[data-room-id="${validRoomId}"] .room-slug-editor`
+    );
+    const saveBtn = editor?.querySelector('[data-action="save-room-slug"]');
+    const cancelBtn = editor?.querySelector('[data-action="cancel-room-slug"]');
+    const input = editor?.querySelector('input');
+
+    if (saveBtn) saveBtn.disabled = true;
+    if (cancelBtn) cancelBtn.disabled = true;
+    if (input) input.disabled = true;
+
+    try {
+        await fetchAPI(`/api/rooms/${validRoomId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ ical_url_slug: newSlug }),
+        });
+
+        // Reload listings to show updated slug in all places
+        await loadListings();
+    } catch (error) {
+        console.error('Failed to update room slug:', error);
+        alert(`Failed to update slug: ${error.message}`);
+        // Re-enable on error (success reloads the page anyway)
+        if (saveBtn) saveBtn.disabled = false;
+        if (cancelBtn) cancelBtn.disabled = false;
+        if (input) input.disabled = false;
+    }
+}
+
+/**
+ * Cancel room slug edit mode.
+ * @param {HTMLElement} slugDisplay - The slug display element
+ */
+function cancelRoomSlugEdit(slugDisplay) {
+    const editor = slugDisplay.querySelector('.room-slug-editor');
+    if (!editor) return;
+
+    const originalSlug = editor.dataset.originalSlug;
+    const inputEl = editor.querySelector('input');
+    if (!inputEl) return;
+    const roomId = inputEl.dataset.roomId;
+
+    slugDisplay.innerHTML = `
+        <code>Slug: ${escapeHtml(originalSlug)}</code>
+        <button class="edit-btn" data-action="edit-room-slug">Edit</button>
+    `;
+
+    // Re-attach event handler
+    const editBtn = slugDisplay.querySelector('[data-action="edit-room-slug"]');
+    if (editBtn) {
+        editBtn.addEventListener('click', () => {
+            const roomItem = slugDisplay.closest('.room-item');
+            enterRoomSlugEdit(roomItem);
+        });
+    }
+}
+
 async function loadListings() {
     try {
         const data = await fetchAPI('/api/listings');
-        renderListings(data.listings);
+        // Load rooms for all listings
+        const listingsWithRooms = await Promise.all(
+            data.listings.map(async (listing) => {
+                try {
+                    const roomsData = await fetchAPI(`/api/listings/${listing.id}/rooms`);
+                    return { ...listing, rooms: roomsData.rooms || [] };
+                } catch (error) {
+                    console.error(`Failed to load rooms for listing ${listing.id}:`, error);
+                    return { ...listing, rooms: [] };
+                }
+            })
+        );
+        renderListings(listingsWithRooms);
     } catch (error) {
         console.error('Failed to load listings:', error);
         elements.listingsContainer.innerHTML = '<p class="error">Failed to load listings</p>';
@@ -274,6 +590,7 @@ function renderListings(listings) {
         // Coerce to boolean for safe attribute interpolation
         const enabled = Boolean(listing.enabled);
         const syncStatus = formatSyncStatus(listing);
+        const roomsSection = renderRoomsSection(id, listing.ical_url_slug || '', listing.rooms || []);
 
         return `
         <div class="listing-item${selectedListings.has(id) ? ' selected' : ''}" data-id="${id}" data-enabled="${enabled}">
@@ -285,6 +602,7 @@ function renderListings(listings) {
                     ? `<span class="ical-url">/ical/${escapeHtml(listing.ical_url_slug)}.ics</span>`
                     : '<span class="ical-url">Not enabled</span>'}
                 ${syncStatus}
+                ${roomsSection}
             </div>
             <div class="listing-actions">
                 ${enabled ? '<button class="btn secondary" data-action="sync">Sync Now</button>' : ''}
@@ -338,6 +656,44 @@ function attachListingEventHandlers() {
                 toggleListing(id, e.target.checked);
             });
         }
+
+        // Room list toggle
+        const roomsHeader = item.querySelector('[data-action="toggle-rooms"]');
+        if (roomsHeader) {
+            roomsHeader.addEventListener('click', () => {
+                toggleRoomsList(item);
+            });
+        }
+
+        // Room-specific actions
+        item.querySelectorAll('.room-item').forEach(roomItem => {
+            const roomId = Number(roomItem.dataset.roomId);
+
+            // Copy room URL button
+            const copyBtn = roomItem.querySelector('[data-action="copy-room-url"]');
+            if (copyBtn) {
+                copyBtn.addEventListener('click', () => {
+                    const url = copyBtn.dataset.url;
+                    copyRoomUrl(url, copyBtn);
+                });
+            }
+
+            // Edit room slug button
+            const editSlugBtn = roomItem.querySelector('[data-action="edit-room-slug"]');
+            if (editSlugBtn) {
+                editSlugBtn.addEventListener('click', () => {
+                    enterRoomSlugEdit(roomItem);
+                });
+            }
+
+            // Toggle room
+            const roomToggle = roomItem.querySelector('[data-action="toggle-room"]');
+            if (roomToggle) {
+                roomToggle.addEventListener('change', (e) => {
+                    toggleRoom(roomId, e.target.checked);
+                });
+            }
+        });
     });
 }
 
@@ -575,6 +931,19 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+/**
+ * Validate that a value is a positive integer.
+ * @param {*} value - The value to validate
+ * @returns {number|null} - The validated integer or null if invalid
+ */
+function validatePositiveInt(value) {
+    const num = Number(value);
+    if (Number.isInteger(num) && num > 0) {
+        return num;
+    }
+    return null;
 }
 
 // Event Listeners
