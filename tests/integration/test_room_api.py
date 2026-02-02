@@ -378,3 +378,31 @@ class TestPatchRoom:
                 json={"ical_url_slug": "slug/with/slashes"},
             )
             assert response.status_code == 422
+
+            # Test slug starting with hyphen
+            response = await client.patch(
+                f"/api/rooms/{room.id}",
+                json={"ical_url_slug": "-invalid-start"},
+            )
+            assert response.status_code == 422
+
+            # Test slug ending with hyphen
+            response = await client.patch(
+                f"/api/rooms/{room.id}",
+                json={"ical_url_slug": "invalid-end-"},
+            )
+            assert response.status_code == 422
+
+            # Test slug with consecutive hyphens
+            response = await client.patch(
+                f"/api/rooms/{room.id}",
+                json={"ical_url_slug": "invalid--slug"},
+            )
+            assert response.status_code == 422
+
+            # Test slug that is only hyphens
+            response = await client.patch(
+                f"/api/rooms/{room.id}",
+                json={"ical_url_slug": "---"},
+            )
+            assert response.status_code == 422

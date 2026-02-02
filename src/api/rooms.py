@@ -19,8 +19,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/rooms", tags=["Rooms"])
 
-# Valid slug pattern: lowercase letters, numbers, and hyphens only
-SLUG_PATTERN = re.compile(r"^[a-z0-9-]+$")
+# Valid slug pattern: must start/end with alphanumeric, allows hyphens in middle
+# Single character slugs like "a" or "1" are allowed
+SLUG_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
 
 class RoomResponse(BaseModel):
@@ -51,10 +52,14 @@ class RoomUpdateRequest(BaseModel):
     @classmethod
     def validate_slug_format(cls, v: str | None) -> str | None:
         """Validate slug contains only URL-safe characters."""
-        if v is not None and not SLUG_PATTERN.match(v):
-            raise ValueError(
-                "Slug must contain only lowercase letters, numbers, and hyphens"
-            )
+        if v is not None:
+            if not SLUG_PATTERN.match(v):
+                raise ValueError(
+                    "Slug must start and end with a letter or number, "
+                    "and contain only lowercase letters, numbers, and hyphens"
+                )
+            if "--" in v:
+                raise ValueError("Slug cannot contain consecutive hyphens")
         return v
 
 

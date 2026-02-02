@@ -454,9 +454,14 @@ async function saveRoomSlug(roomId, newSlug) {
         return;
     }
 
-    // Validate slug format - only lowercase letters, numbers, and hyphens
-    if (!/^[a-z0-9-]+$/.test(newSlug)) {
-        alert('Slug must contain only lowercase letters, numbers, and hyphens');
+    // Validate slug format - must start/end with alphanumeric, no consecutive hyphens
+    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(newSlug)) {
+        alert('Slug must start and end with a letter or number, and contain only lowercase letters, numbers, and hyphens');
+        return;
+    }
+
+    if (/--/.test(newSlug)) {
+        alert('Slug cannot contain consecutive hyphens');
         return;
     }
 
