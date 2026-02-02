@@ -9,6 +9,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database import get_db
@@ -157,7 +158,14 @@ async def update_room(
             )
         room.ical_url_slug = request.ical_url_slug
 
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as err:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Slug already in use by another room (conflict during update)",
+        ) from err
     await db.refresh(room)
 
     logger.info("Updated room %s (listing %s)", room.id, room.listing_id)
