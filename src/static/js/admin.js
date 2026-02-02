@@ -237,8 +237,9 @@ function renderRoomsSection(listingId, listingSlug, rooms) {
 
     const roomsHtml = rooms.map(room => {
         const roomUrl = `/ical/${escapeHtml(listingSlug)}/${escapeHtml(room.ical_url_slug)}.ics`;
+        const safeRoomId = escapeHtml(String(room.id));
         return `
-            <div class="room-item" data-room-id="${room.id}">
+            <div class="room-item" data-room-id="${safeRoomId}">
                 <div class="room-info">
                     <h5>${escapeHtml(room.room_name)}</h5>
                     ${room.room_type_name ? `<div class="room-type">${escapeHtml(room.room_type_name)}</div>` : ''}
@@ -328,20 +329,27 @@ async function copyRoomUrl(url, button) {
  * @param {boolean} enabled - Whether to enable or disable
  */
 async function toggleRoom(roomId, enabled) {
+    // Validate roomId to prevent selector injection and path traversal
+    const validRoomId = validatePositiveInt(roomId);
+    if (!validRoomId) {
+        console.error('Invalid roomId:', roomId);
+        return;
+    }
+
     // Find and disable toggle to prevent concurrent operations
     const toggle = document.querySelector(
-        `.room-item[data-room-id="${roomId}"] input[data-action="toggle-room"]`
+        `.room-item[data-room-id="${validRoomId}"] input[data-action="toggle-room"]`
     );
     if (toggle) toggle.disabled = true;
 
     try {
-        await fetchAPI(`/api/rooms/${roomId}`, {
+        await fetchAPI(`/api/rooms/${validRoomId}`, {
             method: 'PATCH',
             body: JSON.stringify({ enabled }),
         });
 
         // No need to reload - the toggle is already updated
-        console.log(`Room ${roomId} ${enabled ? 'enabled' : 'disabled'}`);
+        console.log(`Room ${validRoomId} ${enabled ? 'enabled' : 'disabled'}`);
     } catch (error) {
         console.error('Failed to toggle room:', error);
         alert(`Failed to ${enabled ? 'enable' : 'disable'} room: ${error.message}`);
@@ -363,9 +371,15 @@ function enterRoomSlugEdit(roomItem) {
     const currentSlug = slugDisplay.dataset.slug;
     const roomId = roomItem.dataset.roomId;
 
+    // Validate roomId before using in HTML
+    if (!validatePositiveInt(roomId)) {
+        console.error('Invalid roomId:', roomId);
+        return;
+    }
+
     const editorHtml = `
         <div class="room-slug-editor" data-original-slug="${escapeHtml(currentSlug)}">
-            <input type="text" value="${escapeHtml(currentSlug)}" data-room-id="${roomId}">
+            <input type="text" value="${escapeHtml(currentSlug)}" data-room-id="${escapeHtml(roomId)}">
             <button class="save-btn" data-action="save-room-slug">Save</button>
             <button class="cancel-btn" data-action="cancel-room-slug">Cancel</button>
         </div>
@@ -428,6 +442,13 @@ function attachRoomSlugEditorHandlers(slugDisplay) {
  * @param {string} newSlug - The new slug value
  */
 async function saveRoomSlug(roomId, newSlug) {
+    // Validate roomId to prevent selector injection and path traversal
+    const validRoomId = validatePositiveInt(roomId);
+    if (!validRoomId) {
+        console.error('Invalid roomId:', roomId);
+        return;
+    }
+
     if (!newSlug) {
         alert('Slug cannot be empty');
         return;
@@ -447,7 +468,7 @@ async function saveRoomSlug(roomId, newSlug) {
 
     // Find and disable buttons to prevent concurrent operations
     const editor = document.querySelector(
-        `.room-item[data-room-id="${roomId}"] .room-slug-editor`
+        `.room-item[data-room-id="${validRoomId}"] .room-slug-editor`
     );
     const saveBtn = editor?.querySelector('[data-action="save-room-slug"]');
     const cancelBtn = editor?.querySelector('[data-action="cancel-room-slug"]');
@@ -458,7 +479,7 @@ async function saveRoomSlug(roomId, newSlug) {
     if (input) input.disabled = true;
 
     try {
-        await fetchAPI(`/api/rooms/${roomId}`, {
+        await fetchAPI(`/api/rooms/${validRoomId}`, {
             method: 'PATCH',
             body: JSON.stringify({ ical_url_slug: newSlug }),
         });
@@ -907,6 +928,19 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+/**
+ * Validate that a value is a positive integer.
+ * @param {*} value - The value to validate
+ * @returns {number|null} - The validated integer or null if invalid
+ */
+function validatePositiveInt(value) {
+    const num = Number(value);
+    if (Number.isInteger(num) && num > 0) {
+        return num;
+    }
+    return null;
 }
 
 // Event Listeners
