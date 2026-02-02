@@ -3,11 +3,12 @@
 """Room management API endpoints."""
 
 import logging
+import re
 from datetime import UTC
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database import get_db
@@ -16,6 +17,9 @@ from src.repositories.room_repository import RoomRepository
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/rooms", tags=["Rooms"])
+
+# Valid slug pattern: lowercase letters, numbers, and hyphens only
+SLUG_PATTERN = re.compile(r"^[a-z0-9-]+$")
 
 
 class RoomResponse(BaseModel):
@@ -36,7 +40,21 @@ class RoomUpdateRequest(BaseModel):
     """Request model for updating a room."""
 
     enabled: bool | None = Field(default=None, description="Enable/disable room")
-    ical_url_slug: str | None = Field(default=None, description="Custom iCal URL slug")
+    ical_url_slug: str | None = Field(
+        default=None,
+        description="Custom iCal URL slug",
+        max_length=100,
+    )
+
+    @field_validator("ical_url_slug")
+    @classmethod
+    def validate_slug_format(cls, v: str | None) -> str | None:
+        """Validate slug contains only URL-safe characters."""
+        if v is not None and not SLUG_PATTERN.match(v):
+            raise ValueError(
+                "Slug must contain only lowercase letters, numbers, and hyphens"
+            )
+        return v
 
 
 def _format_datetime(dt: Any) -> str | None:
