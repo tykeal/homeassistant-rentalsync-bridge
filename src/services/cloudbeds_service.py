@@ -256,6 +256,9 @@ class CloudbedsService:
                     raise CloudbedsServiceError(msg)
 
                 reservations: list[dict[str, Any]] = data.get("data", [])
+                if reservations:
+                    # Log first reservation to see structure
+                    logger.debug("Sample reservation data: %s", reservations[0])
                 return reservations
 
         result: list[dict[str, Any]] = await self._with_retry(
