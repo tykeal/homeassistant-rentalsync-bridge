@@ -264,6 +264,205 @@ header .subtitle {
     align-items: center;
 }
 
+/* Room List Styles */
+.rooms-section {
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid var(--border-color);
+}
+
+.rooms-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.rooms-header h4 {
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--text-color);
+}
+
+.rooms-toggle {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    transition: transform 0.2s;
+}
+
+.rooms-toggle.expanded {
+    transform: rotate(90deg);
+}
+
+.rooms-list {
+    display: none;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.rooms-list.expanded {
+    display: flex;
+}
+
+.room-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px;
+    background: var(--bg-color);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    gap: 10px;
+}
+
+.room-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.room-info h5 {
+    font-size: 0.9rem;
+    font-weight: 500;
+    margin-bottom: 4px;
+}
+
+.room-type {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+}
+
+.room-ical-url {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.room-ical-url code {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    background: var(--card-bg);
+    padding: 2px 6px;
+    border-radius: 3px;
+    word-break: break-all;
+    flex: 1;
+}
+
+.room-ical-url .copy-btn {
+    background: none;
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    padding: 4px 8px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    color: var(--text-color);
+    transition: background-color 0.2s;
+    flex-shrink: 0;
+}
+
+.room-ical-url .copy-btn:hover {
+    background: var(--bg-color);
+}
+
+.room-ical-url .copy-btn.copied {
+    color: var(--success-color);
+    border-color: var(--success-color);
+}
+
+.room-slug-editor {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.room-slug-editor input {
+    flex: 1;
+    padding: 4px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    font-size: 0.8rem;
+    font-family: monospace;
+}
+
+.room-slug-editor .save-btn,
+.room-slug-editor .cancel-btn {
+    padding: 4px 8px;
+    font-size: 0.75rem;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.room-slug-editor .save-btn {
+    background: var(--success-color);
+    color: white;
+}
+
+.room-slug-editor .save-btn:hover {
+    background: #43a047;
+}
+
+.room-slug-editor .cancel-btn {
+    background: var(--border-color);
+    color: var(--text-color);
+}
+
+.room-slug-editor .cancel-btn:hover {
+    background: #d5d5d5;
+}
+
+.room-slug-display {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.room-slug-display code {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-family: monospace;
+}
+
+.room-slug-display .edit-btn {
+    background: none;
+    border: none;
+    color: var(--primary-color);
+    font-size: 0.75rem;
+    cursor: pointer;
+    padding: 2px 6px;
+}
+
+.room-slug-display .edit-btn:hover {
+    text-decoration: underline;
+}
+
+.room-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.room-actions .toggle-switch {
+    width: 44px;
+    height: 22px;
+}
+
+.room-actions .toggle-slider:before {
+    height: 16px;
+    width: 16px;
+}
+
+.room-actions .toggle-switch input:checked + .toggle-slider:before {
+    transform: translateX(20px);
+}
+
 .toggle-switch {
     position: relative;
     width: 50px;

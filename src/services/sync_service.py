@@ -148,6 +148,13 @@ class SyncService:
                 )
                 if room:
                     room_id = room.id
+                else:
+                    logger.warning(
+                        "Room %s not found for booking %s - booking will not "
+                        "appear in room calendars. Sync rooms first.",
+                        cloudbeds_room_id,
+                        cloudbeds_booking_id,
+                    )
 
             # Create Booking entity for upsert
             booking = Booking(
@@ -181,8 +188,9 @@ class SyncService:
                 counts["cancelled"] += 1
 
         # Invalidate calendar cache if any changes
+        # Use prefix invalidation to clear all room-level caches for this listing
         if self._calendar_cache and sum(counts.values()) > 0:
-            self._calendar_cache.invalidate(listing.ical_url_slug)
+            self._calendar_cache.invalidate_prefix(listing.ical_url_slug)
             logger.debug("Invalidated cache for listing %s", listing.ical_url_slug)
 
         await self._session.commit()
