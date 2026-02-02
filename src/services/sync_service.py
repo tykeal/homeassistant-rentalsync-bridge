@@ -3,7 +3,6 @@
 """Sync service for synchronizing bookings from Cloudbeds."""
 
 import logging
-import re
 from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -231,8 +230,9 @@ class SyncService:
             # Create a booking for EACH room in the reservation
             for cloudbeds_room_id in cloudbeds_room_ids:
                 # Use composite booking ID for multi-room reservations
+                # Use "::" delimiter to avoid ambiguity with IDs containing hyphens
                 booking_id = (
-                    f"{cloudbeds_booking_id}-{cloudbeds_room_id}"
+                    f"{cloudbeds_booking_id}::{cloudbeds_room_id}"
                     if len(cloudbeds_room_ids) > 1
                     else str(cloudbeds_booking_id)
                 )
@@ -298,7 +298,7 @@ class SyncService:
     def _extract_base_reservation_id(booking_id: str) -> str:
         """Extract the base Cloudbeds reservation ID from a booking ID.
 
-        For multi-room bookings, the ID format is "{reservationID}-{roomID}".
+        For multi-room bookings, the ID format is "{reservationID}::{roomID}".
         This extracts just the reservation ID portion.
 
         Args:
@@ -307,13 +307,9 @@ class SyncService:
         Returns:
             The base reservation ID.
         """
-        # Cloudbeds room IDs are typically in format "123456-0" (typeID-index)
-        # So multi-room booking IDs look like "RES123-123456-0"
-        # We need to find the reservation ID which comes before the room ID
-        # The room ID pattern is typically digits-digit at the end
-        match = re.match(r"^(.+)-(\d+-\d+)$", booking_id)
-        if match:
-            return match.group(1)
+        # Multi-room booking IDs use "::" delimiter to separate reservation and room
+        if "::" in booking_id:
+            return booking_id.split("::")[0]
         return booking_id
 
     def _extract_booking_data(self, reservation: dict) -> dict:

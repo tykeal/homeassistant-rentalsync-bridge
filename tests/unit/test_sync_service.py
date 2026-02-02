@@ -1162,9 +1162,9 @@ class TestRoomAssociation:
 
         assert len(bookings) == 2
 
-        # Check booking IDs are composite for multi-room
+        # Check booking IDs are composite for multi-room (uses :: delimiter)
         booking_ids = {b.cloudbeds_booking_id for b in bookings}
-        assert booking_ids == {"RES_MULTI_ROOM-100-0", "RES_MULTI_ROOM-100-1"}
+        assert booking_ids == {"RES_MULTI_ROOM::100-0", "RES_MULTI_ROOM::100-1"}
 
         # Check room associations
         room_ids = {b.room_id for b in bookings}
