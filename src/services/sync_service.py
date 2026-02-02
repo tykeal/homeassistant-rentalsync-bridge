@@ -342,20 +342,21 @@ class SyncService:
             status = "confirmed"
 
         # Extract ALL room IDs from reservation (T020)
-        # Room ID can be at top level or in nested rooms array
+        # Prefer nested rooms array (authoritative), fallback to top-level roomID
         cloudbeds_room_ids: list[str] = []
-        top_level_room_id = reservation.get("roomID") or reservation.get("roomId")
-        if top_level_room_id:
-            cloudbeds_room_ids.append(str(top_level_room_id))
-        else:
-            # Check nested rooms array - extract ALL rooms
-            rooms = reservation.get("rooms", [])
-            if rooms and isinstance(rooms, list):
-                for room in rooms:
-                    if isinstance(room, dict):
-                        room_id = room.get("roomID") or room.get("roomId")
-                        if room_id:
-                            cloudbeds_room_ids.append(str(room_id))
+        rooms = reservation.get("rooms", [])
+        if rooms and isinstance(rooms, list):
+            # Extract room IDs from nested array (multi-room reservations)
+            for room in rooms:
+                if isinstance(room, dict):
+                    room_id = room.get("roomID") or room.get("roomId")
+                    if room_id:
+                        cloudbeds_room_ids.append(str(room_id))
+        if not cloudbeds_room_ids:
+            # Fallback to top-level room ID (legacy single-room format)
+            top_level_room_id = reservation.get("roomID") or reservation.get("roomId")
+            if top_level_room_id:
+                cloudbeds_room_ids.append(str(top_level_room_id))
 
         # Build custom data from available fields
         custom_data = {}
