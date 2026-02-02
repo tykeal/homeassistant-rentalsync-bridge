@@ -146,7 +146,9 @@ class TestRoomLevelICalGeneration:
         self, listing: Listing, room: Room
     ) -> None:
         """Test that iCal generation works with no bookings."""
-        service = CalendarService(cache=None)
+        # Use a fresh cache to avoid interference from previous tests
+        cache = CalendarCache()
+        service = CalendarService(cache=cache)
 
         # Generate with empty bookings
         ical = service.generate_ical(
