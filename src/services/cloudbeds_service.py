@@ -287,7 +287,7 @@ class CloudbedsService:
                         "Accept": "application/json",
                     },
                     params={
-                        "propertyID": property_id,
+                        "propertyIDs": property_id,
                     },
                     timeout=30.0,
                 )

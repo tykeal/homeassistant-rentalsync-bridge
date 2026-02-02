@@ -282,4 +282,4 @@ class TestGetRooms:
         await service.get_rooms("PROP_ABC")
 
         assert "params" in captured_kwargs
-        assert captured_kwargs["params"]["propertyID"] == "PROP_ABC"
+        assert captured_kwargs["params"]["propertyIDs"] == "PROP_ABC"
