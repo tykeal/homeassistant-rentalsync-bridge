@@ -158,7 +158,7 @@ class SyncService:
                 continue
 
             booking_id = existing_booking.cloudbeds_booking_id
-            # Extract base reservation ID (before any -roomID suffix)
+            # Extract base reservation ID (before any ::roomID suffix)
             base_reservation_id = self._extract_base_reservation_id(booking_id)
 
             # Keep if exact ID is seen OR if base reservation still exists
