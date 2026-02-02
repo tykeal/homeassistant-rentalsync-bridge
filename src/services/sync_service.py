@@ -173,13 +173,13 @@ class SyncService:
             await self._booking_repo.mark_cancelled(existing_booking)
             counts["cancelled"] += 1
 
-        # Invalidate calendar cache if any changes
+        await self._session.commit()
+
+        # Invalidate calendar cache AFTER commit to avoid race conditions
         # Use prefix invalidation to clear all room-level caches for this listing
         if self._calendar_cache and sum(counts.values()) > 0:
             self._calendar_cache.invalidate_prefix(listing.ical_url_slug)
             logger.debug("Invalidated cache for listing %s", listing.ical_url_slug)
-
-        await self._session.commit()
 
         logger.info(
             "Synced listing %s: %d inserted, %d updated, %d cancelled",
