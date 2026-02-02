@@ -141,6 +141,28 @@ class RoomRepository:
             return existing
 
         # Create new room
+        return await self.create_room(
+            listing_id, cloudbeds_room_id, room_name, room_type_name
+        )
+
+    async def create_room(
+        self,
+        listing_id: int,
+        cloudbeds_room_id: str,
+        room_name: str,
+        room_type_name: str | None = None,
+    ) -> Room:
+        """Create a new room (no existence check).
+
+        Args:
+            listing_id: Listing primary key.
+            cloudbeds_room_id: Cloudbeds room identifier.
+            room_name: Room display name.
+            room_type_name: Optional room type name.
+
+        Returns:
+            Created room.
+        """
         slug = await self.generate_unique_slug(listing_id, room_name)
         room = Room(
             listing_id=listing_id,

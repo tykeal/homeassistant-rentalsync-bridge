@@ -207,8 +207,8 @@ async def _sync_rooms_for_listing(
                 existing_room.room_type_name = room_type
                 rooms_updated += 1
             else:
-                # Create new room
-                await room_repo.upsert_room(
+                # Create new room (use create_room to avoid redundant query)
+                await room_repo.create_room(
                     listing_id=listing.id,
                     cloudbeds_room_id=room_id,
                     room_name=room_name,
