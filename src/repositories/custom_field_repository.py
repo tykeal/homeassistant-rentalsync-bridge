@@ -19,6 +19,7 @@ AVAILABLE_FIELDS: dict[str, str] = {
     "source_name": "Booking Source",
     "special_requests": "Special Requests",
     "estimated_arrival": "Estimated Arrival",
+    "guest_phone_last4": "Guest Phone (Last 4 Digits)",
 }
 
 
