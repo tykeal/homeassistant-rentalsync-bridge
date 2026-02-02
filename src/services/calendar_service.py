@@ -110,22 +110,29 @@ class CalendarService:
         listing: Listing,
         bookings: Sequence[Booking],
         custom_fields: Sequence[CustomField] | None = None,
+        room_slug: str | None = None,
     ) -> str:
-        """Generate iCal feed for a listing.
+        """Generate iCal feed for a listing or room.
 
         Args:
             listing: Listing to generate calendar for.
-            bookings: Confirmed bookings to include.
+            bookings: Confirmed bookings (already filtered by room if needed).
             custom_fields: Enabled custom fields for description.
+            room_slug: Optional room slug for cache key generation.
 
         Returns:
             iCal string (text/calendar format).
         """
+        # Generate cache key based on listing and optionally room
+        if room_slug:
+            cache_key = f"{listing.ical_url_slug}/{room_slug}"
+        else:
+            cache_key = listing.ical_url_slug
+
         # Check cache first
-        cache_key = listing.ical_url_slug
         cached = self._cache.get(cache_key)
         if cached is not None:
-            logger.debug("Cache hit for listing %s", cache_key)
+            logger.debug("Cache hit for %s", cache_key)
             return cached
 
         # Generate calendar
@@ -145,17 +152,19 @@ class CalendarService:
 
         # Cache result
         self._cache.set(cache_key, ical_string)
-        logger.debug("Generated and cached iCal for listing %s", cache_key)
+        logger.debug("Generated and cached iCal for %s", cache_key)
 
         return ical_string
 
-    def invalidate_cache(self, listing_slug: str) -> None:
-        """Invalidate cached iCal for a listing.
+    def invalidate_cache(self, listing_slug: str, room_slug: str | None = None) -> None:
+        """Invalidate cached iCal for a listing or room.
 
         Args:
             listing_slug: Listing URL slug to invalidate.
+            room_slug: Optional room URL slug for room-level invalidation.
         """
-        self._cache.invalidate(listing_slug)
+        cache_key = f"{listing_slug}/{room_slug}" if room_slug else listing_slug
+        self._cache.invalidate(cache_key)
 
     def _create_calendar(self, listing: Listing) -> Calendar:
         """Create iCal calendar object with metadata.
