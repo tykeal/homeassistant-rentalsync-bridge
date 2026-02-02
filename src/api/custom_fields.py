@@ -129,6 +129,9 @@ async def update_custom_fields(
             detail="Listing not found",
         )
 
+    # Get valid field names for validation
+    available_fields = CustomFieldRepository.get_available_fields()
+
     for i, field_data in enumerate(request.fields):
         field_name = field_data.get("field_name")
         display_label = field_data.get("display_label")
@@ -137,6 +140,14 @@ async def update_custom_fields(
 
         if not field_name or not display_label:
             continue
+
+        # Validate field_name against allowed fields
+        if field_name not in available_fields:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid field_name '{field_name}'. "
+                f"Must be one of: {', '.join(sorted(available_fields.keys()))}",
+            )
 
         result = await db.execute(
             select(CustomField).where(
