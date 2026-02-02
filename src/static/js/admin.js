@@ -251,18 +251,19 @@ async function syncPropertiesFromCloudbeds() {
         }, 2000);
 
         // Show result and refresh listings
-        alert(`${result.message}\nCreated: ${result.created}, Updated: ${result.updated}`);
+        const roomsMsg = result.rooms_created !== undefined ? `\nRooms Created: ${result.rooms_created}, Rooms Updated: ${result.rooms_updated}` : '';
+        alert(`${result.message}\nProperties Created: ${result.created}, Updated: ${result.updated}${roomsMsg}`);
         await loadListings();
     } catch (error) {
         btn.textContent = originalText;
         btn.disabled = false;
-        alert(`Failed to sync properties: ${error.message}`);
+        alert(`Failed to sync: ${error.message}`);
     }
 }
 
 function renderListings(listings) {
     if (listings.length === 0) {
-        elements.listingsContainer.innerHTML = '<p class="loading">No listings found. Click "Sync Properties from Cloudbeds" to populate.</p>';
+        elements.listingsContainer.innerHTML = '<p class="loading">No listings found. Click "Sync Rooms from Cloudbeds" to populate.</p>';
         updateBulkButtons();
         return;
     }
