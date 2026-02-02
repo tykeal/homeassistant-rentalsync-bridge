@@ -125,7 +125,8 @@ class TestAdminEndpointAuth:
         async with AsyncClient(
             transport=ASGITransport(app=auth_app_production), base_url="http://test"
         ) as client:
-            response = await client.get("/ical/nonexistent.ics")
+            # Test new room-level endpoint format (returns 404 for nonexistent)
+            response = await client.get("/ical/nonexistent/room.ics")
 
         # 404 is expected for nonexistent, but not 401
         assert response.status_code == 404
