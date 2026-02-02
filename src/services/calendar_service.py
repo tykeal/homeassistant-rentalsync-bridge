@@ -264,8 +264,16 @@ class CalendarService:
         """
         lines: list[str] = []
 
-        # Always include phone last 4 if available
-        if booking.guest_phone_last4:
+        # Check if guest_phone_last4 is configured as a custom field
+        phone_is_custom_field = False
+        if custom_fields:
+            phone_is_custom_field = any(
+                field.field_name == "guest_phone_last4" and field.enabled
+                for field in custom_fields
+            )
+
+        # Include phone last 4 if available and not configured as custom field
+        if booking.guest_phone_last4 and not phone_is_custom_field:
             lines.append(f"Phone (last 4): {booking.guest_phone_last4}")
 
         # Add custom fields from booking's custom_data
