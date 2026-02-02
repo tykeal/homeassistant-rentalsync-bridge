@@ -120,3 +120,32 @@ async def get_room_ical_feed(
             "Content-Disposition": f'attachment; filename="{room_slug}.ics"',
         },
     )
+
+
+@router.get(
+    "/ical/{slug}.ics",
+    responses={
+        410: {"description": "Endpoint format has changed"},
+    },
+)
+async def get_legacy_ical_feed(slug: str) -> Response:
+    """Legacy endpoint - return helpful error about new URL format.
+
+    The iCal endpoint format changed from property-level to room-level.
+    Old: /ical/{listing-slug}.ics
+    New: /ical/{listing-slug}/{room-slug}.ics
+
+    Args:
+        slug: The old-style listing slug.
+
+    Raises:
+        HTTPException: 410 Gone with migration instructions.
+    """
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail=(
+            f"iCal URL format has changed. Property-level calendars are no longer "
+            f"supported. Use room-level URLs: /ical/{slug}/{{room-slug}}.ics - "
+            f"Check the admin UI for room-specific calendar URLs."
+        ),
+    )

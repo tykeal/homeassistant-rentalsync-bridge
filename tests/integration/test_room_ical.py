@@ -510,3 +510,24 @@ class TestRoomICalCaching:
         # Room 1 has 2 bookings, Room 2 has 1
         assert len(events1) == 2
         assert len(events2) == 1
+
+
+class TestLegacyICalEndpoint:
+    """Test legacy iCal endpoint returns helpful migration message."""
+
+    @pytest.mark.asyncio
+    async def test_legacy_endpoint_returns_410_gone(
+        self,
+        ical_app,
+    ) -> None:
+        """Test that old-format iCal URL returns 410 with helpful message."""
+        async with AsyncClient(
+            transport=ASGITransport(app=ical_app), base_url="http://test"
+        ) as client:
+            response = await client.get("/ical/old-listing-slug.ics")
+
+        assert response.status_code == 410
+        detail = response.json()["detail"]
+        assert "iCal URL format has changed" in detail
+        assert "room-level URLs" in detail
+        assert "/ical/old-listing-slug/{room-slug}.ics" in detail
