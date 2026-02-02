@@ -118,3 +118,168 @@ class TestRateLimitHandling:
         """Test RateLimitError with no retry_after."""
         error = RateLimitError("Rate limited")
         assert error.retry_after is None
+
+
+class TestGetRooms:
+    """Tests for get_rooms() method (T016)."""
+
+    @pytest.mark.asyncio
+    async def test_get_rooms_returns_room_list(self, monkeypatch):
+        """Test get_rooms returns list of rooms for a property."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "success": True,
+            "data": [
+                {
+                    "roomID": "123",
+                    "roomName": "Room 101",
+                    "roomTypeName": "Standard Room",
+                },
+                {
+                    "roomID": "456",
+                    "roomName": "Room 102",
+                    "roomTypeName": "Deluxe Suite",
+                },
+            ],
+        }
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        import httpx
+
+        monkeypatch.setattr(httpx, "AsyncClient", lambda: mock_client)
+
+        service = CloudbedsService(access_token="test_token")
+        rooms = await service.get_rooms("PROP123")
+
+        assert len(rooms) == 2
+        assert rooms[0]["roomID"] == "123"
+        assert rooms[0]["roomName"] == "Room 101"
+        assert rooms[0]["roomTypeName"] == "Standard Room"
+        assert rooms[1]["roomID"] == "456"
+
+    @pytest.mark.asyncio
+    async def test_get_rooms_empty_property(self, monkeypatch):
+        """Test get_rooms returns empty list for property with no rooms."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "success": True,
+            "data": [],
+        }
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        import httpx
+
+        monkeypatch.setattr(httpx, "AsyncClient", lambda: mock_client)
+
+        service = CloudbedsService(access_token="test_token")
+        rooms = await service.get_rooms("EMPTY_PROP")
+
+        assert rooms == []
+
+    @pytest.mark.asyncio
+    async def test_get_rooms_handles_rate_limit(self, monkeypatch):
+        """Test get_rooms handles rate limiting with retry."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        call_count = 0
+
+        async def mock_get(*args, **kwargs):
+            """Mock GET that returns 429 first then success."""
+            nonlocal call_count
+            call_count += 1
+
+            mock_response = MagicMock()
+            if call_count == 1:
+                mock_response.status_code = 429
+                mock_response.headers = {"Retry-After": "0.01"}
+            else:
+                mock_response.status_code = 200
+                mock_response.json.return_value = {
+                    "success": True,
+                    "data": [{"roomID": "123", "roomName": "Room 1"}],
+                }
+            return mock_response
+
+        mock_client = AsyncMock()
+        mock_client.get = mock_get
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        import httpx
+
+        monkeypatch.setattr(httpx, "AsyncClient", lambda: mock_client)
+        monkeypatch.setattr("src.services.cloudbeds_service.BASE_DELAY_SECONDS", 0.01)
+
+        service = CloudbedsService(access_token="test_token")
+        rooms = await service.get_rooms("PROP123")
+
+        assert len(rooms) == 1
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_get_rooms_api_error(self, monkeypatch):
+        """Test get_rooms raises error on API failure."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.text = "Internal Server Error"
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        import httpx
+
+        monkeypatch.setattr(httpx, "AsyncClient", lambda: mock_client)
+
+        service = CloudbedsService(access_token="test_token")
+        with pytest.raises(CloudbedsServiceError) as exc_info:
+            await service.get_rooms("PROP123")
+
+        assert "API error" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_get_rooms_sends_correct_params(self, monkeypatch):
+        """Test get_rooms sends property_id in request."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        captured_kwargs = {}
+
+        async def capture_get(*args, **kwargs):
+            """Capture GET kwargs for assertion."""
+            captured_kwargs.update(kwargs)
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {"success": True, "data": []}
+            return mock_response
+
+        mock_client = AsyncMock()
+        mock_client.get = capture_get
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        import httpx
+
+        monkeypatch.setattr(httpx, "AsyncClient", lambda: mock_client)
+
+        service = CloudbedsService(access_token="test_token")
+        await service.get_rooms("PROP_ABC")
+
+        assert "params" in captured_kwargs
+        assert captured_kwargs["params"]["propertyID"] == "PROP_ABC"

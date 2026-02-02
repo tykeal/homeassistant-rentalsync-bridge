@@ -263,6 +263,58 @@ class CloudbedsService:
         )
         return result
 
+    async def get_rooms(self, property_id: str) -> list[dict[str, Any]]:
+        """Fetch rooms for a property from Cloudbeds API.
+
+        Args:
+            property_id: Cloudbeds property ID.
+
+        Returns:
+            List of room dictionaries with roomID, roomName, roomTypeName.
+
+        Raises:
+            CloudbedsServiceError: If API call fails.
+        """
+        auth_headers = self._get_auth_headers()
+
+        async def fetch_rooms() -> list[dict[str, Any]]:
+            """Fetch rooms from Cloudbeds API."""
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    "https://api.cloudbeds.com/api/v1.3/getRooms",
+                    headers={
+                        **auth_headers,
+                        "Accept": "application/json",
+                    },
+                    params={
+                        "propertyID": property_id,
+                    },
+                    timeout=30.0,
+                )
+
+                if response.status_code == HTTPStatus.TOO_MANY_REQUESTS:
+                    retry_after = response.headers.get("Retry-After")
+                    raise RateLimitError(
+                        "Rate limited",
+                        retry_after=float(retry_after) if retry_after else None,
+                    )
+
+                if response.status_code != HTTPStatus.OK:
+                    msg = f"API error: {response.status_code} {response.text}"
+                    raise CloudbedsServiceError(msg)
+
+                data = response.json()
+
+                if not data.get("success"):
+                    msg = f"API returned error: {data}"
+                    raise CloudbedsServiceError(msg)
+
+                rooms: list[dict[str, Any]] = data.get("data", [])
+                return rooms
+
+        result: list[dict[str, Any]] = await self._with_retry("get_rooms", fetch_rooms)
+        return result
+
     async def refresh_access_token(self) -> tuple[str, str, datetime]:
         """Refresh the OAuth access token.
 
