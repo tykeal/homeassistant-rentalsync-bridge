@@ -927,3 +927,85 @@ class TestRoomAssociation:
         booking = db_result.scalar_one()
 
         assert booking.room_id is None
+
+    @pytest.mark.asyncio
+    async def test_sync_updates_room_id_on_room_change(
+        self, sync_session, test_credential
+    ):
+        """Test that sync updates room_id when booking is moved to different room."""
+        from src.models.room import Room
+
+        # Create listing with two rooms
+        listing = Listing(
+            cloudbeds_id="ROOM_CHANGE_TEST",
+            name="Room Change Test",
+            ical_url_slug="room-change-test",
+            enabled=True,
+            sync_enabled=True,
+        )
+        sync_session.add(listing)
+        await sync_session.commit()
+        await sync_session.refresh(listing)
+
+        room1 = Room(
+            listing_id=listing.id,
+            cloudbeds_room_id="ROOM_A",
+            room_name="Room A",
+            ical_url_slug="room-a",
+            enabled=True,
+        )
+        room2 = Room(
+            listing_id=listing.id,
+            cloudbeds_room_id="ROOM_B",
+            room_name="Room B",
+            ical_url_slug="room-b",
+            enabled=True,
+        )
+        sync_session.add_all([room1, room2])
+        await sync_session.commit()
+        await sync_session.refresh(room1)
+        await sync_session.refresh(room2)
+
+        # Create existing booking in Room A
+        existing_booking = Booking(
+            listing_id=listing.id,
+            room_id=room1.id,
+            cloudbeds_booking_id="RES_ROOM_CHANGE",
+            guest_name="Moving Guest",
+            check_in_date=datetime(2026, 3, 1, tzinfo=UTC),
+            check_out_date=datetime(2026, 3, 5, tzinfo=UTC),
+            status="confirmed",
+        )
+        sync_session.add(existing_booking)
+        await sync_session.commit()
+
+        # Sync with booking now in Room B
+        mock_reservations = [
+            {
+                "id": "RES_ROOM_CHANGE",
+                "guestName": "Moving Guest",
+                "roomID": "ROOM_B",  # Changed from ROOM_A to ROOM_B
+                "startDate": "2026-03-01",
+                "endDate": "2026-03-05",
+                "status": "confirmed",
+            }
+        ]
+
+        with patch(
+            "src.services.sync_service.CloudbedsService"
+        ) as mock_cloudbeds_class:
+            mock_cloudbeds = AsyncMock()
+            mock_cloudbeds.get_reservations = AsyncMock(return_value=mock_reservations)
+            mock_cloudbeds_class.return_value = mock_cloudbeds
+            mock_cloudbeds_class.extract_phone_last4 = (
+                CloudbedsService.extract_phone_last4
+            )
+
+            service = SyncService(sync_session)
+            result = await service.sync_listing(listing, test_credential)
+
+        assert result["updated"] == 1
+
+        # Verify booking is now associated with Room B
+        await sync_session.refresh(existing_booking)
+        assert existing_booking.room_id == room2.id
