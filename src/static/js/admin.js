@@ -506,7 +506,9 @@ function cancelRoomSlugEdit(slugDisplay) {
     if (!editor) return;
 
     const originalSlug = editor.dataset.originalSlug;
-    const roomId = editor.querySelector('input').dataset.roomId;
+    const inputEl = editor.querySelector('input');
+    if (!inputEl) return;
+    const roomId = inputEl.dataset.roomId;
 
     slugDisplay.innerHTML = `
         <code>Slug: ${escapeHtml(originalSlug)}</code>
