@@ -169,7 +169,11 @@ async def update_room(
     except IntegrityError as err:
         await db.rollback()
         # Check which constraint was violated for accurate error message
-        error_msg = str(err.orig) if err.orig else str(err)
+        # Handle various error types safely - some drivers may not have orig
+        try:
+            error_msg = str(err.orig) if err.orig else str(err)
+        except Exception:
+            error_msg = str(err)
         if "uq_room_listing_slug" in error_msg or "ical_url_slug" in error_msg:
             attempted_slug = (
                 request.ical_url_slug if request.ical_url_slug else "unknown"
@@ -186,7 +190,9 @@ async def update_room(
             )
             detail = "Unexpected database conflict. Please try again."
         else:
-            detail = f"Database constraint violation: {error_msg}"
+            # Log the full error for debugging but don't expose to client
+            logger.error("Unexpected IntegrityError during room update: %s", error_msg)
+            detail = "Database constraint violation. Please try again."
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=detail,

@@ -399,6 +399,7 @@ class TestPatchRoom:
                 json={"ical_url_slug": "invalid--slug"},
             )
             assert response.status_code == 422
+            assert "consecutive hyphens" in response.json()["detail"][0]["msg"]
 
             # Test slug that is only hyphens
             response = await client.patch(
@@ -406,3 +407,8 @@ class TestPatchRoom:
                 json={"ical_url_slug": "---"},
             )
             assert response.status_code == 422
+            # Only hyphens fails the start/end alphanumeric requirement
+            assert (
+                "start and end with a letter or number"
+                in response.json()["detail"][0]["msg"]
+            )
