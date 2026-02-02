@@ -148,6 +148,13 @@ class SyncService:
                 )
                 if room:
                     room_id = room.id
+                else:
+                    logger.warning(
+                        "Room %s not found for booking %s - booking will not "
+                        "appear in room calendars. Sync rooms first.",
+                        cloudbeds_room_id,
+                        cloudbeds_booking_id,
+                    )
 
             # Create Booking entity for upsert
             booking = Booking(
