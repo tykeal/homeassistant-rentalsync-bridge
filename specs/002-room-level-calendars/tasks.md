@@ -87,16 +87,16 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Tests for Phase 4
 
-- [ ] T023 [P] Create unit tests for room-level iCal generation in tests/unit/test_ical_generator.py
-- [ ] T024 [P] Create integration tests for room iCal endpoint in tests/integration/test_room_ical.py
+- [X] T023 [P] Create unit tests for room-level iCal generation in tests/unit/test_ical_generator.py
+- [X] T024 [P] Create integration tests for room iCal endpoint in tests/integration/test_room_ical.py
 
 ### Implementation for Phase 4
 
-- [ ] T025 Update iCal generator to accept room_id and filter bookings by room in src/services/ical_generator.py
-- [ ] T026 Add GET /ical/{listing_slug}/{room_slug}.ics endpoint in src/api/ical.py
-- [ ] T027 Remove property-level iCal endpoint GET /ical/{slug}.ics from src/api/ical.py
-- [ ] T028 Update booking repository get_confirmed_for_listing to optionally filter by room_id in src/repositories/booking_repository.py
-- [ ] T029 Update iCal cache to use room-level keys in src/services/calendar_cache.py
+- [X] T025 Update iCal generator to accept room_id and filter bookings by room in src/services/ical_generator.py
+- [X] T026 Add GET /ical/{listing_slug}/{room_slug}.ics endpoint in src/api/ical.py
+- [X] T027 Remove property-level iCal endpoint GET /ical/{slug}.ics from src/api/ical.py
+- [X] T028 Update booking repository get_confirmed_for_listing to optionally filter by room_id in src/repositories/booking_repository.py
+- [X] T029 Update iCal cache to use room-level keys in src/services/calendar_cache.py
 
 **Checkpoint**: Room-level iCal URLs work, property-level removed, tests pass
 
