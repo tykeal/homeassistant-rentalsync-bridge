@@ -831,12 +831,22 @@ async function syncListing(id, button) {
 }
 
 // Custom Fields Functions
+let availableFields = {}; // Store available fields for dropdown
+let configuredFields = []; // Store currently configured fields
+
 async function openCustomFields(listingId) {
     currentListingId = listingId;
 
     try {
-        const data = await fetchAPI(`/api/listings/${listingId}/custom-fields`);
-        renderCustomFields(data.fields);
+        // Fetch both configured fields and available fields
+        const [fieldsData, availableData] = await Promise.all([
+            fetchAPI(`/api/listings/${listingId}/custom-fields`),
+            fetchAPI(`/api/listings/${listingId}/available-custom-fields`)
+        ]);
+
+        availableFields = availableData.available_fields;
+        configuredFields = fieldsData.fields;
+        renderCustomFields(configuredFields);
         elements.customFieldsModal.classList.remove('hidden');
     } catch (error) {
         alert(`Failed to load custom fields: ${error.message}`);
@@ -851,7 +861,7 @@ function renderCustomFields(fields) {
 
     const html = fields.map((field, index) => `
         <div class="field-item" data-index="${index}">
-            <input type="text" placeholder="Field name" value="${escapeHtml(field.field_name)}" data-field="field_name">
+            <input type="text" readonly value="${escapeHtml(field.field_name)}" data-field="field_name" style="background-color: #f5f5f5;">
             <input type="text" placeholder="Display label" value="${escapeHtml(field.display_label)}" data-field="display_label">
             <label class="toggle-switch" style="flex-shrink: 0;">
                 <input type="checkbox" ${field.enabled ? 'checked' : ''} data-field="enabled">
@@ -867,8 +877,28 @@ function renderCustomFields(fields) {
 function addField() {
     const fieldItem = document.createElement('div');
     fieldItem.className = 'field-item';
+
+    // Get list of already configured field names
+    const configuredFieldNames = Array.from(
+        elements.customFieldsList.querySelectorAll('[data-field="field_name"]')
+    ).map(input => input.value).filter(Boolean);
+
+    // Filter available fields to only show unconfigured ones
+    const unconfiguredFields = Object.entries(availableFields).filter(
+        ([fieldName, _]) => !configuredFieldNames.includes(fieldName)
+    );
+
+    // Create dropdown options
+    const options = unconfiguredFields.map(
+        ([fieldName, displayLabel]) =>
+            `<option value="${escapeHtml(fieldName)}">${escapeHtml(displayLabel)}</option>`
+    ).join('');
+
     fieldItem.innerHTML = `
-        <input type="text" placeholder="Field name" data-field="field_name">
+        <select data-field="field_name" onchange="populateDisplayLabel(this)">
+            <option value="">Select field...</option>
+            ${options}
+        </select>
         <input type="text" placeholder="Display label" data-field="display_label">
         <label class="toggle-switch" style="flex-shrink: 0;">
             <input type="checkbox" checked data-field="enabled">
@@ -877,6 +907,21 @@ function addField() {
         <button class="remove-btn" onclick="this.parentElement.remove()">&times;</button>
     `;
     elements.customFieldsList.appendChild(fieldItem);
+}
+
+// Populate display label when field is selected from dropdown
+function populateDisplayLabel(selectElement) {
+    const fieldName = selectElement.value;
+    if (!fieldName) return;
+
+    const displayLabel = availableFields[fieldName];
+    if (displayLabel) {
+        const fieldItem = selectElement.parentElement;
+        const displayLabelInput = fieldItem.querySelector('[data-field="display_label"]');
+        if (displayLabelInput && !displayLabelInput.value) {
+            displayLabelInput.value = displayLabel;
+        }
+    }
 }
 
 function removeField(index) {
