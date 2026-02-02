@@ -171,11 +171,20 @@ async def update_room(
         # Check which constraint was violated for accurate error message
         error_msg = str(err.orig) if err.orig else str(err)
         if "uq_room_listing_slug" in error_msg or "ical_url_slug" in error_msg:
-            detail = "Slug already in use by another room (conflict during update)"
+            attempted_slug = (
+                request.ical_url_slug if request.ical_url_slug else "unknown"
+            )
+            detail = f"Slug '{attempted_slug}' is already in use by another room"
         elif (
             "uq_room_listing_cloudbeds" in error_msg or "cloudbeds_room_id" in error_msg
         ):
-            detail = "Cloudbeds room ID conflict"
+            # This shouldn't happen during normal updates since we don't modify
+            # cloudbeds_room_id. Log for debugging and provide generic message.
+            logger.error(
+                "Unexpected cloudbeds_room_id conflict during room update: %s",
+                error_msg,
+            )
+            detail = "Unexpected database conflict. Please try again."
         else:
             detail = f"Database constraint violation: {error_msg}"
         raise HTTPException(
