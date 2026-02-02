@@ -310,7 +310,13 @@ class CloudbedsService:
                     msg = f"API returned error: {data}"
                     raise CloudbedsServiceError(msg)
 
-                rooms: list[dict[str, Any]] = data.get("data", [])
+                # Response structure: {"data": [{"propertyID": "...", "rooms": [...]}]}
+                # Extract rooms from the nested structure
+                rooms: list[dict[str, Any]] = []
+                properties_data = data.get("data", [])
+                for prop in properties_data:
+                    if isinstance(prop, dict) and "rooms" in prop:
+                        rooms.extend(prop["rooms"])
                 logger.info("Fetched %d rooms for property %s", len(rooms), property_id)
                 return rooms
 
