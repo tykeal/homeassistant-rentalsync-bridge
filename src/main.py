@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.api import admin, custom_fields, health, ical, listings, oauth, status
+from src.api import admin, custom_fields, health, ical, listings, oauth, rooms, status
 from src.config import get_settings
 from src.database import get_session_factory
 from src.middleware.auth import AuthenticationMiddleware
@@ -88,6 +88,7 @@ def create_app() -> FastAPI:
     app.include_router(custom_fields.router)
     app.include_router(listings.router)
     app.include_router(oauth.router)
+    app.include_router(rooms.router)
     app.include_router(status.router)
 
     return app
