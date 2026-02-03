@@ -831,13 +831,14 @@ async function syncListing(id, button) {
 }
 
 // Custom Fields Functions
-// Modal state is encapsulated to prevent issues with concurrent modal operations
+// Modal state is encapsulated to prevent issues with concurrent modal operations.
+// Note: availableFields is used for dropdown population and label suggestions.
+// The DOM is the authoritative source of truth for configured fields - saveCustomFields
+// reads directly from DOM elements rather than maintaining a separate data structure.
 const customFieldsModal = {
     availableFields: {},
-    configuredFields: [],
     reset() {
         this.availableFields = {};
-        this.configuredFields = [];
     }
 };
 
@@ -853,8 +854,7 @@ async function openCustomFields(listingId) {
         ]);
 
         customFieldsModal.availableFields = availableData.available_fields;
-        customFieldsModal.configuredFields = fieldsData.fields;
-        renderCustomFields(customFieldsModal.configuredFields);
+        renderCustomFields(fieldsData.fields);
         elements.customFieldsModal.classList.remove('hidden');
     } catch (error) {
         alert(`Failed to load custom fields: ${error.message}`);
