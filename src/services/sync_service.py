@@ -350,6 +350,9 @@ class SyncService:
             guest_name = f"{first} {last}".strip() or None
 
         # Extract phone last 4 - prefer mobile (guestCellPhone), fallback to generic
+        # Note: phone_last4 is stored in two places:
+        # 1. booking.guest_phone_last4 - direct attribute for legacy/default display
+        # 2. booking.custom_data["guest_phone_last4"] - for custom field configuration
         phone = reservation.get("guestCellPhone") or reservation.get("guestPhone")
         phone_last4 = CloudbedsService.extract_phone_last4(phone)
 
