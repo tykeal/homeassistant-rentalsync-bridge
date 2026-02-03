@@ -91,12 +91,13 @@ class SyncService:
             return counts
 
         except CloudbedsServiceError as e:
-            # Update sync error status and commit before re-raising
-            # This ensures the error is persisted even when the exception
-            # causes the outer session handler to rollback
+            # Update sync error status using a nested transaction (savepoint)
+            # This ensures the error is persisted without affecting other
+            # uncommitted changes in the caller's transaction
             error_msg = str(e)
-            listing.last_sync_error = error_msg
-            listing.last_sync_at = datetime.now(UTC)
+            async with self._session.begin_nested():
+                listing.last_sync_error = error_msg
+                listing.last_sync_at = datetime.now(UTC)
             await self._session.commit()
             logger.error(
                 "Sync failed for listing %s: %s",
