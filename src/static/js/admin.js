@@ -831,11 +831,19 @@ async function syncListing(id, button) {
 }
 
 // Custom Fields Functions
-let availableFields = {}; // Store available fields for dropdown
-let configuredFields = []; // Store currently configured fields
+// Modal state is encapsulated to prevent issues with concurrent modal operations
+const customFieldsModal = {
+    availableFields: {},
+    configuredFields: [],
+    reset() {
+        this.availableFields = {};
+        this.configuredFields = [];
+    }
+};
 
 async function openCustomFields(listingId) {
     currentListingId = listingId;
+    customFieldsModal.reset();
 
     try {
         // Fetch both configured fields and available fields
@@ -844,9 +852,9 @@ async function openCustomFields(listingId) {
             fetchAPI(`/api/listings/${listingId}/available-custom-fields`)
         ]);
 
-        availableFields = availableData.available_fields;
-        configuredFields = fieldsData.fields;
-        renderCustomFields(configuredFields);
+        customFieldsModal.availableFields = availableData.available_fields;
+        customFieldsModal.configuredFields = fieldsData.fields;
+        renderCustomFields(customFieldsModal.configuredFields);
         elements.customFieldsModal.classList.remove('hidden');
     } catch (error) {
         alert(`Failed to load custom fields: ${error.message}`);
@@ -904,7 +912,7 @@ function handleFieldSelection(selectElement) {
     const fieldName = selectElement.value;
     if (!fieldName) return;
 
-    const displayLabel = availableFields[fieldName];
+    const displayLabel = customFieldsModal.availableFields[fieldName];
     if (displayLabel) {
         const fieldItem = selectElement.closest('.field-item');
         const displayLabelInput = fieldItem.querySelector('[data-field="display_label"]');
@@ -924,7 +932,7 @@ function addField() {
     ).map(input => input.value).filter(Boolean);
 
     // Filter available fields to only show unconfigured ones
-    const unconfiguredFields = Object.entries(availableFields).filter(
+    const unconfiguredFields = Object.entries(customFieldsModal.availableFields).filter(
         ([fieldName, _]) => !configuredFieldNames.includes(fieldName)
     );
 
