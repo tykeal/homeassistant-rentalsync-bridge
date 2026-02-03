@@ -5,8 +5,10 @@
 import logging
 from datetime import UTC, datetime
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from src.database import get_session_factory
 from src.models.booking import Booking
 from src.models.listing import Listing
 from src.models.oauth_credential import OAuthCredential
@@ -38,15 +40,19 @@ class SyncService:
         self,
         session: AsyncSession,
         calendar_cache: CalendarCache | None = None,
+        session_factory: "async_sessionmaker[AsyncSession] | None" = None,
     ) -> None:
         """Initialize SyncService.
 
         Args:
             session: Async database session.
             calendar_cache: Optional calendar cache to invalidate on sync.
+            session_factory: Optional session factory for error persistence.
+                           If not provided, uses the global factory.
         """
         self._session = session
         self._calendar_cache = calendar_cache
+        self._session_factory = session_factory
         self._booking_repo = BookingRepository(session)
         self._room_repo = RoomRepository(session)
 
@@ -91,20 +97,35 @@ class SyncService:
             return counts
 
         except CloudbedsServiceError as e:
-            # Update sync error status using a nested transaction (savepoint)
-            # This ensures the error is persisted without affecting other
-            # uncommitted changes in the caller's transaction
+            # Update sync error status using a separate session to avoid
+            # affecting any pending changes in the caller's transaction
             error_msg = str(e)
-            async with self._session.begin_nested():
-                listing.last_sync_error = error_msg
-                listing.last_sync_at = datetime.now(UTC)
-            await self._session.commit()
+            await self._persist_sync_error(listing.id, error_msg)
             logger.error(
                 "Sync failed for listing %s: %s",
                 listing.cloudbeds_id,
                 error_msg,
             )
             raise SyncServiceError(error_msg) from e
+
+    async def _persist_sync_error(self, listing_id: int, error_msg: str) -> None:
+        """Persist sync error status using a separate session.
+
+        Uses a dedicated session to ensure error status is persisted
+        even if the main session is rolled back.
+
+        Args:
+            listing_id: ID of the listing to update.
+            error_msg: Error message to store.
+        """
+        factory = self._session_factory or get_session_factory()
+        async with factory() as session:
+            await session.execute(
+                update(Listing)
+                .where(Listing.id == listing_id)
+                .values(last_sync_error=error_msg, last_sync_at=datetime.now(UTC))
+            )
+            await session.commit()
 
     async def _process_reservations(
         self,

@@ -45,6 +45,16 @@ async def sync_session(sync_engine) -> AsyncGenerator[AsyncSession]:
 
 
 @pytest.fixture
+def sync_session_factory(sync_engine):
+    """Create test session factory."""
+    return async_sessionmaker(
+        sync_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
+
+@pytest.fixture
 def test_listing(sync_session):
     """Create test listing."""
     listing = Listing(
@@ -258,7 +268,7 @@ class TestSyncService:
 
     @pytest.mark.asyncio
     async def test_sync_handles_api_error(
-        self, sync_session, test_listing, test_credential
+        self, sync_session, sync_session_factory, test_listing, test_credential
     ):
         """Test sync raises error on API failure."""
         sync_session.add(test_listing)
@@ -275,7 +285,7 @@ class TestSyncService:
             )
             mock_cloudbeds_class.return_value = mock_cloudbeds
 
-            service = SyncService(sync_session)
+            service = SyncService(sync_session, session_factory=sync_session_factory)
             with pytest.raises(SyncServiceError):
                 await service.sync_listing(test_listing, test_credential)
 
@@ -588,7 +598,7 @@ class TestSyncStatusTracking:
 
     @pytest.mark.asyncio
     async def test_sync_updates_last_sync_error_on_failure(
-        self, sync_session, test_credential
+        self, sync_session, sync_session_factory, test_credential
     ):
         """Test that last_sync_error is set and persisted on failed sync."""
         from src.services.cloudbeds_service import CloudbedsServiceError
@@ -618,7 +628,7 @@ class TestSyncStatusTracking:
             )
             mock_cloudbeds_class.return_value = mock_cloudbeds
 
-            service = SyncService(sync_session)
+            service = SyncService(sync_session, session_factory=sync_session_factory)
             with pytest.raises(SyncServiceError):
                 await service.sync_listing(listing, test_credential)
 
