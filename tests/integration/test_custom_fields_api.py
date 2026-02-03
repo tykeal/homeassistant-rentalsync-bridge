@@ -272,6 +272,9 @@ class TestUpdateCustomFields:
         detail = response.json()["detail"]
         assert "Invalid field_name" in detail
         assert "invalid_field_name" in detail
+        # Verify error message includes valid field names
+        assert "Must be one of:" in detail
+        assert "guest_phone_last4" in detail  # One of the valid fields
 
     @pytest.mark.asyncio
     async def test_update_fields_not_found(self, fields_app):
