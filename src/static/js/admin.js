@@ -933,7 +933,7 @@ function addField() {
 
     // Filter available fields to only show unconfigured ones
     const unconfiguredFields = Object.entries(customFieldsModal.availableFields).filter(
-        ([fieldName, _]) => !configuredFieldNames.includes(fieldName)
+        ([fieldName, /* displayLabel - unused in filter */]) => !configuredFieldNames.includes(fieldName)
     );
 
     // Create dropdown options
