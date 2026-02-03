@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from src.database import Base
 from src.models.booking import Booking
@@ -41,6 +42,16 @@ async def sync_session(sync_engine) -> AsyncGenerator[AsyncSession]:
     )
     async with session_factory() as session:
         yield session
+
+
+@pytest.fixture
+def sync_session_factory(sync_engine):
+    """Create test session factory."""
+    return async_sessionmaker(
+        sync_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
 
 
 @pytest.fixture
@@ -257,7 +268,7 @@ class TestSyncService:
 
     @pytest.mark.asyncio
     async def test_sync_handles_api_error(
-        self, sync_session, test_listing, test_credential
+        self, sync_session, sync_session_factory, test_listing, test_credential
     ):
         """Test sync raises error on API failure."""
         sync_session.add(test_listing)
@@ -274,7 +285,7 @@ class TestSyncService:
             )
             mock_cloudbeds_class.return_value = mock_cloudbeds
 
-            service = SyncService(sync_session)
+            service = SyncService(sync_session, session_factory=sync_session_factory)
             with pytest.raises(SyncServiceError):
                 await service.sync_listing(test_listing, test_credential)
 
@@ -302,10 +313,32 @@ class TestExtractBookingData:
         assert result["guest_name"] == "Jane Doe"
 
     def test_extract_phone_last4(self, service):
-        """Test extracting phone last 4."""
+        """Test extracting phone last 4 from generic phone."""
         reservation = {"guestPhone": "+1 (555) 123-4567"}
         result = service._extract_booking_data(reservation)
 
+        assert result["guest_phone_last4"] == "4567"
+
+    def test_extract_phone_last4_prefers_mobile(self, service):
+        """Test that mobile phone (guestCellPhone) is preferred over generic."""
+        reservation = {
+            "guestPhone": "+1 (555) 123-4567",
+            "guestCellPhone": "+1 (555) 987-6543",
+        }
+        result = service._extract_booking_data(reservation)
+
+        # Should use mobile phone's last 4 digits
+        assert result["guest_phone_last4"] == "6543"
+
+    def test_extract_phone_last4_falls_back_to_generic(self, service):
+        """Test fallback to generic phone when mobile is empty."""
+        reservation = {
+            "guestPhone": "+1 (555) 123-4567",
+            "guestCellPhone": "",
+        }
+        result = service._extract_booking_data(reservation)
+
+        # Should fall back to generic phone
         assert result["guest_phone_last4"] == "4567"
 
     def test_extract_status_normalization(self, service):
@@ -565,9 +598,9 @@ class TestSyncStatusTracking:
 
     @pytest.mark.asyncio
     async def test_sync_updates_last_sync_error_on_failure(
-        self, sync_session, test_credential
+        self, sync_session, sync_session_factory, test_credential
     ):
-        """Test that last_sync_error is set on failed sync."""
+        """Test that last_sync_error is set and persisted on failed sync."""
         from src.services.cloudbeds_service import CloudbedsServiceError
 
         listing = Listing(
@@ -582,6 +615,7 @@ class TestSyncStatusTracking:
         sync_session.add(listing)
         await sync_session.commit()
         await sync_session.refresh(listing)
+        listing_id = listing.id
 
         assert listing.last_sync_error is None
 
@@ -594,13 +628,18 @@ class TestSyncStatusTracking:
             )
             mock_cloudbeds_class.return_value = mock_cloudbeds
 
-            service = SyncService(sync_session)
+            service = SyncService(sync_session, session_factory=sync_session_factory)
             with pytest.raises(SyncServiceError):
                 await service.sync_listing(listing, test_credential)
 
-        # last_sync_error should be set
-        assert listing.last_sync_error == "API rate limit exceeded"
-        assert listing.last_sync_at is not None
+        # Verify error status is persisted by re-querying from database
+        sync_session.expire_all()
+        result = await sync_session.execute(
+            select(Listing).where(Listing.id == listing_id)
+        )
+        refreshed_listing = result.scalar_one()
+        assert refreshed_listing.last_sync_error == "API rate limit exceeded"
+        assert refreshed_listing.last_sync_at is not None
 
 
 class TestBookingChangeDetection:

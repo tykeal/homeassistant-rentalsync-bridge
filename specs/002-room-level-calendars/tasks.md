@@ -125,19 +125,19 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Tests for Phase 6
 
-- [ ] T036 [P] Add unit tests for guest_phone_last4 field in tests/unit/test_custom_field_repository.py
-- [ ] T037 [P] Add unit tests for available-custom-fields endpoint in tests/unit/test_custom_fields_api.py
-- [ ] T038 [P] Add unit tests for guest_phone_last4 in iCal output in tests/unit/test_ical_generator.py
+- [X] T036 [P] Add unit tests for guest_phone_last4 field in tests/unit/test_custom_field_repository.py
+- [X] T037 [P] Add unit tests for available-custom-fields endpoint in tests/unit/test_custom_fields_api.py
+- [X] T038 [P] Add unit tests for guest_phone_last4 in iCal output in tests/unit/test_ical_generator.py
 
 ### Implementation for Phase 6
 
-- [ ] T039 Add guest_phone_last4 to AVAILABLE_FIELDS in src/repositories/custom_field_repository.py
-- [ ] T040 Add guest_phone_last4 as default field in create_defaults_for_listing() in src/repositories/custom_field_repository.py
-- [ ] T041 Update iCal generator to format guest_phone_last4 as "Phone Number (Last 4 Digits): XXXX" in src/services/ical_generator.py
-- [ ] T042 Create GET /api/listings/{id}/available-custom-fields endpoint in src/api/custom_fields.py
-- [ ] T043 Update admin UI custom fields modal to use dropdown for field selection in src/static/js/admin.js
-- [ ] T044 Filter dropdown to show only unconfigured fields in src/static/js/admin.js
-- [ ] T045 Auto-populate display label from AVAILABLE_FIELDS when field selected in src/static/js/admin.js
+- [X] T039 Add guest_phone_last4 to AVAILABLE_FIELDS in src/repositories/custom_field_repository.py
+- [X] T040 Add guest_phone_last4 as default field in create_defaults_for_listing() in src/repositories/custom_field_repository.py
+- [X] T041 Update iCal generator to format guest_phone_last4 as "Phone Number (Last 4 Digits): XXXX" in src/services/ical_generator.py
+- [X] T042 Create GET /api/listings/{id}/available-custom-fields endpoint in src/api/custom_fields.py
+- [X] T043 Update admin UI custom fields modal to use dropdown for field selection in src/static/js/admin.js
+- [X] T044 Filter dropdown to show only unconfigured fields in src/static/js/admin.js
+- [X] T045 Auto-populate display label from AVAILABLE_FIELDS when field selected in src/static/js/admin.js
 
 **Checkpoint**: New field works in iCal, dropdown shows available fields only
 

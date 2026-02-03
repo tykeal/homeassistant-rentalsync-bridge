@@ -831,12 +831,30 @@ async function syncListing(id, button) {
 }
 
 // Custom Fields Functions
+// Modal state is encapsulated to prevent issues with concurrent modal operations.
+// Note: availableFields is used for dropdown population and label suggestions.
+// The DOM is the authoritative source of truth for configured fields - saveCustomFields
+// reads directly from DOM elements rather than maintaining a separate data structure.
+const customFieldsModal = {
+    availableFields: {},
+    reset() {
+        this.availableFields = {};
+    }
+};
+
 async function openCustomFields(listingId) {
     currentListingId = listingId;
+    customFieldsModal.reset();
 
     try {
-        const data = await fetchAPI(`/api/listings/${listingId}/custom-fields`);
-        renderCustomFields(data.fields);
+        // Fetch both configured fields and available fields
+        const [fieldsData, availableData] = await Promise.all([
+            fetchAPI(`/api/listings/${listingId}/custom-fields`),
+            fetchAPI(`/api/listings/${listingId}/available-custom-fields`)
+        ]);
+
+        customFieldsModal.availableFields = availableData.available_fields;
+        renderCustomFields(fieldsData.fields);
         elements.customFieldsModal.classList.remove('hidden');
     } catch (error) {
         alert(`Failed to load custom fields: ${error.message}`);
@@ -851,39 +869,92 @@ function renderCustomFields(fields) {
 
     const html = fields.map((field, index) => `
         <div class="field-item" data-index="${index}">
-            <input type="text" placeholder="Field name" value="${escapeHtml(field.field_name)}" data-field="field_name">
+            <input type="text" readonly value="${escapeHtml(field.field_name)}" data-field="field_name" class="readonly-field">
             <input type="text" placeholder="Display label" value="${escapeHtml(field.display_label)}" data-field="display_label">
-            <label class="toggle-switch" style="flex-shrink: 0;">
+            <label class="toggle-switch">
                 <input type="checkbox" ${field.enabled ? 'checked' : ''} data-field="enabled">
                 <span class="toggle-slider"></span>
             </label>
-            <button class="remove-btn" onclick="removeField(${index})">&times;</button>
+            <button class="remove-btn" data-action="remove-field">&times;</button>
         </div>
     `).join('');
 
     elements.customFieldsList.innerHTML = html;
 }
 
+/**
+ * Initialize event delegation for custom fields list.
+ * Called once during page initialization.
+ */
+function initCustomFieldsEventDelegation() {
+    elements.customFieldsList.addEventListener('click', (e) => {
+        // Handle remove button clicks
+        const removeBtn = e.target.closest('[data-action="remove-field"]');
+        if (removeBtn) {
+            removeBtn.closest('.field-item').remove();
+        }
+    });
+
+    elements.customFieldsList.addEventListener('change', (e) => {
+        // Handle field selection changes
+        const select = e.target.closest('select[data-field="field_name"]');
+        if (select) {
+            handleFieldSelection(select);
+        }
+    });
+}
+
+/**
+ * Handle field selection from dropdown.
+ * @param {HTMLSelectElement} selectElement - The select element
+ */
+function handleFieldSelection(selectElement) {
+    const fieldName = selectElement.value;
+    if (!fieldName) return;
+
+    const displayLabel = customFieldsModal.availableFields[fieldName];
+    if (displayLabel) {
+        const fieldItem = selectElement.closest('.field-item');
+        const displayLabelInput = fieldItem.querySelector('[data-field="display_label"]');
+        if (displayLabelInput && !displayLabelInput.value) {
+            displayLabelInput.value = displayLabel;
+        }
+    }
+}
+
 function addField() {
     const fieldItem = document.createElement('div');
     fieldItem.className = 'field-item';
+
+    // Get list of already configured field names
+    const configuredFieldNames = Array.from(
+        elements.customFieldsList.querySelectorAll('[data-field="field_name"]')
+    ).map(input => input.value).filter(Boolean);
+
+    // Filter available fields to only show unconfigured ones
+    const unconfiguredFields = Object.entries(customFieldsModal.availableFields).filter(
+        ([fieldName, /* displayLabel - unused in filter */]) => !configuredFieldNames.includes(fieldName)
+    );
+
+    // Create dropdown options
+    const options = unconfiguredFields.map(
+        ([fieldName, displayLabel]) =>
+            `<option value="${escapeHtml(fieldName)}">${escapeHtml(displayLabel)}</option>`
+    ).join('');
+
     fieldItem.innerHTML = `
-        <input type="text" placeholder="Field name" data-field="field_name">
+        <select data-field="field_name">
+            <option value="">Select field...</option>
+            ${options}
+        </select>
         <input type="text" placeholder="Display label" data-field="display_label">
-        <label class="toggle-switch" style="flex-shrink: 0;">
+        <label class="toggle-switch">
             <input type="checkbox" checked data-field="enabled">
             <span class="toggle-slider"></span>
         </label>
-        <button class="remove-btn" onclick="this.parentElement.remove()">&times;</button>
+        <button class="remove-btn" data-action="remove-field">&times;</button>
     `;
     elements.customFieldsList.appendChild(fieldItem);
-}
-
-function removeField(index) {
-    const fieldItems = elements.customFieldsList.querySelectorAll('.field-item');
-    if (fieldItems[index]) {
-        fieldItems[index].remove();
-    }
 }
 
 async function saveCustomFields() {
@@ -970,6 +1041,7 @@ function initEventListeners() {
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     initEventListeners();
+    initCustomFieldsEventDelegation();
     loadStatus();
     loadOAuthStatus();
     loadListings();
@@ -984,4 +1056,3 @@ document.addEventListener('DOMContentLoaded', () => {
 // Export functions for inline handlers
 window.openCustomFields = openCustomFields;
 window.toggleListing = toggleListing;
-window.removeField = removeField;

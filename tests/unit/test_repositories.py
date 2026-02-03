@@ -464,3 +464,39 @@ class TestCustomFieldRepository:
         assert "booking_notes" in fields
         assert "arrival_time" in fields
         assert len(fields) == len(AVAILABLE_FIELDS)
+
+    def test_guest_phone_last4_in_available_fields(self):
+        """Test guest_phone_last4 is in AVAILABLE_FIELDS dictionary."""
+        fields = CustomFieldRepository.get_available_fields()
+
+        assert "guest_phone_last4" in fields
+        assert fields["guest_phone_last4"] == "Guest Phone (Last 4 Digits)"
+
+    @pytest.mark.asyncio
+    async def test_create_guest_phone_last4_field(self, async_session):
+        """Test creating guest_phone_last4 custom field."""
+        listing_repo = ListingRepository(async_session)
+        listing = await listing_repo.create(
+            Listing(
+                cloudbeds_id="phone_test",
+                name="Phone Test",
+                enabled=True,
+                sync_enabled=True,
+                timezone="UTC",
+            )
+        )
+
+        repo = CustomFieldRepository(async_session)
+        field = CustomField(
+            listing_id=listing.id,
+            field_name="guest_phone_last4",
+            display_label="Guest Phone (Last 4 Digits)",
+            enabled=True,
+            sort_order=0,
+        )
+
+        created = await repo.create(field)
+
+        assert created.id is not None
+        assert created.field_name == "guest_phone_last4"
+        assert created.display_label == "Guest Phone (Last 4 Digits)"

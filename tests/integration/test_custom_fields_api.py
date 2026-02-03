@@ -171,13 +171,13 @@ class TestUpdateCustomFields:
                 json={
                     "fields": [
                         {
-                            "field_name": "guestName",
-                            "display_label": "Guest",
+                            "field_name": "booking_notes",
+                            "display_label": "Notes",
                             "enabled": True,
                         },
                         {
-                            "field_name": "notes",
-                            "display_label": "Notes",
+                            "field_name": "arrival_time",
+                            "display_label": "Arrival",
                             "enabled": False,
                         },
                     ]
@@ -204,8 +204,8 @@ class TestUpdateCustomFields:
 
         field = CustomField(
             listing_id=listing.id,
-            field_name="guestName",
-            display_label="Guest",
+            field_name="booking_notes",
+            display_label="Notes",
             enabled=True,
             sort_order=0,
         )
@@ -221,8 +221,8 @@ class TestUpdateCustomFields:
                 json={
                     "fields": [
                         {
-                            "field_name": "guestName",
-                            "display_label": "Guest Name Updated",
+                            "field_name": "booking_notes",
+                            "display_label": "Booking Notes Updated",
                             "enabled": False,
                         },
                     ]
@@ -232,8 +232,49 @@ class TestUpdateCustomFields:
         assert response.status_code == 200
         data = response.json()
         assert len(data["fields"]) == 1
-        assert data["fields"][0]["display_label"] == "Guest Name Updated"
+        assert data["fields"][0]["display_label"] == "Booking Notes Updated"
         assert data["fields"][0]["enabled"] is False
+
+    @pytest.mark.asyncio
+    async def test_update_fields_rejects_invalid_field_name(
+        self, fields_app, fields_session
+    ):
+        """Test that invalid field names are rejected."""
+        listing = Listing(
+            cloudbeds_id="PROP1",
+            name="Test Property",
+            ical_url_slug="test-property",
+            enabled=True,
+            sync_enabled=True,
+        )
+        fields_session.add(listing)
+        await fields_session.commit()
+        await fields_session.refresh(listing)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=fields_app), base_url="http://test"
+        ) as client:
+            response = await client.put(
+                f"/api/listings/{listing.id}/custom-fields",
+                headers={"Authorization": "Bearer test"},
+                json={
+                    "fields": [
+                        {
+                            "field_name": "invalid_field_name",
+                            "display_label": "Invalid",
+                            "enabled": True,
+                        },
+                    ]
+                },
+            )
+
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert "Invalid field_name" in detail
+        assert "invalid_field_name" in detail
+        # Verify error message includes valid field names
+        assert "Must be one of:" in detail
+        assert "guest_phone_last4" in detail  # One of the valid fields
 
     @pytest.mark.asyncio
     async def test_update_fields_not_found(self, fields_app):

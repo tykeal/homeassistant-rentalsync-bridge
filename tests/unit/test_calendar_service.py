@@ -215,6 +215,80 @@ class TestCalendarService:
 
         assert "VIP guest" in ical
 
+    def test_generate_ical_with_guest_phone_last4_custom_field(
+        self, service, listing, booking
+    ):
+        """Test iCal includes guest_phone_last4 as custom field with new format."""
+        # Create guest_phone_last4 as a custom field
+        custom_fields = [
+            CustomField(
+                listing_id=listing.id,
+                field_name="guest_phone_last4",
+                display_label="Phone Number (Last 4 Digits)",
+                enabled=True,
+                sort_order=0,
+            )
+        ]
+        custom_fields[0].id = 1
+
+        # Add guest_phone_last4 to booking's custom_data
+        booking.custom_data = {"guest_phone_last4": "1234"}
+
+        ical = service.generate_ical(listing, [booking], custom_fields)
+
+        # Should use the new format from custom field display label
+        assert "Phone Number (Last 4 Digits): 1234" in ical
+        # Should NOT show the old format when it's a custom field
+        assert "Phone (last 4): 1234" not in ical
+
+    def test_generate_ical_without_guest_phone_last4_custom_field(
+        self, service, listing, booking
+    ):
+        """Test iCal shows phone from booking when not a custom field."""
+        # Don't include guest_phone_last4 as a custom field
+        custom_fields = [
+            CustomField(
+                listing_id=listing.id,
+                field_name="booking_notes",
+                display_label="Notes",
+                enabled=True,
+                sort_order=0,
+            )
+        ]
+        custom_fields[0].id = 1
+
+        ical = service.generate_ical(listing, [booking], custom_fields)
+
+        # Should still show phone from booking.guest_phone_last4 attribute
+        # Using current format (this will change in T041)
+        assert "Phone (last 4): 1234" in ical
+
+    def test_guest_phone_last4_not_duplicated_when_custom_field(
+        self, service, listing, booking
+    ):
+        """Test guest_phone_last4 is not shown twice when configured as custom field."""
+        # Create guest_phone_last4 as a custom field
+        custom_fields = [
+            CustomField(
+                listing_id=listing.id,
+                field_name="guest_phone_last4",
+                display_label="Phone Number (Last 4 Digits)",
+                enabled=True,
+                sort_order=0,
+            )
+        ]
+        custom_fields[0].id = 1
+
+        # Add guest_phone_last4 to booking's custom_data
+        booking.custom_data = {"guest_phone_last4": "5678"}
+
+        ical = service.generate_ical(listing, [booking], custom_fields)
+
+        # Count occurrences of the phone number
+        phone_count = ical.count("5678")
+        # Should appear only once (as custom field, not from booking attribute)
+        assert phone_count == 1, f"Phone number appears {phone_count} times, expected 1"
+
     def test_generate_ical_calendar_metadata(self, service, listing, booking):
         """Test calendar metadata is set correctly."""
         ical = service.generate_ical(listing, [booking])

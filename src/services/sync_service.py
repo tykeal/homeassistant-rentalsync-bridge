@@ -5,8 +5,10 @@
 import logging
 from datetime import UTC, datetime
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from src.database import get_session_factory
 from src.models.booking import Booking
 from src.models.listing import Listing
 from src.models.oauth_credential import OAuthCredential
@@ -38,15 +40,19 @@ class SyncService:
         self,
         session: AsyncSession,
         calendar_cache: CalendarCache | None = None,
+        session_factory: "async_sessionmaker[AsyncSession] | None" = None,
     ) -> None:
         """Initialize SyncService.
 
         Args:
             session: Async database session.
             calendar_cache: Optional calendar cache to invalidate on sync.
+            session_factory: Optional session factory for error persistence.
+                           If not provided, uses the global factory.
         """
         self._session = session
         self._calendar_cache = calendar_cache
+        self._session_factory = session_factory
         self._booking_repo = BookingRepository(session)
         self._room_repo = RoomRepository(session)
 
@@ -91,16 +97,35 @@ class SyncService:
             return counts
 
         except CloudbedsServiceError as e:
-            # Update sync error status
+            # Update sync error status using a separate session to avoid
+            # affecting any pending changes in the caller's transaction
             error_msg = str(e)
-            listing.last_sync_error = error_msg
-            listing.last_sync_at = datetime.now(UTC)
+            await self._persist_sync_error(listing.id, error_msg)
             logger.error(
                 "Sync failed for listing %s: %s",
                 listing.cloudbeds_id,
                 error_msg,
             )
             raise SyncServiceError(error_msg) from e
+
+    async def _persist_sync_error(self, listing_id: int, error_msg: str) -> None:
+        """Persist sync error status using a separate session.
+
+        Uses a dedicated session to ensure error status is persisted
+        even if the main session is rolled back.
+
+        Args:
+            listing_id: ID of the listing to update.
+            error_msg: Error message to store.
+        """
+        factory = self._session_factory or get_session_factory()
+        async with factory() as session:
+            await session.execute(
+                update(Listing)
+                .where(Listing.id == listing_id)
+                .values(last_sync_error=error_msg, last_sync_at=datetime.now(UTC))
+            )
+            await session.commit()
 
     async def _process_reservations(
         self,
@@ -324,8 +349,8 @@ class SyncService:
             last = reservation.get("guestLastName", "")
             guest_name = f"{first} {last}".strip() or None
 
-        # Extract phone last 4
-        phone = reservation.get("guestPhone") or reservation.get("guestCellPhone")
+        # Extract phone last 4 - prefer mobile (guestCellPhone), fallback to generic
+        phone = reservation.get("guestCellPhone") or reservation.get("guestPhone")
         phone_last4 = CloudbedsService.extract_phone_last4(phone)
 
         # Parse dates
@@ -337,30 +362,71 @@ class SyncService:
         if status not in ("confirmed", "checked_in", "checked_out", "cancelled"):
             status = "confirmed"
 
-        # Extract ALL room IDs from reservation (T020)
-        # Prefer nested rooms array (authoritative), fallback to top-level roomID
+        # Extract room IDs
+        cloudbeds_room_ids = self._extract_room_ids(reservation)
+
+        # Build custom data from available fields
+        custom_data = self._extract_custom_data(reservation, phone_last4)
+
+        # Note: phone_last4 is stored in two places for different use cases:
+        # - guest_phone_last4: direct booking attribute for legacy/default iCal display
+        # - custom_data["guest_phone_last4"]: for configurable custom field output
+        #   (added in _extract_custom_data method)
+        return {
+            "guest_name": guest_name,
+            "guest_phone_last4": phone_last4,
+            "check_in_date": check_in,
+            "check_out_date": check_out,
+            "status": status,
+            "cloudbeds_room_ids": cloudbeds_room_ids,
+            "custom_data": custom_data if custom_data else None,
+        }
+
+    @staticmethod
+    def _extract_room_ids(reservation: dict) -> list[str]:
+        """Extract room IDs from Cloudbeds reservation.
+
+        Prefers nested rooms array (authoritative), falls back to top-level roomID.
+
+        Args:
+            reservation: Reservation dict from Cloudbeds API.
+
+        Returns:
+            List of room ID strings.
+        """
         cloudbeds_room_ids: list[str] = []
         seen_room_ids: set[str] = set()
         rooms = reservation.get("rooms", [])
+
         if rooms and isinstance(rooms, list):
-            # Extract room IDs from nested array (multi-room reservations)
             for room in rooms:
                 if isinstance(room, dict):
                     room_id = room.get("roomID") or room.get("roomId")
                     if room_id:
                         room_id_str = str(room_id)
-                        # Deduplicate room IDs to avoid double-processing
                         if room_id_str not in seen_room_ids:
                             seen_room_ids.add(room_id_str)
                             cloudbeds_room_ids.append(room_id_str)
+
         if not cloudbeds_room_ids:
-            # Fallback to top-level room ID (legacy single-room format)
             top_level_room_id = reservation.get("roomID") or reservation.get("roomId")
             if top_level_room_id:
                 cloudbeds_room_ids.append(str(top_level_room_id))
 
-        # Build custom data from available fields
-        custom_data = {}
+        return cloudbeds_room_ids
+
+    @staticmethod
+    def _extract_custom_data(reservation: dict, phone_last4: str | None) -> dict:
+        """Extract custom field data from Cloudbeds reservation.
+
+        Args:
+            reservation: Reservation dict from Cloudbeds API.
+            phone_last4: Extracted phone last 4 digits.
+
+        Returns:
+            Dict of custom field values.
+        """
+        custom_data: dict[str, str] = {}
         custom_field_mapping = {
             "booking_notes": ["notes", "bookingNotes"],
             "arrival_time": ["arrivalTime", "estimatedArrivalTime"],
@@ -377,15 +443,11 @@ class SyncService:
                     custom_data[field_name] = str(reservation[key])
                     break
 
-        return {
-            "guest_name": guest_name,
-            "guest_phone_last4": phone_last4,
-            "check_in_date": check_in,
-            "check_out_date": check_out,
-            "status": status,
-            "cloudbeds_room_ids": cloudbeds_room_ids,
-            "custom_data": custom_data if custom_data else None,
-        }
+        # Add guest_phone_last4 to custom_data for custom field display
+        if phone_last4:
+            custom_data["guest_phone_last4"] = phone_last4
+
+        return custom_data
 
     @staticmethod
     def _parse_date(date_str: str | None) -> datetime | None:
