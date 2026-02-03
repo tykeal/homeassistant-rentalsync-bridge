@@ -269,7 +269,9 @@ class TestUpdateCustomFields:
             )
 
         assert response.status_code == 400
-        assert "Invalid field_name" in response.json()["detail"]
+        detail = response.json()["detail"]
+        assert "Invalid field_name" in detail
+        assert "invalid_field_name" in detail
 
     @pytest.mark.asyncio
     async def test_update_fields_not_found(self, fields_app):
