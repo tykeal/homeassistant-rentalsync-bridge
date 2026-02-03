@@ -947,13 +947,6 @@ function addField() {
         <button class="remove-btn" data-action="remove-field">&times;</button>
     `;
     elements.customFieldsList.appendChild(fieldItem);
-
-    // Attach event handlers to the new field item
-    const removeBtn = fieldItem.querySelector('[data-action="remove-field"]');
-    removeBtn.addEventListener('click', () => fieldItem.remove());
-
-    const selectEl = fieldItem.querySelector('select[data-field="field_name"]');
-    selectEl.addEventListener('change', (e) => handleFieldSelection(e.target));
 }
 
 async function saveCustomFields() {
