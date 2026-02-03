@@ -867,11 +867,49 @@ function renderCustomFields(fields) {
                 <input type="checkbox" ${field.enabled ? 'checked' : ''} data-field="enabled">
                 <span class="toggle-slider"></span>
             </label>
-            <button class="remove-btn" onclick="this.parentElement.remove()">&times;</button>
+            <button class="remove-btn" data-action="remove-field">&times;</button>
         </div>
     `).join('');
 
     elements.customFieldsList.innerHTML = html;
+    attachFieldEventHandlers();
+}
+
+/**
+ * Attach event handlers to custom field items.
+ */
+function attachFieldEventHandlers() {
+    // Remove button handlers
+    elements.customFieldsList.querySelectorAll('[data-action="remove-field"]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.target.closest('.field-item').remove();
+        });
+    });
+
+    // Field selection change handlers
+    elements.customFieldsList.querySelectorAll('select[data-field="field_name"]').forEach(select => {
+        select.addEventListener('change', (e) => {
+            handleFieldSelection(e.target);
+        });
+    });
+}
+
+/**
+ * Handle field selection from dropdown.
+ * @param {HTMLSelectElement} selectElement - The select element
+ */
+function handleFieldSelection(selectElement) {
+    const fieldName = selectElement.value;
+    if (!fieldName) return;
+
+    const displayLabel = availableFields[fieldName];
+    if (displayLabel) {
+        const fieldItem = selectElement.closest('.field-item');
+        const displayLabelInput = fieldItem.querySelector('[data-field="display_label"]');
+        if (displayLabelInput && !displayLabelInput.value) {
+            displayLabelInput.value = displayLabel;
+        }
+    }
 }
 
 function addField() {
@@ -895,7 +933,7 @@ function addField() {
     ).join('');
 
     fieldItem.innerHTML = `
-        <select data-field="field_name" onchange="populateDisplayLabel(this)">
+        <select data-field="field_name">
             <option value="">Select field...</option>
             ${options}
         </select>
@@ -904,24 +942,16 @@ function addField() {
             <input type="checkbox" checked data-field="enabled">
             <span class="toggle-slider"></span>
         </label>
-        <button class="remove-btn" onclick="this.parentElement.remove()">&times;</button>
+        <button class="remove-btn" data-action="remove-field">&times;</button>
     `;
     elements.customFieldsList.appendChild(fieldItem);
-}
 
-// Populate display label when field is selected from dropdown
-function populateDisplayLabel(selectElement) {
-    const fieldName = selectElement.value;
-    if (!fieldName) return;
+    // Attach event handlers to the new field item
+    const removeBtn = fieldItem.querySelector('[data-action="remove-field"]');
+    removeBtn.addEventListener('click', () => fieldItem.remove());
 
-    const displayLabel = availableFields[fieldName];
-    if (displayLabel) {
-        const fieldItem = selectElement.parentElement;
-        const displayLabelInput = fieldItem.querySelector('[data-field="display_label"]');
-        if (displayLabelInput && !displayLabelInput.value) {
-            displayLabelInput.value = displayLabel;
-        }
-    }
+    const selectEl = fieldItem.querySelector('select[data-field="field_name"]');
+    selectEl.addEventListener('change', (e) => handleFieldSelection(e.target));
 }
 
 async function saveCustomFields() {
