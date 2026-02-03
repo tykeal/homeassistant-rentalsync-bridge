@@ -861,9 +861,9 @@ function renderCustomFields(fields) {
 
     const html = fields.map((field, index) => `
         <div class="field-item" data-index="${index}">
-            <input type="text" readonly value="${escapeHtml(field.field_name)}" data-field="field_name" style="background-color: #f5f5f5;">
+            <input type="text" readonly value="${escapeHtml(field.field_name)}" data-field="field_name" class="readonly-field">
             <input type="text" placeholder="Display label" value="${escapeHtml(field.display_label)}" data-field="display_label">
-            <label class="toggle-switch" style="flex-shrink: 0;">
+            <label class="toggle-switch">
                 <input type="checkbox" ${field.enabled ? 'checked' : ''} data-field="enabled">
                 <span class="toggle-slider"></span>
             </label>
@@ -872,25 +872,27 @@ function renderCustomFields(fields) {
     `).join('');
 
     elements.customFieldsList.innerHTML = html;
-    attachFieldEventHandlers();
 }
 
 /**
- * Attach event handlers to custom field items.
+ * Initialize event delegation for custom fields list.
+ * Called once during page initialization.
  */
-function attachFieldEventHandlers() {
-    // Remove button handlers
-    elements.customFieldsList.querySelectorAll('[data-action="remove-field"]').forEach(btn => {
-        btn.addEventListener('click', () => {
-            btn.closest('.field-item').remove();
-        });
+function initCustomFieldsEventDelegation() {
+    elements.customFieldsList.addEventListener('click', (e) => {
+        // Handle remove button clicks
+        const removeBtn = e.target.closest('[data-action="remove-field"]');
+        if (removeBtn) {
+            removeBtn.closest('.field-item').remove();
+        }
     });
 
-    // Field selection change handlers
-    elements.customFieldsList.querySelectorAll('select[data-field="field_name"]').forEach(select => {
-        select.addEventListener('change', () => {
+    elements.customFieldsList.addEventListener('change', (e) => {
+        // Handle field selection changes
+        const select = e.target.closest('select[data-field="field_name"]');
+        if (select) {
             handleFieldSelection(select);
-        });
+        }
     });
 }
 
@@ -1038,6 +1040,7 @@ function initEventListeners() {
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     initEventListeners();
+    initCustomFieldsEventDelegation();
     loadStatus();
     loadOAuthStatus();
     loadListings();
@@ -1052,4 +1055,3 @@ document.addEventListener('DOMContentLoaded', () => {
 // Export functions for inline handlers
 window.openCustomFields = openCustomFields;
 window.toggleListing = toggleListing;
-window.removeField = removeField;
