@@ -940,7 +940,7 @@ function addField() {
             ${options}
         </select>
         <input type="text" placeholder="Display label" data-field="display_label">
-        <label class="toggle-switch" style="flex-shrink: 0;">
+        <label class="toggle-switch">
             <input type="checkbox" checked data-field="enabled">
             <span class="toggle-slider"></span>
         </label>
