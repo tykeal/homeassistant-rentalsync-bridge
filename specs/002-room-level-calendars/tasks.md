@@ -149,19 +149,19 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Manual Testing
 
-- [ ] T046 **MANUAL** Test multi-room property sync from Cloudbeds
-- [ ] T047 **MANUAL** Test room iCal import to Airbnb calendar
-- [ ] T048 **MANUAL** Test custom fields dropdown workflow
-- [ ] T049 **MANUAL** Test guest_phone_last4 appears in iCal output
-- [ ] T050 **MANUAL** Verify room enable/disable affects iCal generation
+- [X] T046 **MANUAL** Test multi-room property sync from Cloudbeds (PARTIAL - rooms import correctly, multi-room reservations not yet tested)
+- [X] T047 **MANUAL** Test room iCal import to Airbnb calendar (PASSED)
+- [X] T048 **MANUAL** Test custom fields dropdown workflow (PASSED)
+- [ ] T049 **MANUAL** Test guest_phone_last4 appears in iCal output (SKIPPED - not yet tested)
+- [X] T050 **MANUAL** Verify room enable/disable affects iCal generation (PASSED)
 
 ### Documentation & Cleanup
 
-- [ ] T051 [P] Update README.md with room-level calendar information
-- [ ] T052 [P] Update docs/api-usage.md with new room endpoints
-- [ ] T053 [P] Update quickstart.md with room sync workflow
-- [ ] T054 Run full test suite and verify all tests pass
-- [ ] T055 Final code review and cleanup
+- [X] T051 [P] Update README.md with room-level calendar information
+- [X] T052 [P] Update docs/api-usage.md with new room endpoints
+- [X] T053 [P] Update quickstart.md with room sync workflow
+- [X] T054 Run full test suite and verify all tests pass
+- [X] T055 Final code review and cleanup
 
 **Checkpoint**: All manual tests pass, documentation complete, ready for PR
 
