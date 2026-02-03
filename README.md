@@ -17,6 +17,7 @@ subscription.
 ## Features
 
 - Export Cloudbeds bookings as RFC 5545 compliant iCal feeds
+- **Room-level calendar feeds** for multi-unit properties
 - Web-based administrative interface
 - Home Assistant addon integration with Ingress authentication
 - Multi-listing support with independent configurations
@@ -32,6 +33,28 @@ subscription.
   installation guide
 - [API Usage](docs/api-usage.md) - REST API reference
 - [Deployment Guide](docs/deployment.md) - Production deployment and HTTPS
+
+## Room-Level Calendars
+
+RentalSync Bridge exports **room-level** iCal feeds for properties with multiple rooms or units. Each room gets its own calendar URL, allowing you to sync individual room availability to Airbnb and other OTAs.
+
+### How It Works
+
+1. **Sync Rooms**: Click "Sync Rooms from Cloudbeds" in the admin UI to import all rooms for your properties
+2. **Get Room URLs**: Expand a listing to see all rooms with their individual iCal URLs
+3. **Subscribe**: Copy each room's iCal URL and add it to Airbnb, Google Calendar, or other calendar services
+4. **Manage**: Enable/disable rooms individually and customize their URL slugs
+
+### URL Format
+
+Room-level iCal URLs follow the pattern:
+```
+/ical/{listing-slug}/{room-slug}.ics
+```
+
+Example: `/ical/beach-house/master-bedroom.ics`
+
+**Note**: Property-level calendar URLs (`/ical/{listing-slug}.ics`) are no longer supported. Each room must be configured separately for multi-room properties.
 
 ## Quick Start
 
