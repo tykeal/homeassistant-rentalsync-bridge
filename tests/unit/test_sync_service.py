@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from src.database import Base
 from src.models.booking import Booking
@@ -589,7 +590,7 @@ class TestSyncStatusTracking:
     async def test_sync_updates_last_sync_error_on_failure(
         self, sync_session, test_credential
     ):
-        """Test that last_sync_error is set on failed sync."""
+        """Test that last_sync_error is set and persisted on failed sync."""
         from src.services.cloudbeds_service import CloudbedsServiceError
 
         listing = Listing(
@@ -604,6 +605,7 @@ class TestSyncStatusTracking:
         sync_session.add(listing)
         await sync_session.commit()
         await sync_session.refresh(listing)
+        listing_id = listing.id
 
         assert listing.last_sync_error is None
 
@@ -620,9 +622,14 @@ class TestSyncStatusTracking:
             with pytest.raises(SyncServiceError):
                 await service.sync_listing(listing, test_credential)
 
-        # last_sync_error should be set
-        assert listing.last_sync_error == "API rate limit exceeded"
-        assert listing.last_sync_at is not None
+        # Verify error status is persisted by re-querying from database
+        sync_session.expire_all()
+        result = await sync_session.execute(
+            select(Listing).where(Listing.id == listing_id)
+        )
+        refreshed_listing = result.scalar_one()
+        assert refreshed_listing.last_sync_error == "API rate limit exceeded"
+        assert refreshed_listing.last_sync_at is not None
 
 
 class TestBookingChangeDetection:

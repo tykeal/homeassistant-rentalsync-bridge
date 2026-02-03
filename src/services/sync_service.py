@@ -91,10 +91,13 @@ class SyncService:
             return counts
 
         except CloudbedsServiceError as e:
-            # Update sync error status
+            # Update sync error status and commit before re-raising
+            # This ensures the error is persisted even when the exception
+            # causes the outer session handler to rollback
             error_msg = str(e)
             listing.last_sync_error = error_msg
             listing.last_sync_at = datetime.now(UTC)
+            await self._session.commit()
             logger.error(
                 "Sync failed for listing %s: %s",
                 listing.cloudbeds_id,
