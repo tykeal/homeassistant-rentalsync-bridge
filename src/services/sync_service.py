@@ -371,7 +371,7 @@ class SyncService:
         # Note: phone_last4 is stored in two places for different use cases:
         # - guest_phone_last4: direct booking attribute for legacy/default iCal display
         # - custom_data["guest_phone_last4"]: for configurable custom field output
-        #   (added in _extract_custom_data at line ~445)
+        #   (added in _extract_custom_data method)
         return {
             "guest_name": guest_name,
             "guest_phone_last4": phone_last4,
