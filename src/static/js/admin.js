@@ -881,15 +881,15 @@ function renderCustomFields(fields) {
 function attachFieldEventHandlers() {
     // Remove button handlers
     elements.customFieldsList.querySelectorAll('[data-action="remove-field"]').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.target.closest('.field-item').remove();
+        btn.addEventListener('click', () => {
+            btn.closest('.field-item').remove();
         });
     });
 
     // Field selection change handlers
     elements.customFieldsList.querySelectorAll('select[data-field="field_name"]').forEach(select => {
-        select.addEventListener('change', (e) => {
-            handleFieldSelection(e.target);
+        select.addEventListener('change', () => {
+            handleFieldSelection(select);
         });
     });
 }
