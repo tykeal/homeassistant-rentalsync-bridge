@@ -194,7 +194,7 @@ async def update_room(
             logger.error("Unexpected IntegrityError during room update: %s", error_msg)
             detail = "Database constraint violation. Please try again."
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=detail,
         ) from err
     await db.refresh(room)
