@@ -318,7 +318,7 @@ class TestExtractBookingData:
         assert result["guest_name"] == "Jane Doe"
 
     def test_extract_phone_last4(self, service):
-        """Test extracting phone last 4 from guestList."""
+        """Test extracting phone last 4 from nested guestList structure."""
         reservation = {
             "guestID": "guest1",
             "guestList": {
