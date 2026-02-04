@@ -157,7 +157,7 @@ docker run -d \
   -p 8099:8099 \
   -v ./data:/data \
   -e STANDALONE_MODE=true \
-  ghcr.io/tykeal/rentalsync-bridge:local
+  rentalsync-bridge:local
 ```
 
 ### Project Structure
