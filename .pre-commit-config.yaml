@@ -43,10 +43,10 @@ repos:
     rev: 6ce4b4fc349b8881cbce40207dac3bf78824a88e  # frozen: v0.14.11
     hooks:
       - id: ruff
-        files: ^(scripts|tests|custom_components|addon|src)/.+\.py$
+        files: ^rentalsync-bridge/(scripts|tests|src)/.+\.py$
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
-        files: ^(scripts|tests|custom_components|addon|src)/.+\.py$
+        files: ^rentalsync-bridge/(scripts|tests|src)/.+\.py$
 
   - repo: https://github.com/adrienverge/yamllint.git
     rev: 79a6b2b1392eaf49cdd32ac4f14be1a809bbd8f7  # frozen: v1.37.1
@@ -57,7 +57,7 @@ repos:
     rev: a6268877efd41a21197445cc04cbf28f9c6facba # frozen: 1.7.0
     hooks:
       - id: interrogate
-        files: ^(scripts|tests|custom_components|addon|src)/.+\.py$
+        files: ^rentalsync-bridge/(scripts|tests|src)/.+\.py$
         args:
           - -vv
           - --fail-under=100
@@ -71,7 +71,7 @@ repos:
     rev: a66e98df7b4aeeb3724184b332785976d062b92e  # frozen: v1.19.1
     hooks:
       - id: mypy
-        files: ^(scripts|tests|custom_components|addon|src)/.+\.py$
+        files: ^rentalsync-bridge/src/.+\.py$
         args: [--config-file=.mypy.ini]
         additional_dependencies:
           - types-pytz
@@ -86,6 +86,9 @@ repos:
           - argon2-cffi>=25.1.0
           - sqlalchemy[asyncio]
           - cryptography
+          - icalendar
+          - apscheduler
+          - aiosqlite
 
   - repo: https://github.com/fsfe/reuse-tool
     rev: 9fabf9eb815a57aac116b435e8346c200cdb8604  # frozen: v6.2.0
