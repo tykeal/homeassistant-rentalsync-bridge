@@ -88,7 +88,7 @@ async def get_system_status(
 
     # Get last sync time from most recent booking fetch
     last_sync_result = await db.execute(select(func.max(Booking.last_fetched_at)))
-    last_sync_at = last_sync_result.scalar()
+    last_sync = last_sync_result.scalar()
 
     # Determine overall status
     if not oauth_configured:
@@ -107,7 +107,7 @@ async def get_system_status(
             "connected": oauth_connected,
         },
         "sync": {
-            "last_sync": last_sync_at,
+            "last_sync": last_sync,
             "is_running": False,  # TODO: Check scheduler status
         },
         "listings": {
