@@ -24,12 +24,17 @@ router = APIRouter(prefix="/api", tags=["Status"])
 APP_VERSION = "0.1.0"
 
 
+class ListingsStatus(BaseModel):
+    """Listings status information."""
+
+    enabled: int = Field(description="Number of enabled listings")
+    total: int = Field(description="Total number of listings")
+
+
 class SyncStatus(BaseModel):
     """Sync status information."""
 
-    last_sync_at: datetime | None = Field(
-        default=None, description="Last sync timestamp"
-    )
+    last_sync: datetime | None = Field(default=None, description="Last sync timestamp")
     is_running: bool = Field(default=False, description="Whether sync is running")
 
 
@@ -48,7 +53,7 @@ class StatusResponse(BaseModel):
     timestamp: datetime = Field(description="Current server time")
     oauth: OAuthStatus = Field(description="OAuth status")
     sync: SyncStatus = Field(description="Sync status")
-    listings_count: int = Field(description="Number of enabled listings")
+    listings: ListingsStatus = Field(description="Listings status")
     bookings_count: int = Field(description="Total number of bookings")
 
 
@@ -68,11 +73,14 @@ async def get_system_status(
     oauth_configured = credential is not None
     oauth_connected = credential is not None and not credential.is_token_expired()
 
-    # Get listings count
-    listings_result = await db.execute(
+    # Get listings counts (enabled and total)
+    enabled_result = await db.execute(
         select(func.count(Listing.id)).where(Listing.enabled == True)  # noqa: E712
     )
-    listings_count = listings_result.scalar() or 0
+    enabled_count = enabled_result.scalar() or 0
+
+    total_result = await db.execute(select(func.count(Listing.id)))
+    total_count = total_result.scalar() or 0
 
     # Get bookings count
     bookings_result = await db.execute(select(func.count(Booking.id)))
@@ -80,7 +88,7 @@ async def get_system_status(
 
     # Get last sync time from most recent booking fetch
     last_sync_result = await db.execute(select(func.max(Booking.last_fetched_at)))
-    last_sync_at = last_sync_result.scalar()
+    last_sync = last_sync_result.scalar()
 
     # Determine overall status
     if not oauth_configured:
@@ -99,9 +107,12 @@ async def get_system_status(
             "connected": oauth_connected,
         },
         "sync": {
-            "last_sync_at": last_sync_at,
+            "last_sync": last_sync,
             "is_running": False,  # TODO: Check scheduler status
         },
-        "listings_count": listings_count,
+        "listings": {
+            "enabled": enabled_count,
+            "total": total_count,
+        },
         "bookings_count": bookings_count,
     }

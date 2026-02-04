@@ -184,6 +184,13 @@ header .subtitle {
     cursor: not-allowed;
 }
 
+/* Button Groups */
+.button-group {
+    display: flex;
+    gap: 10px;
+    margin-top: 10px;
+}
+
 /* Bulk Actions */
 .bulk-actions {
     display: flex;

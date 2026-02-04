@@ -349,8 +349,23 @@ class SyncService:
             last = reservation.get("guestLastName", "")
             guest_name = f"{first} {last}".strip() or None
 
-        # Extract phone last 4 - prefer mobile (guestCellPhone), fallback to generic
-        phone = reservation.get("guestCellPhone") or reservation.get("guestPhone")
+        # Extract phone from guestList (requires includeGuestsDetails=true in API call)
+        # guestList is a dict keyed by guestID, not a list
+        phone = None
+        guest_list = reservation.get("guestList", {})
+        if guest_list and isinstance(guest_list, dict):
+            # Get primary guest by guestID from reservation, or first guest
+            primary_guest_id = reservation.get("guestID")
+            if primary_guest_id and primary_guest_id in guest_list:
+                guest = guest_list[primary_guest_id]
+            else:
+                # Fallback to first guest in the list
+                guest = next(iter(guest_list.values()), {})
+
+            if isinstance(guest, dict):
+                # Prefer mobile (guestCellPhone), fallback to generic (guestPhone)
+                phone = guest.get("guestCellPhone") or guest.get("guestPhone")
+
         phone_last4 = CloudbedsService.extract_phone_last4(phone)
 
         # Parse dates

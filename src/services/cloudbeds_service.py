@@ -235,6 +235,7 @@ class CloudbedsService:
                         "endDate": end_date.strftime("%Y-%m-%d"),
                         "status": "confirmed,checked_in,checked_out",
                         "includeAllRooms": "true",
+                        "includeGuestsDetails": "true",
                     },
                     timeout=30.0,
                 )

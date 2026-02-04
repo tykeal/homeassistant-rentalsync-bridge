@@ -73,6 +73,34 @@ GET /api/listings
 GET /api/listings/{id}
 ```
 
+**Response includes rooms:**
+```json
+{
+  "id": 1,
+  "cloudbeds_id": "203249",
+  "name": "Beach House",
+  "enabled": true,
+  "ical_url_slug": "beach-house",
+  "timezone": "America/New_York",
+  "sync_enabled": true,
+  "last_sync_at": "2026-01-31T12:00:00Z",
+  "last_sync_error": null,
+  "rooms": [
+    {
+      "id": 1,
+      "listing_id": 1,
+      "cloudbeds_room_id": "12345",
+      "room_name": "Master Bedroom",
+      "room_type_name": "Deluxe King",
+      "ical_url_slug": "master-bedroom",
+      "enabled": true,
+      "created_at": "2026-01-31T10:00:00Z",
+      "updated_at": "2026-01-31T10:00:00Z"
+    }
+  ]
+}
+```
+
 #### Update Listing
 
 ```http
@@ -92,7 +120,7 @@ Content-Type: application/json
 POST /api/listings/sync-properties
 ```
 
-Fetches all properties from Cloudbeds and creates/updates listings.
+Fetches all properties and their rooms from Cloudbeds and creates/updates listings and rooms.
 
 **Response:**
 ```json
@@ -120,20 +148,118 @@ Triggers immediate booking sync from Cloudbeds.
 }
 ```
 
-### iCal Feeds
+### Rooms
 
-#### Get iCal Calendar
+#### Get Rooms for Listing
 
 ```http
-GET /ical/{slug}.ics
+GET /api/listings/{id}/rooms
 ```
 
-Returns RFC 5545 compliant iCal calendar for the listing.
+Returns all rooms for a specific listing.
+
+**Response:**
+```json
+{
+  "rooms": [
+    {
+      "id": 1,
+      "listing_id": 1,
+      "cloudbeds_room_id": "12345",
+      "room_name": "Master Bedroom",
+      "room_type_name": "Deluxe King",
+      "ical_url_slug": "master-bedroom",
+      "enabled": true,
+      "created_at": "2026-01-31T10:00:00Z",
+      "updated_at": "2026-01-31T10:00:00Z"
+    },
+    {
+      "id": 2,
+      "listing_id": 1,
+      "cloudbeds_room_id": "12346",
+      "room_name": "Guest Room",
+      "room_type_name": "Queen",
+      "ical_url_slug": "guest-room",
+      "enabled": true,
+      "created_at": "2026-01-31T10:00:00Z",
+      "updated_at": "2026-01-31T10:00:00Z"
+    }
+  ]
+}
+```
+
+#### Get Single Room
+
+```http
+GET /api/rooms/{id}
+```
+
+**Response:**
+```json
+{
+  "id": 1,
+  "listing_id": 1,
+  "cloudbeds_room_id": "12345",
+  "room_name": "Master Bedroom",
+  "room_type_name": "Deluxe King",
+  "ical_url_slug": "master-bedroom",
+  "enabled": true,
+  "created_at": "2026-01-31T10:00:00Z",
+  "updated_at": "2026-01-31T10:00:00Z"
+}
+```
+
+#### Update Room
+
+```http
+PATCH /api/rooms/{id}
+Content-Type: application/json
+
+{
+  "enabled": false,
+  "ical_url_slug": "master-suite"
+}
+```
+
+**Fields:**
+- `enabled` (optional): Enable or disable room for iCal export
+- `ical_url_slug` (optional): Custom URL slug (lowercase letters, numbers, hyphens only)
+
+**Response:**
+```json
+{
+  "id": 1,
+  "listing_id": 1,
+  "cloudbeds_room_id": "12345",
+  "room_name": "Master Bedroom",
+  "room_type_name": "Deluxe King",
+  "ical_url_slug": "master-suite",
+  "enabled": false,
+  "created_at": "2026-01-31T10:00:00Z",
+  "updated_at": "2026-01-31T12:30:00Z"
+}
+```
+
+### iCal Feeds
+
+#### Get Room iCal Calendar
+
+```http
+GET /ical/{listing-slug}/{room-slug}.ics
+```
+
+Returns RFC 5545 compliant iCal calendar for a specific room.
+
+**Example:**
+```
+GET /ical/beach-house/master-bedroom.ics
+GET /ical/beach-house/guest-room.ics
+```
 
 **Headers:**
 ```
 Content-Type: text/calendar
-Content-Disposition: attachment; filename="beach-house.ics"
+Content-Disposition: attachment; filename="master-bedroom.ics"
 ```
 
 **Response Example:**
@@ -143,7 +269,7 @@ VERSION:2.0
 PRODID:-//RentalSync Bridge//rentalsync-bridge//EN
 CALSCALE:GREGORIAN
 METHOD:PUBLISH
-X-WR-CALNAME:Beach House
+X-WR-CALNAME:Beach House - Master Bedroom
 BEGIN:VEVENT
 UID:abc123@rentalsync-bridge
 DTSTART:20260201
@@ -155,7 +281,50 @@ END:VEVENT
 END:VCALENDAR
 ```
 
+**Note**: Property-level iCal URLs (`/ical/{slug}.ics`) are no longer supported and will return HTTP 410 Gone. Use room-level URLs for all calendar exports.
+
 ### Custom Fields
+
+#### Get Available Custom Fields
+
+```http
+GET /api/listings/{id}/available-custom-fields
+```
+
+Returns list of available custom fields that can be configured for a listing.
+
+**Response:**
+```json
+{
+  "available_fields": [
+    {
+      "field_name": "guest_name",
+      "default_label": "Guest Name",
+      "description": "Primary guest name"
+    },
+    {
+      "field_name": "guest_phone_last4",
+      "default_label": "Phone Number (Last 4 Digits)",
+      "description": "Last 4 digits of guest phone number"
+    },
+    {
+      "field_name": "num_guests",
+      "default_label": "Number of Guests",
+      "description": "Total guest count"
+    },
+    {
+      "field_name": "arrival_time",
+      "default_label": "Arrival Time",
+      "description": "Expected check-in time"
+    },
+    {
+      "field_name": "booking_notes",
+      "default_label": "Special Requests",
+      "description": "Guest notes and special requests"
+    }
+  ]
+}
+```
 
 #### List Custom Fields for Listing
 

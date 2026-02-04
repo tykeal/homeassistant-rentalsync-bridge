@@ -205,66 +205,143 @@ curl -X POST http://127.0.0.1:8099/api/oauth/configure \
 
 ## Testing the Application
 
-### 1. Enable a Listing for Export
+### 1. Sync Properties and Rooms from Cloudbeds
+
+```bash
+# Sync all properties and their rooms
+curl -X POST http://127.0.0.1:8099/api/listings/sync-properties
+```
+
+**Expected Response:**
+```json
+{
+  "message": "Synced 3 properties from Cloudbeds",
+  "synced_count": 3
+}
+```
+
+This command fetches:
+- All properties from your Cloudbeds account
+- All rooms for each property
+- Creates/updates listing and room records in the database
+
+### 2. View Rooms for a Listing
+
+```bash
+# Get all rooms for a specific listing
+curl http://127.0.0.1:8099/api/listings/1/rooms | jq
+```
+
+**Expected Response:**
+```json
+{
+  "rooms": [
+    {
+      "id": 1,
+      "listing_id": 1,
+      "cloudbeds_room_id": "12345",
+      "room_name": "Master Bedroom",
+      "room_type_name": "Deluxe King",
+      "ical_url_slug": "master-bedroom",
+      "enabled": true,
+      "created_at": "2026-01-31T10:00:00Z",
+      "updated_at": "2026-01-31T10:00:00Z"
+    },
+    {
+      "id": 2,
+      "listing_id": 1,
+      "cloudbeds_room_id": "12346",
+      "room_name": "Guest Room",
+      "room_type_name": "Queen",
+      "ical_url_slug": "guest-room",
+      "enabled": true,
+      "created_at": "2026-01-31T10:00:00Z",
+      "updated_at": "2026-01-31T10:00:00Z"
+    }
+  ]
+}
+```
+
+### 3. Configure Room Settings (Optional)
+
+```bash
+# Disable a room from iCal export
+curl -X PATCH http://127.0.0.1:8099/api/rooms/1 \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": false}'
+
+# Customize room URL slug
+curl -X PATCH http://127.0.0.1:8099/api/rooms/1 \
+  -H "Content-Type: application/json" \
+  -d '{"ical_url_slug": "master-suite"}'
+```
+
+### 4. Enable a Listing for Export
 
 ```bash
 # Get all available listings
 curl http://127.0.0.1:8099/api/listings
 
 # Enable a specific listing
-curl -X POST http://127.0.0.1:8099/api/listings/1/enable \
+curl -X PUT http://127.0.0.1:8099/api/listings/1 \
   -H "Content-Type: application/json" \
   -d '{
     "enabled": true,
-    "sync_enabled": true,
-    "custom_fields": [
-      {
-        "field_name": "guest_phone_last4",
-        "display_label": "Phone (Last 4)",
-        "enabled": true,
-        "sort_order": 0
-      },
-      {
-        "field_name": "booking_notes",
-        "display_label": "Special Requests",
-        "enabled": true,
-        "sort_order": 1
-      }
-    ]
+    "sync_enabled": true
   }'
 ```
 
-### 2. Trigger Manual Sync
+**Note**: Custom fields are configured separately through the `/api/listings/{id}/custom-fields` endpoint or the admin UI.
+
+### 5. Trigger Manual Sync
 
 ```bash
-# Sync a specific listing
+# Sync bookings for a specific listing
 curl -X POST http://127.0.0.1:8099/api/listings/1/sync
 ```
 
-### 3. Retrieve iCal Feed
+### 6. Retrieve Room iCal Feeds
 
 ```bash
-# Get iCal URL from listing details
-curl http://127.0.0.1:8099/api/listings/1 | jq -r '.ical_url'
+# Get listing details with rooms
+curl http://127.0.0.1:8099/api/listings/1 | jq
 
-# Download the iCal file
-curl http://127.0.0.1:8099/ical/your-listing-slug.ics -o calendar.ics
+# Download iCal feed for a specific room
+curl http://127.0.0.1:8099/ical/beach-house/master-bedroom.ics -o master-bedroom.ics
 
 # Verify iCal format
-cat calendar.ics
+cat master-bedroom.ics
 ```
 
-### 4. Import iCal into Google Calendar
+**Room-Level iCal URLs:**
+- Each room has its own iCal feed
+- URL format: `/ical/{listing-slug}/{room-slug}.ics`
+- Only enabled rooms will have accessible iCal feeds
+- Property-level URLs (e.g., `/ical/beach-house.ics`) are no longer supported
 
-1. Copy the iCal URL: `http://127.0.0.1:8099/ical/your-listing-slug.ics`
-2. Note: **Local URLs won't work with Google Calendar**. Use a service like ngrok for testing:
+### 7. Import iCal into Airbnb or Google Calendar
+
+1. Copy the room's iCal URL: `http://127.0.0.1:8099/ical/beach-house/master-bedroom.ics`
+2. **For Airbnb**:
+   - Go to your Airbnb listing settings
+   - Navigate to **Availability** → **Calendar Sync**
+   - Click **Import Calendar**
+   - Paste the iCal URL (use public URL, not localhost)
+   - Name it (e.g., "Cloudbeds - Master Bedroom")
+3. **For Google Calendar**:
+   - Note: **Local URLs won't work with Google Calendar**. Use a service like ngrok for testing:
    ```bash
    # Install ngrok: https://ngrok.com/
    ngrok http 8099
-   # Use the ngrok URL instead: https://abc123.ngrok.io/ical/your-listing-slug.ics
+   # Use the ngrok URL instead: https://abc123.ngrok.io/ical/beach-house/master-bedroom.ics
    ```
-3. In Google Calendar: **Settings** → **Add Calendar** → **From URL**
-4. Paste the ngrok URL and click **Add Calendar**
+   - In Google Calendar: **Settings** → **Add Calendar** → **From URL**
+   - Paste the ngrok URL and click **Add Calendar**
+
+**Multi-Room Properties**:
+- Each room must be added separately to your calendar service
+- Use the room-specific iCal URL for each room
+- Disabled rooms will not appear in calendar exports
 
 ---
 
@@ -361,26 +438,32 @@ uv run alembic upgrade head
 
 ### Issue: iCal feed returns 404
 
-**Error**: `Calendar not found or not enabled`
+**Error**: `Room not found`
 
 **Possible causes**:
-- Listing not enabled (`enabled=false`)
-- Incorrect iCal URL slug
-- No bookings synced yet
+- Room not enabled (`enabled=false`)
+- Listing not enabled
+- Incorrect iCal URL slug (listing or room)
+- No bookings synced yet for that room
 
 **Solution**:
 ```bash
-# Check listing status
+# Check listing and rooms status
 curl http://127.0.0.1:8099/api/listings/1
 
-# Verify enabled status
-# Expected: "enabled": true
+# Verify room enabled status
+curl http://127.0.0.1:8099/api/listings/1/rooms | jq '.rooms[] | {id, room_name, ical_url_slug, enabled}'
+
+# Enable a specific room if needed
+curl -X PATCH http://127.0.0.1:8099/api/rooms/1 \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": true}'
 
 # Trigger manual sync
 curl -X POST http://127.0.0.1:8099/api/listings/1/sync
 
-# Wait 10 seconds, then retry iCal URL
-curl http://127.0.0.1:8099/ical/your-listing-slug.ics
+# Wait 10 seconds, then retry room iCal URL
+curl http://127.0.0.1:8099/ical/beach-house/master-bedroom.ics
 ```
 
 ---
