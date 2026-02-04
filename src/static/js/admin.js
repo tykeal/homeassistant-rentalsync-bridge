@@ -23,6 +23,7 @@ const elements = {
     accessToken: document.getElementById('access-token'),
     refreshToken: document.getElementById('refresh-token'),
     refreshTokenBtn: document.getElementById('refresh-token-btn'),
+    replaceCredentialsBtn: document.getElementById('replace-credentials-btn'),
     syncInterval: document.getElementById('sync-interval'),
     saveSyncBtn: document.getElementById('save-sync-btn'),
     listingsContainer: document.getElementById('listings-container'),
@@ -164,6 +165,22 @@ async function refreshToken() {
         elements.refreshTokenBtn.disabled = false;
         elements.refreshTokenBtn.textContent = 'Refresh Token';
     }
+}
+
+/**
+ * Show the credentials form to allow replacing existing credentials.
+ */
+function showCredentialsForm() {
+    // Clear the form fields
+    elements.clientId.value = '';
+    elements.clientSecret.value = '';
+    elements.apiKey.value = '';
+    elements.accessToken.value = '';
+    elements.refreshToken.value = '';
+
+    // Show the form and hide the connected state
+    elements.oauthForm.classList.remove('hidden');
+    elements.oauthConnected.classList.add('hidden');
 }
 
 // Listings Functions
@@ -1021,6 +1038,7 @@ function validatePositiveInt(value) {
 function initEventListeners() {
     elements.oauthForm.addEventListener('submit', saveOAuthCredentials);
     elements.refreshTokenBtn.addEventListener('click', refreshToken);
+    elements.replaceCredentialsBtn.addEventListener('click', showCredentialsForm);
     elements.saveSyncBtn.addEventListener('click', saveSyncSettings);
     elements.syncPropertiesBtn.addEventListener('click', syncPropertiesFromCloudbeds);
     elements.addFieldBtn.addEventListener('click', addField);
