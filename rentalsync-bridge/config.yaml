@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+
+name: RentalSync Bridge
+version: "0.1.0"
+slug: rentalsync_bridge
+description: Cloudbeds to Airbnb iCal export bridge
+url: https://github.com/tykeal/homeassistant-rentalsync-bridge
+arch:
+  - aarch64
+  - amd64
+  - armv7
+startup: application
+boot: auto
+ingress: true
+ingress_port: 8099
+ingress_stream: false
+panel_icon: mdi:calendar-sync
+panel_title: RentalSync
+homeassistant_api: false
+auth_api: true
+hassio_api: false
+map:
+  - ssl:ro
+  - config:rw
+options:
+  cloudbeds_client_id: ""
+  cloudbeds_client_secret: ""
+  sync_interval_minutes: 5
+schema:
+  cloudbeds_client_id: str
+  cloudbeds_client_secret: password
+  sync_interval_minutes: int(1,60)
+ports:
+  8099/tcp: null
+ports_description:
+  8099/tcp: Web interface (not needed with Ingress)
+environment:
+  DATABASE_URL: sqlite:////data/rentalsync.db
+  STANDALONE_MODE: "false"
