@@ -20,7 +20,7 @@ Assistant add-on.
 
 1. Navigate to **Settings** → **Add-ons** → **Add-on Store**
 2. Click the menu (⋮) in the top right and select **Repositories**
-3. Add the repository URL: `https://github.com/tykeal/homeassistant-addons`
+3. Add the repository URL: `https://github.com/tykeal/homeassistant-rentalsync-bridge`
 4. Click **Add** and then **Close**
 
 ### 2. Install the Add-on

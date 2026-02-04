@@ -79,7 +79,7 @@ docker run -d \
 
 ### Home Assistant Add-on
 
-1. Add repository: `https://github.com/tykeal/homeassistant-addons`
+1. Add repository: `https://github.com/tykeal/homeassistant-rentalsync-bridge`
 2. Install "RentalSync Bridge" add-on
 3. Configure API key and start
 4. Access via Home Assistant sidebar
