@@ -253,10 +253,8 @@ Returns RFC 5545 compliant iCal calendar for a specific room.
 **Example:**
 ```
 GET /ical/beach-house/master-bedroom.ics
-GET /ical/beach-house/master-bedroom.ics
+GET /ical/beach-house/guest-room.ics
 ```
-
-Returns RFC 5545 compliant iCal calendar for the room.
 
 **Headers:**
 ```

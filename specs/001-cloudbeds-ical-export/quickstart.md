@@ -309,9 +309,6 @@ curl http://127.0.0.1:8099/api/listings/1 | jq
 # Download iCal feed for a specific room
 curl http://127.0.0.1:8099/ical/beach-house/master-bedroom.ics -o master-bedroom.ics
 
-# Download iCal feed for a specific room
-curl http://127.0.0.1:8099/ical/beach-house/master-bedroom.ics -o master-bedroom.ics
-
 # Verify iCal format
 cat master-bedroom.ics
 ```
@@ -321,8 +318,6 @@ cat master-bedroom.ics
 - URL format: `/ical/{listing-slug}/{room-slug}.ics`
 - Only enabled rooms will have accessible iCal feeds
 - Property-level URLs (e.g., `/ical/beach-house.ics`) are no longer supported
-
-### 7. Import iCal into Airbnb or Google Calendar
 
 ### 7. Import iCal into Airbnb or Google Calendar
 
