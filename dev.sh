@@ -44,6 +44,12 @@ case "${1:-run}" in
         echo "   Admin: http://localhost:8099/admin"
         echo ""
 
+        # Auto-run migrations before starting
+        echo "📦 Running database migrations..."
+        cd "${ADDON_DIR}"
+        uv run alembic upgrade head
+        echo ""
+
         UVICORN_ARGS=(
             "src.main:app"
             "--reload"
@@ -55,7 +61,6 @@ case "${1:-run}" in
             UVICORN_ARGS+=("--log-level" "debug")
         fi
 
-        cd "${ADDON_DIR}"
         exec uv run uvicorn "${UVICORN_ARGS[@]}" "$@"
         ;;
 
