@@ -149,10 +149,10 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Manual Testing
 
-- [X] T046 **MANUAL** Test multi-room property sync from Cloudbeds (PARTIAL - rooms import correctly, multi-room reservations not yet tested)
+- [X] T046 **MANUAL** Test multi-room property sync from Cloudbeds (PASSED)
 - [X] T047 **MANUAL** Test room iCal import to Airbnb calendar (PASSED)
 - [X] T048 **MANUAL** Test custom fields dropdown workflow (PASSED)
-- [ ] T049 **MANUAL** Test guest_phone_last4 appears in iCal output (SKIPPED - not yet tested)
+- [X] T049 **MANUAL** Test guest_phone_last4 appears in iCal output (PASSED - required API fix for includeGuestsDetails)
 - [X] T050 **MANUAL** Verify room enable/disable affects iCal generation (PASSED)
 
 ### Documentation & Cleanup
