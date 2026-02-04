@@ -110,8 +110,13 @@ class TestSyncService:
         mock_reservations = [
             {
                 "id": "RES001",
+                "guestID": "guest1",
                 "guestName": "John Smith",
-                "guestPhone": "555-123-4567",
+                "guestList": {
+                    "guest1": {
+                        "guestPhone": "555-123-4567",
+                    }
+                },
                 "startDate": "2026-03-01",
                 "endDate": "2026-03-05",
                 "status": "confirmed",
@@ -313,8 +318,15 @@ class TestExtractBookingData:
         assert result["guest_name"] == "Jane Doe"
 
     def test_extract_phone_last4(self, service):
-        """Test extracting phone last 4 from generic phone."""
-        reservation = {"guestPhone": "+1 (555) 123-4567"}
+        """Test extracting phone last 4 from guestList."""
+        reservation = {
+            "guestID": "guest1",
+            "guestList": {
+                "guest1": {
+                    "guestPhone": "+1 (555) 123-4567",
+                }
+            },
+        }
         result = service._extract_booking_data(reservation)
 
         assert result["guest_phone_last4"] == "4567"
@@ -322,8 +334,13 @@ class TestExtractBookingData:
     def test_extract_phone_last4_prefers_mobile(self, service):
         """Test that mobile phone (guestCellPhone) is preferred over generic."""
         reservation = {
-            "guestPhone": "+1 (555) 123-4567",
-            "guestCellPhone": "+1 (555) 987-6543",
+            "guestID": "guest1",
+            "guestList": {
+                "guest1": {
+                    "guestPhone": "+1 (555) 123-4567",
+                    "guestCellPhone": "+1 (555) 987-6543",
+                }
+            },
         }
         result = service._extract_booking_data(reservation)
 
@@ -333,8 +350,13 @@ class TestExtractBookingData:
     def test_extract_phone_last4_falls_back_to_generic(self, service):
         """Test fallback to generic phone when mobile is empty."""
         reservation = {
-            "guestPhone": "+1 (555) 123-4567",
-            "guestCellPhone": "",
+            "guestID": "guest1",
+            "guestList": {
+                "guest1": {
+                    "guestPhone": "+1 (555) 123-4567",
+                    "guestCellPhone": "",
+                }
+            },
         }
         result = service._extract_booking_data(reservation)
 
