@@ -84,7 +84,8 @@ class TestSystemStatus:
         assert data["status"] == "unconfigured"
         assert data["oauth"]["configured"] is False
         assert data["oauth"]["connected"] is False
-        assert data["listings_count"] == 0
+        assert data["listings"]["enabled"] == 0
+        assert data["listings"]["total"] == 0
         assert data["bookings_count"] == 0
 
     @pytest.mark.asyncio
@@ -135,7 +136,8 @@ class TestSystemStatus:
         assert data["status"] == "healthy"
         assert data["oauth"]["configured"] is True
         assert data["oauth"]["connected"] is True
-        assert data["listings_count"] == 1
+        assert data["listings"]["enabled"] == 1
+        assert data["listings"]["total"] == 1
         assert data["bookings_count"] == 1
 
     @pytest.mark.asyncio
