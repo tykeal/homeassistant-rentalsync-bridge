@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 
 from src.api import (
     admin,
@@ -94,7 +95,7 @@ def create_app() -> FastAPI:
     )
 
     # Include routers
-    app.include_router(admin.router)
+    app.include_router(admin.router, prefix="/admin")
     app.include_router(health.router)
     app.include_router(ical.router)
     app.include_router(custom_fields.router)
@@ -103,6 +104,12 @@ def create_app() -> FastAPI:
     app.include_router(rooms.router)
     app.include_router(settings_api.router)
     app.include_router(status.router)
+
+    # Redirect root to admin UI
+    @app.get("/", include_in_schema=False)
+    async def root_redirect() -> RedirectResponse:
+        """Redirect root to admin UI."""
+        return RedirectResponse(url="/admin/")
 
     return app
 

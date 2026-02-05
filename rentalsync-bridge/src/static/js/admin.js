@@ -5,7 +5,16 @@
  * RentalSync Bridge Admin UI JavaScript
  */
 
-const API_BASE = '';
+// Detect base path for API calls (handles HA ingress proxy)
+// The admin page is at /admin/, so we go up one level for /api/
+const getBasePath = () => {
+    const path = window.location.pathname;
+    // Remove /admin or /admin/ from the end to get the base
+    const base = path.replace(/\/admin\/?$/, '');
+    return base;
+};
+
+const API_BASE = getBasePath();
 
 // DOM Elements
 const elements = {
