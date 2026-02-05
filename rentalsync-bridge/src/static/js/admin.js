@@ -5,7 +5,22 @@
  * RentalSync Bridge Admin UI JavaScript
  */
 
-const API_BASE = '';
+// Detect base path for API calls (handles HA ingress proxy)
+// Extracts everything before /admin in the path
+const getBasePath = () => {
+    const path = window.location.pathname;
+    // Match /admin followed by / or end of string (not /administration etc.)
+    const match = path.match(/^(.*?)\/admin(?:\/|$)/);
+    if (!match) {
+        // If /admin not found, we're likely in development or direct access
+        // Log warning and return empty string (relative paths from current location)
+        console.warn(`RentalSync: /admin not found in path, using empty base path. Current path: ${path}`);
+        return '';
+    }
+    return match[1];
+};
+
+const API_BASE = getBasePath();
 
 // DOM Elements
 const elements = {
