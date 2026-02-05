@@ -1,6 +1,10 @@
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
 
+# Standalone/Podman Dockerfile
+# For running outside Home Assistant
+# Source files are in rentalsync-bridge/ subdirectory
+
 # Stage 1: Build stage
 FROM python:3.13-slim AS builder
 
@@ -9,15 +13,15 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-# Copy dependency files
-COPY pyproject.toml uv.lock ./
+# Copy dependency files from add-on folder
+COPY rentalsync-bridge/pyproject.toml rentalsync-bridge/uv.lock ./
 
 # Install dependencies only (no dev dependencies)
 RUN uv sync --frozen --no-dev --no-install-project
 
-# Copy source code
-COPY src/ ./src/
-COPY README.md ./
+# Copy source code from add-on folder
+COPY rentalsync-bridge/src/ ./src/
+COPY rentalsync-bridge/README.md ./
 
 # Install the project itself
 RUN uv sync --frozen --no-dev
@@ -38,12 +42,12 @@ COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/src /app/src
 COPY --from=builder /app/README.md /app/
 
-# Copy alembic for database migrations
-COPY alembic/ /app/alembic/
-COPY alembic.ini /app/
+# Copy alembic for database migrations from add-on folder
+COPY rentalsync-bridge/alembic/ /app/alembic/
+COPY rentalsync-bridge/alembic.ini /app/
 
-# Copy startup script
-COPY scripts/start.sh /app/scripts/start.sh
+# Copy startup script from add-on folder
+COPY rentalsync-bridge/scripts/start.sh /app/scripts/start.sh
 RUN chmod +x /app/scripts/start.sh
 
 # Set environment variables

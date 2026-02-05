@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Home Assistant Add-on Dockerfile
-# This builds on the HA base image and includes the RentalSync Bridge application
+# All source files are now within the add-on folder
 
 ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-python:3.13-alpine3.21
 FROM ${BUILD_FROM}
@@ -36,8 +36,8 @@ RUN uv sync --frozen --no-dev
 COPY alembic/ ./alembic/
 COPY alembic.ini ./
 
-# Copy startup script from add-on folder
-COPY rentalsync-bridge/run.sh /run.sh
+# Copy startup script
+COPY run.sh /run.sh
 RUN chmod +x /run.sh
 
 # Set environment variables

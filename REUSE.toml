@@ -2,15 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 version = 1
 
-# Annotate spec kit files
+# Annotate spec kit files and generated files
 [[annotations]]
 path = [
     ".github/prompts/*",
     ".specify/**",
-    "addon/uv.lock",
-    "uv.lock",
+    "rentalsync-bridge/uv.lock",
     "**.json",
-    "captive_portal.egg-info/**",
     ".github/agents/speckit**"
 ]
 SPDX-License-Identifier = "Apache-2.0"

@@ -138,47 +138,22 @@ uv sync --all-extras
 uv run pre-commit install
 
 # Run tests
-cd rentalsync-bridge
 uv run pytest
 
 # Run development server
 uv run uvicorn src.main:app --reload
 ```
 
-### Building Container from Source
-
-```bash
-# Build standalone container (from repo root)
-docker build -t rentalsync-bridge:local .
-
-# Run the locally built container
-docker run -d \
-  --name rentalsync-bridge \
-  -p 8099:8099 \
-  -v ./data:/data \
-  -e STANDALONE_MODE=true \
-  rentalsync-bridge:local
-```
-
 ### Project Structure
 
 ```
-rentalsync-bridge/    # Add-on folder (contains all source)
-├── src/              # Application source code
-│   ├── api/          # FastAPI route handlers
-│   ├── middleware/   # Authentication and error handling
-│   ├── models/       # SQLAlchemy ORM models
-│   ├── repositories/ # Database access layer
-│   ├── services/     # Business logic
-│   └── templates/    # HTML templates for admin UI
-├── tests/            # Test suite
-├── alembic/          # Database migrations
-├── scripts/          # Startup scripts
-├── Dockerfile        # HA add-on Dockerfile
-├── config.yaml       # HA add-on configuration
-└── pyproject.toml    # Python dependencies
-Dockerfile            # Standalone/Podman Dockerfile (at repo root)
-repository.json       # HA add-on repository metadata
+src/
+├── api/          # FastAPI route handlers
+├── middleware/   # Authentication and error handling
+├── models/       # SQLAlchemy ORM models
+├── repositories/ # Database access layer
+├── services/     # Business logic
+└── templates/    # HTML templates for admin UI
 ```
 
 ## License
