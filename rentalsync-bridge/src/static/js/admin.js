@@ -6,12 +6,15 @@
  */
 
 // Detect base path for API calls (handles HA ingress proxy)
-// The admin page is at /admin/, so we go up one level for /api/
+// Extracts everything before /admin in the path
 const getBasePath = () => {
     const path = window.location.pathname;
-    // Remove /admin or /admin/ from the end to get the base
-    const base = path.replace(/\/admin\/?$/, '');
-    return base;
+    // Find /admin in the path and return everything before it
+    const adminIndex = path.indexOf('/admin');
+    if (adminIndex === -1) {
+        return '';
+    }
+    return path.substring(0, adminIndex);
 };
 
 const API_BASE = getBasePath();
