@@ -22,6 +22,9 @@ const getBasePath = () => {
 
 const API_BASE = getBasePath();
 
+// iCal base URL - loaded from server settings (for HA internal network access)
+let ICAL_BASE_URL = window.location.origin;
+
 // DOM Elements
 const elements = {
     statusOverall: document.getElementById('status-overall'),
@@ -328,8 +331,8 @@ function toggleRoomsList(listingItem) {
  */
 async function copyRoomUrl(url, button) {
     try {
-        // Get the full URL including origin
-        const fullUrl = window.location.origin + url;
+        // Use iCal base URL (from server settings for HA mode, or browser origin)
+        const fullUrl = ICAL_BASE_URL + url;
 
         // Check if clipboard API is available (requires HTTPS or localhost)
         if (!navigator.clipboard) {
@@ -1027,6 +1030,10 @@ async function loadSyncSettings() {
         const settings = await fetchAPI('/api/settings');
         if (elements.syncInterval) {
             elements.syncInterval.value = settings.sync_interval_minutes;
+        }
+        // Update iCal base URL from server settings
+        if (settings.ical_base_url) {
+            ICAL_BASE_URL = settings.ical_base_url;
         }
     } catch (error) {
         console.error('Failed to load sync settings:', error);
