@@ -19,9 +19,6 @@ from src.services.cloudbeds_service import CloudbedsService, CloudbedsServiceErr
 
 logger = logging.getLogger(__name__)
 
-# Sync interval in seconds (5 minutes)
-SYNC_INTERVAL_SECONDS = 300
-
 
 class SyncServiceError(Exception):
     """Exception raised for sync service errors."""
