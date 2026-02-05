@@ -24,13 +24,9 @@ map:
   - ssl:ro
   - config:rw
 options:
-  cloudbeds_client_id: ""
-  cloudbeds_client_secret: ""
   sync_interval_minutes: 5
 schema:
-  cloudbeds_client_id: str
-  cloudbeds_client_secret: password
-  sync_interval_minutes: int(1,60)
+  sync_interval_minutes: int(1,60)?
 ports:
   8099/tcp: null
 ports_description:

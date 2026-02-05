@@ -8,20 +8,16 @@ set -e
 
 bashio::log.info "Starting RentalSync Bridge..."
 
-# Read options from Home Assistant addon config
-CONFIG_PATH=/data/options.json
-
-if [ -f "$CONFIG_PATH" ]; then
-    export CLOUDBEDS_CLIENT_ID=$(bashio::config 'cloudbeds_client_id')
-    export CLOUDBEDS_CLIENT_SECRET=$(bashio::config 'cloudbeds_client_secret')
-    export SYNC_INTERVAL_MINUTES=$(bashio::config 'sync_interval_minutes')
-fi
-
 # Set database path for Home Assistant data persistence
 export DATABASE_URL="${DATABASE_URL:-sqlite:////data/rentalsync.db}"
 
-# Disable standalone mode when running as addon
+# Disable standalone mode when running as addon (uses HA ingress auth)
 export STANDALONE_MODE="${STANDALONE_MODE:-false}"
+
+# Read sync interval from addon config if provided
+if bashio::config.has_value 'sync_interval_minutes'; then
+    export SYNC_INTERVAL_MINUTES=$(bashio::config 'sync_interval_minutes')
+fi
 
 # Generate or load encryption key for credential storage
 ENCRYPTION_KEY_FILE="/data/.encryption_key"
@@ -29,7 +25,12 @@ if [ -f "$ENCRYPTION_KEY_FILE" ]; then
     export ENCRYPTION_KEY=$(cat "$ENCRYPTION_KEY_FILE")
 else
     bashio::log.info "Generating new encryption key..."
-    export ENCRYPTION_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+    if ! ENCRYPTION_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" 2>&1); then
+        bashio::log.error "Failed to generate encryption key!"
+        bashio::log.error "Ensure cryptography module is installed correctly."
+        exit 1
+    fi
+    export ENCRYPTION_KEY
     echo "$ENCRYPTION_KEY" > "$ENCRYPTION_KEY_FILE"
     chmod 600 "$ENCRYPTION_KEY_FILE"
 fi
