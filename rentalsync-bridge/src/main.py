@@ -105,11 +105,11 @@ def create_app() -> FastAPI:
     app.include_router(settings_api.router)
     app.include_router(status.router)
 
-    # Redirect root to admin UI
+    # Redirect root to admin UI (relative path for HA ingress compatibility)
     @app.get("/", include_in_schema=False)
     async def root_redirect() -> RedirectResponse:
         """Redirect root to admin UI."""
-        return RedirectResponse(url="/admin/")
+        return RedirectResponse(url="admin/")
 
     return app
 
