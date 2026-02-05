@@ -14,9 +14,11 @@ from src.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-# Home Assistant Ingress authentication header
+# Home Assistant Ingress authentication headers
+# See: https://developers.home-assistant.io/docs/add-ons/security
 HA_INGRESS_HEADER = "X-Ingress-Path"
-HA_AUTHENTICATED_HEADER = "X-Hass-User-Id"
+HA_REMOTE_USER_ID = "X-Remote-User-Id"
+HA_REMOTE_USER_NAME = "X-Remote-User-Name"
 
 # Paths that don't require authentication
 PUBLIC_PATHS = frozenset(
@@ -80,8 +82,9 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             logger.debug("Standalone mode: bypassing authentication for %s", path)
             return await call_next(request)
 
-        # Check for Home Assistant authentication
-        user_id = request.headers.get(HA_AUTHENTICATED_HEADER)
+        # Check for Home Assistant authentication via ingress
+        # The supervisor adds X-Remote-User-Id header for authenticated users
+        user_id = request.headers.get(HA_REMOTE_USER_ID)
         if not user_id:
             logger.warning("Unauthorized access attempt to %s", path)
             return JSONResponse(
@@ -90,8 +93,9 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                 headers={"WWW-Authenticate": "Home Assistant"},
             )
 
-        # Store user ID in request state for later use
+        # Store user info in request state for later use
         request.state.user_id = user_id
+        request.state.user_name = request.headers.get(HA_REMOTE_USER_NAME)
         logger.debug("Authenticated request from user %s to %s", user_id, path)
 
         return await call_next(request)
