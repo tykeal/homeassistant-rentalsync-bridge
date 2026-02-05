@@ -14,10 +14,7 @@ const getBasePath = () => {
     if (adminIndex === -1) {
         // If /admin not found, we're likely in development or direct access
         // Log warning and return empty string (API paths are absolute from root)
-        console.warn(
-            'RentalSync: /admin not found in path, using root for API calls.',
-            'Current path:', path
-        );
+        console.warn(`RentalSync: /admin not found in path, using root for API calls. Current path: ${path}`);
         return '';
     }
     return path.substring(0, adminIndex);
