@@ -1,0 +1,44 @@
+#!/command/with-contenv bashio
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+
+# RentalSync Bridge service run script for s6-overlay
+
+set -e
+
+bashio::log.info "Starting RentalSync Bridge..."
+
+# Read options from Home Assistant addon config
+CONFIG_PATH=/data/options.json
+
+if [ -f "$CONFIG_PATH" ]; then
+    export CLOUDBEDS_CLIENT_ID=$(bashio::config 'cloudbeds_client_id')
+    export CLOUDBEDS_CLIENT_SECRET=$(bashio::config 'cloudbeds_client_secret')
+    export SYNC_INTERVAL_MINUTES=$(bashio::config 'sync_interval_minutes')
+fi
+
+# Set database path for Home Assistant data persistence
+export DATABASE_URL="${DATABASE_URL:-sqlite:////data/rentalsync.db}"
+
+# Disable standalone mode when running as addon
+export STANDALONE_MODE="${STANDALONE_MODE:-false}"
+
+# Generate or load encryption key for credential storage
+ENCRYPTION_KEY_FILE="/data/.encryption_key"
+if [ -f "$ENCRYPTION_KEY_FILE" ]; then
+    export ENCRYPTION_KEY=$(cat "$ENCRYPTION_KEY_FILE")
+else
+    bashio::log.info "Generating new encryption key..."
+    export ENCRYPTION_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+    echo "$ENCRYPTION_KEY" > "$ENCRYPTION_KEY_FILE"
+    chmod 600 "$ENCRYPTION_KEY_FILE"
+fi
+
+# Run database migrations
+bashio::log.info "Running database migrations..."
+cd /app
+alembic upgrade head
+
+# Start the application
+bashio::log.info "Starting uvicorn server on port 8099..."
+exec uvicorn src.main:app --host 0.0.0.0 --port 8099
