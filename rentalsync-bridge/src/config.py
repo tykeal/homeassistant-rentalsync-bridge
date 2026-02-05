@@ -54,6 +54,13 @@ class Settings(BaseSettings):
         description="Disable Home Assistant auth for development",
     )
 
+    # iCal base URL for HA add-on mode (internal container hostname)
+    # Format: http://hostname:port (e.g., http://local-rentalsync-bridge:8099)
+    ical_base_url: str = Field(
+        default="",
+        description="Base URL for iCal endpoints in HA add-on mode",
+    )
+
     # Server configuration
     host: str = Field(
         default="0.0.0.0",

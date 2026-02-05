@@ -80,6 +80,8 @@ class TestSettingsAPI:
         assert response.status_code == 200
         data = response.json()
         assert data["sync_interval_minutes"] == DEFAULT_SYNC_INTERVAL_MINUTES
+        # ical_base_url should be present (uses request base_url in standalone mode)
+        assert "ical_base_url" in data
 
     @pytest.mark.asyncio
     async def test_update_sync_interval(self, settings_app):

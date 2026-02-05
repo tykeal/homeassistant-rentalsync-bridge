@@ -5,11 +5,12 @@
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config import get_settings as get_app_settings
 from src.database import get_db
 from src.models.system_settings import DEFAULT_SYNC_INTERVAL_MINUTES, SystemSettings
 from src.services.scheduler import get_scheduler
@@ -40,26 +41,42 @@ class SettingsResponse(BaseModel):
     """Response model for all settings."""
 
     sync_interval_minutes: int = Field(description="Sync interval in minutes")
+    ical_base_url: str = Field(description="Base URL for iCal endpoints")
 
 
 @router.get("", response_model=SettingsResponse)
 async def get_settings(
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> SettingsResponse:
     """Get current system settings.
 
     Returns:
-        Current system settings.
+        Current system settings including iCal base URL.
     """
     result = await db.execute(
         select(SystemSettings).where(SystemSettings.settings_key == "default")
     )
     settings = result.scalar_one_or_none()
 
-    if settings:
-        return SettingsResponse(sync_interval_minutes=settings.sync_interval_minutes)
+    sync_interval = (
+        settings.sync_interval_minutes if settings else DEFAULT_SYNC_INTERVAL_MINUTES
+    )
 
-    return SettingsResponse(sync_interval_minutes=DEFAULT_SYNC_INTERVAL_MINUTES)
+    # Determine iCal base URL for the frontend to use when copying calendar URLs.
+    # Two modes:
+    # 1. HA add-on mode: ICAL_BASE_URL is set via environment (e.g., http://hostname:8099)
+    #    This provides the internal container hostname for direct network access.
+    # 2. Standalone mode: Falls back to request.base_url (e.g., http://localhost:8099/)
+    #    The trailing slash is stripped to ensure consistent URL construction
+    #    (the iCal path will be appended as /ical/...).
+    app_settings = get_app_settings()
+    ical_base_url = app_settings.ical_base_url or str(request.base_url).rstrip("/")
+
+    return SettingsResponse(
+        sync_interval_minutes=sync_interval,
+        ical_base_url=ical_base_url,
+    )
 
 
 @router.put("/sync-interval", response_model=SyncIntervalResponse)
