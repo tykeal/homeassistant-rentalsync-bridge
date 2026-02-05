@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Home Assistant Add-on Dockerfile
-# All source files are now within the add-on folder
+# Uses s6-overlay for process supervision (required by HA base images)
 
 ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-python:3.13-alpine3.21
 FROM ${BUILD_FROM}
@@ -36,9 +36,11 @@ RUN uv sync --frozen --no-dev
 COPY alembic/ ./alembic/
 COPY alembic.ini ./
 
-# Copy startup script
-COPY run.sh /run.sh
-RUN chmod +x /run.sh
+# Copy s6-overlay service definitions
+COPY rootfs /
+
+# Ensure run script is executable
+RUN chmod +x /etc/s6-overlay/s6-rc.d/rentalsync/run
 
 # Set environment variables
 ENV PATH="/app/.venv/bin:$PATH" \
@@ -51,4 +53,4 @@ RUN mkdir -p /data
 # Expose port
 EXPOSE 8099
 
-CMD ["/run.sh"]
+# No CMD needed - s6-overlay handles service startup

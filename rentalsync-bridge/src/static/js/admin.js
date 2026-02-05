@@ -1007,11 +1007,34 @@ function closeModal() {
 }
 
 // Sync Settings
+async function loadSyncSettings() {
+    try {
+        const settings = await fetchAPI('/api/settings');
+        if (elements.syncInterval) {
+            elements.syncInterval.value = settings.sync_interval_minutes;
+        }
+    } catch (error) {
+        console.error('Failed to load sync settings:', error);
+    }
+}
+
 async function saveSyncSettings() {
-    const interval = elements.syncInterval.value;
-    // Note: Sync interval is typically set via environment variable
-    // This is a placeholder for future API implementation
-    alert(`Sync interval would be set to ${interval} minutes. (Requires restart)`);
+    const interval = parseInt(elements.syncInterval.value, 10);
+
+    if (isNaN(interval) || interval < 1 || interval > 60) {
+        alert('Sync interval must be between 1 and 60 minutes');
+        return;
+    }
+
+    try {
+        const result = await fetchAPI('/api/settings/sync-interval', {
+            method: 'PUT',
+            body: JSON.stringify({ interval_minutes: interval }),
+        });
+        alert(result.message);
+    } catch (error) {
+        alert(`Failed to save sync settings: ${error.message}`);
+    }
 }
 
 // Utility Functions
@@ -1063,6 +1086,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadStatus();
     loadOAuthStatus();
     loadListings();
+    loadSyncSettings();
 
     // Refresh status periodically (every 30 seconds)
     setInterval(loadStatus, 30000);

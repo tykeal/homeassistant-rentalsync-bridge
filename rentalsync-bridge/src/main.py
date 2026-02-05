@@ -9,7 +9,19 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.api import admin, custom_fields, health, ical, listings, oauth, rooms, status
+from src.api import (
+    admin,
+    custom_fields,
+    health,
+    ical,
+    listings,
+    oauth,
+    rooms,
+    status,
+)
+from src.api import (
+    settings as settings_api,
+)
 from src.config import get_settings
 from src.database import get_session_factory
 from src.middleware.auth import AuthenticationMiddleware
@@ -41,7 +53,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     session_factory = get_session_factory()
     calendar_cache = get_calendar_cache()
     scheduler = init_scheduler(session_factory, calendar_cache)
-    scheduler.start()
+    await scheduler.start()
     logger.info("Background sync scheduler started")
 
     yield
@@ -89,6 +101,7 @@ def create_app() -> FastAPI:
     app.include_router(listings.router)
     app.include_router(oauth.router)
     app.include_router(rooms.router)
+    app.include_router(settings_api.router)
     app.include_router(status.router)
 
     return app

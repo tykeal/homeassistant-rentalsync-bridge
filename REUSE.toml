@@ -21,3 +21,12 @@ path = [
 ]
 SPDX-License-Identifier = "Apache-2.0"
 SPDX-FileCopyrightText = "2026 Andrew Grimberg <tykeal@bardicgrove.org>"
+
+# s6-overlay marker files (empty files for service registration)
+[[annotations]]
+path = [
+    "rentalsync-bridge/rootfs/etc/s6-overlay/s6-rc.d/user/contents.d/*",
+    "rentalsync-bridge/rootfs/etc/s6-overlay/s6-rc.d/*/type"
+]
+SPDX-License-Identifier = "Apache-2.0"
+SPDX-FileCopyrightText = "2026 Andrew Grimberg <tykeal@bardicgrove.org>"

@@ -1,0 +1,46 @@
+#!/command/with-contenv bashio
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+
+# RentalSync Bridge service run script for s6-overlay
+
+set -e
+
+bashio::log.info "Starting RentalSync Bridge..."
+
+# Set database path for Home Assistant data persistence
+export DATABASE_URL="${DATABASE_URL:-sqlite:////data/rentalsync.db}"
+
+# Disable standalone mode when running as addon (uses HA ingress auth)
+export STANDALONE_MODE="${STANDALONE_MODE:-false}"
+
+# Generate or load encryption key for credential storage
+ENCRYPTION_KEY_FILE="/data/.encryption_key"
+if [ -f "$ENCRYPTION_KEY_FILE" ]; then
+    export ENCRYPTION_KEY=$(cat "$ENCRYPTION_KEY_FILE")
+else
+    bashio::log.info "Generating new encryption key..."
+    if ! ENCRYPTION_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" 2>&1); then
+        bashio::log.error "Failed to generate encryption key!"
+        bashio::log.error "Ensure cryptography module is installed correctly."
+        exit 1
+    fi
+    export ENCRYPTION_KEY
+    echo "$ENCRYPTION_KEY" > "$ENCRYPTION_KEY_FILE"
+    chmod 600 "$ENCRYPTION_KEY_FILE"
+fi
+
+# Run database migrations
+bashio::log.info "Running database migrations..."
+cd /app
+if ! alembic upgrade head 2>&1; then
+    bashio::log.error "Database migration failed!"
+    bashio::log.error "Check that the database is accessible and not corrupted."
+    bashio::log.error "Database path: ${DATABASE_URL}"
+    exit 1
+fi
+bashio::log.info "Database migrations completed successfully."
+
+# Start the application
+bashio::log.info "Starting uvicorn server on port 8099..."
+exec uvicorn src.main:app --host 0.0.0.0 --port 8099

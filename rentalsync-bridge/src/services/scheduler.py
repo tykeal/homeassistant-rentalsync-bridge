@@ -12,14 +12,19 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.models.listing import Listing
 from src.models.oauth_credential import OAuthCredential
+from src.models.system_settings import DEFAULT_SYNC_INTERVAL_MINUTES, SystemSettings
 from src.repositories.booking_repository import BookingRepository
 from src.services.calendar_service import CalendarCache
 from src.services.cloudbeds_service import CloudbedsService, CloudbedsServiceError
-from src.services.sync_service import SYNC_INTERVAL_SECONDS, SyncService
+from src.services.sync_service import SyncService
 
 # Data retention settings
 OLD_BOOKING_RETENTION_DAYS = 90
 CANCELLED_BOOKING_RETENTION_DAYS = 30
+
+# Sync interval limits
+MIN_SYNC_INTERVAL_MINUTES = 1
+MAX_SYNC_INTERVAL_MINUTES = 60
 
 logger = logging.getLogger(__name__)
 
@@ -45,16 +50,36 @@ class SyncScheduler:
         self._calendar_cache = calendar_cache
         self._scheduler = AsyncIOScheduler()
         self._running = False
+        self._current_interval_minutes = DEFAULT_SYNC_INTERVAL_MINUTES
 
-    def start(self) -> None:
+    async def _get_sync_interval(self) -> int:
+        """Get sync interval from database.
+
+        Returns:
+            Sync interval in minutes.
+        """
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(SystemSettings).where(SystemSettings.settings_key == "default")
+            )
+            settings = result.scalar_one_or_none()
+            if settings:
+                return settings.sync_interval_minutes
+            return DEFAULT_SYNC_INTERVAL_MINUTES
+
+    async def start(self) -> None:
         """Start the scheduler."""
         if self._running:
             logger.warning("Scheduler already running")
             return
 
+        # Get initial interval from database
+        self._current_interval_minutes = await self._get_sync_interval()
+        interval_seconds = self._current_interval_minutes * 60
+
         self._scheduler.add_job(
             self._sync_all_listings,
-            trigger=IntervalTrigger(seconds=SYNC_INTERVAL_SECONDS),
+            trigger=IntervalTrigger(seconds=interval_seconds),
             id="sync_all_listings",
             replace_existing=True,
             max_instances=1,  # Prevent overlapping syncs
@@ -72,7 +97,8 @@ class SyncScheduler:
         self._scheduler.start()
         self._running = True
         logger.info(
-            "Sync scheduler started with %d second interval", SYNC_INTERVAL_SECONDS
+            "Sync scheduler started with %d minute interval",
+            self._current_interval_minutes,
         )
         logger.info("Data purge scheduled daily at 02:00 UTC")
 
@@ -93,6 +119,58 @@ class SyncScheduler:
             True if scheduler is running.
         """
         return self._running
+
+    @property
+    def current_interval_minutes(self) -> int:
+        """Get current sync interval in minutes.
+
+        Returns:
+            Current interval in minutes.
+        """
+        return self._current_interval_minutes
+
+    def update_sync_interval(self, interval_minutes: int) -> None:
+        """Update the sync interval dynamically.
+
+        Reschedules the sync job with the new interval without restart.
+
+        Args:
+            interval_minutes: New sync interval in minutes (1-60).
+        """
+        if not self._running:
+            logger.warning("Cannot update interval - scheduler not running")
+            return
+
+        if (
+            interval_minutes < MIN_SYNC_INTERVAL_MINUTES
+            or interval_minutes > MAX_SYNC_INTERVAL_MINUTES
+        ):
+            logger.error(
+                "Invalid interval: %d (must be %d-%d)",
+                interval_minutes,
+                MIN_SYNC_INTERVAL_MINUTES,
+                MAX_SYNC_INTERVAL_MINUTES,
+            )
+            return
+
+        if interval_minutes == self._current_interval_minutes:
+            logger.debug("Interval unchanged, skipping reschedule")
+            return
+
+        interval_seconds = interval_minutes * 60
+
+        self._scheduler.reschedule_job(
+            "sync_all_listings",
+            trigger=IntervalTrigger(seconds=interval_seconds),
+        )
+
+        old_interval = self._current_interval_minutes
+        self._current_interval_minutes = interval_minutes
+        logger.info(
+            "Sync interval updated from %d to %d minutes",
+            old_interval,
+            interval_minutes,
+        )
 
     async def _sync_all_listings(self) -> None:
         """Sync all enabled listings."""
