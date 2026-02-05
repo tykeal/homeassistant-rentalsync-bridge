@@ -37,7 +37,13 @@ fi
 # Run database migrations
 bashio::log.info "Running database migrations..."
 cd /app
-alembic upgrade head
+if ! alembic upgrade head 2>&1; then
+    bashio::log.error "Database migration failed!"
+    bashio::log.error "Check that the database is accessible and not corrupted."
+    bashio::log.error "Database path: ${DATABASE_URL}"
+    exit 1
+fi
+bashio::log.info "Database migrations completed successfully."
 
 # Start the application
 bashio::log.info "Starting uvicorn server on port 8099..."
