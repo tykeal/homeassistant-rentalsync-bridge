@@ -6,7 +6,7 @@ import pytest
 from fastapi import FastAPI, Request, status
 from httpx import ASGITransport, AsyncClient
 from src.middleware.auth import (
-    HA_AUTHENTICATED_HEADER,
+    HA_REMOTE_USER_ID,
     PUBLIC_PATHS,
     AuthenticationMiddleware,
     get_current_user,
@@ -98,7 +98,7 @@ class TestAuthenticationMiddleware:
     @pytest.mark.asyncio
     async def test_authenticated_request_sets_user_id(self, test_client):
         """Test authenticated request stores user ID in request state."""
-        headers = {HA_AUTHENTICATED_HEADER: "test-user-123"}
+        headers = {HA_REMOTE_USER_ID: "test-user-123"}
         response = await test_client.get("/api/protected", headers=headers)
         assert response.status_code == status.HTTP_200_OK
 

@@ -83,7 +83,7 @@ class TestAdminEndpointAuth:
         ) as client:
             response = await client.get(
                 "/api/oauth/status",
-                headers={"X-Hass-User-Id": "test-user-123"},
+                headers={"X-Remote-User-Id": "test-user-123"},
             )
 
         # Should succeed with auth header (200 even if not configured)
