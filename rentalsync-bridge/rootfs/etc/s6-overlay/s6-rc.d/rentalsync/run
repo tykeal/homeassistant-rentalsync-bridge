@@ -14,11 +14,6 @@ export DATABASE_URL="${DATABASE_URL:-sqlite:////data/rentalsync.db}"
 # Disable standalone mode when running as addon (uses HA ingress auth)
 export STANDALONE_MODE="${STANDALONE_MODE:-false}"
 
-# Read sync interval from addon config if provided
-if bashio::config.has_value 'sync_interval_minutes'; then
-    export SYNC_INTERVAL_MINUTES=$(bashio::config 'sync_interval_minutes')
-fi
-
 # Generate or load encryption key for credential storage
 ENCRYPTION_KEY_FILE="/data/.encryption_key"
 if [ -f "$ENCRYPTION_KEY_FILE" ]; then

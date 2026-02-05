@@ -23,10 +23,8 @@ hassio_api: false
 map:
   - ssl:ro
   - config:rw
-options:
-  sync_interval_minutes: 5
-schema:
-  sync_interval_minutes: int(1,60)?
+options: {}
+schema: {}
 ports:
   8099/tcp: null
 ports_description:
