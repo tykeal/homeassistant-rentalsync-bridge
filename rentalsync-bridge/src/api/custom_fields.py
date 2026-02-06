@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.ical import get_calendar_cache
 from src.database import get_db
 from src.models.available_field import AvailableField
 from src.models.custom_field import CustomField
@@ -189,6 +190,12 @@ async def update_custom_fields(
 
     await db.commit()
     logger.info("Updated custom fields for listing %s", listing_id)
+
+    # Invalidate calendar cache for this listing (all room caches)
+    if listing.ical_url_slug:
+        cache = get_calendar_cache()
+        cache.invalidate_prefix(listing.ical_url_slug)
+        logger.debug("Invalidated calendar cache for listing %s", listing.ical_url_slug)
 
     result = await db.execute(
         select(CustomField)
