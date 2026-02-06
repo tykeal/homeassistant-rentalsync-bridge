@@ -11,6 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.database import Base
 
 if TYPE_CHECKING:
+    from src.models.available_field import AvailableField
     from src.models.booking import Booking
     from src.models.custom_field import CustomField
     from src.models.room import Room
@@ -64,6 +65,12 @@ class Listing(Base):
     )
     rooms: Mapped[list["Room"]] = relationship(
         "Room",
+        back_populates="listing",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    available_fields: Mapped[list["AvailableField"]] = relationship(
+        "AvailableField",
         back_populates="listing",
         cascade="all, delete-orphan",
         lazy="selectin",

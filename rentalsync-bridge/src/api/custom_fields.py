@@ -10,7 +10,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.ical import get_calendar_cache
 from src.database import get_db
+from src.models.available_field import AvailableField
 from src.models.custom_field import CustomField
 from src.repositories.custom_field_repository import CustomFieldRepository
 from src.repositories.listing_repository import ListingRepository
@@ -129,9 +131,38 @@ async def update_custom_fields(
             detail="Listing not found",
         )
 
-    # Get valid field names for validation
-    available_fields = CustomFieldRepository.get_available_fields()
+    # Get valid field names for validation (dynamically discovered + built-in)
+    custom_repo = CustomFieldRepository(db)
+    available_fields = await custom_repo.get_available_fields_for_listing(listing_id)
 
+    # Collect and validate field names from request BEFORE making any changes
+    requested_field_names: set[str] = set()
+    for field_data in request.fields:
+        field_name = field_data.get("field_name")
+        display_label = field_data.get("display_label")
+
+        if not field_name or not display_label:
+            continue
+
+        # Validate field_name against available fields for this listing
+        if field_name not in available_fields:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid field_name '{field_name}'. "
+                f"Must be one of: {', '.join(sorted(available_fields.keys()))}",
+            )
+        requested_field_names.add(field_name)
+
+    # Delete fields not in the request (validation passed, safe to modify)
+    existing_result = await db.execute(
+        select(CustomField).where(CustomField.listing_id == listing_id)
+    )
+    existing_fields = existing_result.scalars().all()
+    for existing in existing_fields:
+        if existing.field_name not in requested_field_names:
+            await db.delete(existing)
+
+    # Create or update fields
     for i, field_data in enumerate(request.fields):
         field_name = field_data.get("field_name")
         display_label = field_data.get("display_label")
@@ -141,26 +172,18 @@ async def update_custom_fields(
         if not field_name or not display_label:
             continue
 
-        # Validate field_name against allowed fields
-        if field_name not in available_fields:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid field_name '{field_name}'. "
-                f"Must be one of: {', '.join(sorted(available_fields.keys()))}",
-            )
-
         result = await db.execute(
             select(CustomField).where(
                 CustomField.listing_id == listing_id,
                 CustomField.field_name == field_name,
             )
         )
-        existing = result.scalar_one_or_none()
+        existing_field = result.scalar_one_or_none()
 
-        if existing:
-            existing.display_label = display_label
-            existing.enabled = enabled
-            existing.sort_order = sort_order
+        if existing_field:
+            existing_field.display_label = display_label
+            existing_field.enabled = enabled
+            existing_field.sort_order = sort_order
         else:
             field = CustomField(
                 listing_id=listing_id,
@@ -173,6 +196,12 @@ async def update_custom_fields(
 
     await db.commit()
     logger.info("Updated custom fields for listing %s", listing_id)
+
+    # Invalidate calendar cache for this listing (all room caches)
+    if listing.ical_url_slug:
+        cache = get_calendar_cache()
+        cache.invalidate_prefix(listing.ical_url_slug)
+        logger.debug("Invalidated calendar cache for listing %s", listing.ical_url_slug)
 
     result = await db.execute(
         select(CustomField)
@@ -196,11 +225,22 @@ async def update_custom_fields(
     }
 
 
+class AvailableFieldResponse(BaseModel):
+    """Response model for an available custom field."""
+
+    field_key: str = Field(description="Field key from Cloudbeds")
+    display_name: str = Field(description="Human-readable display name")
+    sample_value: str | None = Field(description="Sample value from last sync")
+    source: str = Field(
+        description="Field source: 'default', 'discovered', or 'builtin'"
+    )
+
+
 class AvailableCustomFieldsResponse(BaseModel):
     """Response model for available custom fields."""
 
-    available_fields: dict[str, str] = Field(
-        description="Dictionary of field_name to display_label"
+    available_fields: list[AvailableFieldResponse] = Field(
+        description="List of available fields"
     )
     listing_id: int = Field(description="Listing ID")
 
@@ -215,12 +255,15 @@ async def get_available_custom_fields(
 ) -> dict[str, Any]:
     """Get available custom fields that can be configured for a listing.
 
+    Returns dynamically discovered fields from Cloudbeds sync plus built-in
+    fields. Fields are discovered during sync from actual reservation data.
+
     Args:
         listing_id: Listing ID.
         db: Database session.
 
     Returns:
-        Dictionary of all available custom field names and their display labels.
+        List of available custom fields with their display names and sample values.
 
     Raises:
         HTTPException: 404 if listing not found.
@@ -234,10 +277,57 @@ async def get_available_custom_fields(
             detail="Listing not found",
         )
 
-    # Get all available fields from the repository
-    available_fields = CustomFieldRepository.get_available_fields()
+    # Get dynamically discovered fields
+    result = await db.execute(
+        select(AvailableField)
+        .where(AvailableField.listing_id == listing_id)
+        .order_by(AvailableField.display_name)
+    )
+    discovered_fields = result.scalars().all()
+    discovered_keys = {f.field_key for f in discovered_fields}
+
+    # Start with default Cloudbeds fields (always available)
+    defaults = CustomFieldRepository.get_default_cloudbeds_fields()
+    available: list[dict[str, Any]] = [
+        {
+            "field_key": key,
+            "display_name": name,
+            "sample_value": None,
+            "source": "default",
+        }
+        for key, name in defaults.items()
+        if key not in discovered_keys  # Don't duplicate discovered fields
+    ]
+
+    # Add discovered fields (may override defaults with sample values)
+    for f in discovered_fields:
+        available.append(
+            {
+                "field_key": f.field_key,
+                "display_name": f.display_name,
+                "sample_value": f.sample_value,
+                "source": "discovered",
+            }
+        )
+
+    # Add built-in computed fields
+    builtin = CustomFieldRepository.get_builtin_fields()
+    existing_keys = {f["field_key"] for f in available}
+    for key, name in builtin.items():
+        if key not in existing_keys:
+            available.append(
+                {
+                    "field_key": key,
+                    "display_name": name,
+                    "sample_value": None,
+                    "source": "builtin",
+                }
+            )
+
+    # Sort by display name
+    available.sort(key=lambda x: x["display_name"])
 
     return {
-        "available_fields": available_fields,
+        "available_fields": available,
         "listing_id": listing_id,
     }

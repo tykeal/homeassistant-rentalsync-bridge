@@ -12,6 +12,7 @@ from src.database import get_session_factory
 from src.models.booking import Booking
 from src.models.listing import Listing
 from src.models.oauth_credential import OAuthCredential
+from src.repositories.available_field_repository import AvailableFieldRepository
 from src.repositories.booking_repository import BookingRepository
 from src.repositories.room_repository import RoomRepository
 from src.services.calendar_service import CalendarCache
@@ -52,6 +53,7 @@ class SyncService:
         self._session_factory = session_factory
         self._booking_repo = BookingRepository(session)
         self._room_repo = RoomRepository(session)
+        self._available_field_repo = AvailableFieldRepository(session)
 
     async def sync_listing(
         self,
@@ -141,6 +143,7 @@ class SyncService:
         counts = {"inserted": 0, "updated": 0, "cancelled": 0}
         seen_booking_ids: set[str] = set()
         seen_reservation_ids: set[str] = set()  # Track base reservation IDs
+        fields_discovered = False
 
         for reservation in reservations:
             cloudbeds_booking_id = reservation.get("id") or reservation.get(
@@ -152,6 +155,13 @@ class SyncService:
 
             # Track the reservation ID from API for cancellation detection
             seen_reservation_ids.add(str(cloudbeds_booking_id))
+
+            # Discover available fields from first reservation only (performance)
+            if not fields_discovered:
+                await self._available_field_repo.discover_fields_from_reservation(
+                    listing.id, reservation
+                )
+                fields_discovered = True
 
             # Extract booking data
             booking_data = self._extract_booking_data(reservation)
@@ -236,13 +246,23 @@ class SyncService:
         booking_ids: set[str] = set()
 
         cloudbeds_room_ids = booking_data.get("cloudbeds_room_ids", [])
+        rooms_data = booking_data.get("rooms_data", [])
+        base_custom_data = booking_data.get("base_custom_data", {})
+
+        # Build a lookup from room ID to room data for merging
+        room_data_by_id = self._build_room_data_lookup(rooms_data)
 
         # If no rooms specified, create booking without room association
         if not cloudbeds_room_ids:
             booking_id = str(cloudbeds_booking_id)
             booking_ids.add(booking_id)
+            # Use base custom data as-is (no room-specific data to merge)
+            final_booking_data = {
+                **booking_data,
+                "custom_data": base_custom_data if base_custom_data else None,
+            }
             was_created = await self._upsert_single_booking(
-                listing, booking_id, None, booking_data
+                listing, booking_id, None, final_booking_data
             )
             if was_created:
                 inserted += 1
@@ -260,10 +280,8 @@ class SyncService:
                 room = await self._room_repo.get_by_cloudbeds_id(
                     listing.id, cloudbeds_room_id
                 )
-                room_id: int | None = None
-                if room:
-                    room_id = room.id
-                else:
+                db_room_id: int | None = room.id if room else None
+                if not room:
                     logger.warning(
                         "Room %s not found for booking %s - booking will not "
                         "appear in room calendars. Sync rooms first.",
@@ -271,8 +289,18 @@ class SyncService:
                         cloudbeds_booking_id,
                     )
 
+                # Merge room-specific data into custom_data
+                room_specific_data = room_data_by_id.get(cloudbeds_room_id)
+                custom_data = self._merge_room_custom_data(
+                    base_custom_data, room_specific_data
+                )
+                final_booking_data = {
+                    **booking_data,
+                    "custom_data": custom_data if custom_data else None,
+                }
+
                 was_created = await self._upsert_single_booking(
-                    listing, booking_id, room_id, booking_data
+                    listing, booking_id, db_room_id, final_booking_data
                 )
                 if was_created:
                     inserted += 1
@@ -280,6 +308,54 @@ class SyncService:
                     updated += 1
 
         return inserted, updated, booking_ids
+
+    @staticmethod
+    def _build_room_data_lookup(rooms_data: list) -> dict[str, dict]:
+        """Build a lookup dict from room ID to room data.
+
+        Args:
+            rooms_data: List of room dicts from Cloudbeds API.
+
+        Returns:
+            Dict mapping room ID strings to their room data dicts.
+        """
+        room_data_by_id: dict[str, dict] = {}
+        if rooms_data and isinstance(rooms_data, list):
+            for room in rooms_data:
+                if isinstance(room, dict):
+                    cb_room_id = room.get("roomID") or room.get("roomId")
+                    if cb_room_id:
+                        room_data_by_id[str(cb_room_id)] = room
+        return room_data_by_id
+
+    @staticmethod
+    def _merge_room_custom_data(
+        base_custom_data: dict,
+        room_data: dict | None,
+    ) -> dict:
+        """Merge room-specific data into base custom data.
+
+        Args:
+            base_custom_data: Custom data from reservation level.
+            room_data: Room-specific data dict from rooms array.
+
+        Returns:
+            Merged custom data with room-specific values taking precedence.
+        """
+        merged = base_custom_data.copy()
+
+        if room_data and isinstance(room_data, dict):
+            for key, value in room_data.items():
+                # Skip None, empty, and complex values
+                if value is None or value == "" or isinstance(value, (dict, list)):
+                    continue
+                # Skip ID fields
+                if key.lower().endswith("id") or key == "id":
+                    continue
+                # Room data overrides reservation-level data
+                merged[key] = str(value)
+
+        return merged
 
     async def _upsert_single_booking(
         self,
@@ -374,11 +450,13 @@ class SyncService:
         if status not in ("confirmed", "checked_in", "checked_out", "cancelled"):
             status = "confirmed"
 
-        # Extract room IDs
+        # Extract room IDs and rooms data
         cloudbeds_room_ids = self._extract_room_ids(reservation)
+        rooms_data = reservation.get("rooms", [])
 
-        # Build custom data from available fields
-        custom_data = self._extract_custom_data(reservation, phone_last4)
+        # Build base custom data from reservation (without room-specific data)
+        # Room-specific data will be merged in _create_bookings_for_reservation
+        base_custom_data = self._extract_custom_data(reservation, phone_last4)
 
         # Note: phone_last4 is stored in two places for different use cases:
         # - guest_phone_last4: direct booking attribute for legacy/default iCal display
@@ -391,7 +469,8 @@ class SyncService:
             "check_out_date": check_out,
             "status": status,
             "cloudbeds_room_ids": cloudbeds_room_ids,
-            "custom_data": custom_data if custom_data else None,
+            "rooms_data": rooms_data,  # Keep rooms for per-booking custom data
+            "base_custom_data": base_custom_data if base_custom_data else {},
         }
 
     @staticmethod
@@ -428,34 +507,50 @@ class SyncService:
         return cloudbeds_room_ids
 
     @staticmethod
-    def _extract_custom_data(reservation: dict, phone_last4: str | None) -> dict:
+    def _extract_custom_data(
+        reservation: dict,
+        phone_last4: str | None,
+        room_data: dict | None = None,
+    ) -> dict:
         """Extract custom field data from Cloudbeds reservation.
+
+        Dynamically extracts all scalar (non-dict, non-list) values from
+        the reservation and optionally from room-specific data, making
+        them available for custom field configuration.
 
         Args:
             reservation: Reservation dict from Cloudbeds API.
             phone_last4: Extracted phone last 4 digits.
+            room_data: Optional room-specific data dict from rooms array.
 
         Returns:
-            Dict of custom field values.
+            Dict of custom field values keyed by original Cloudbeds field name.
         """
         custom_data: dict[str, str] = {}
-        custom_field_mapping = {
-            "booking_notes": ["notes", "bookingNotes"],
-            "arrival_time": ["arrivalTime", "estimatedArrivalTime"],
-            "departure_time": ["departureTime"],
-            "num_guests": ["guestsCount", "adults"],
-            "room_type_name": ["roomTypeName", "roomType"],
-            "source_name": ["sourceName", "source"],
-            "special_requests": ["specialRequests"],
-        }
 
-        for field_name, keys in custom_field_mapping.items():
-            for key in keys:
-                if reservation.get(key):
-                    custom_data[field_name] = str(reservation[key])
-                    break
+        for key, value in reservation.items():
+            # Skip None, empty, and complex values (dicts, lists)
+            if value is None or value == "" or isinstance(value, (dict, list)):
+                continue
+            # Skip ID fields (internal use only)
+            if key.lower().endswith("id") or key == "id":
+                continue
+            # Store the value as string
+            custom_data[key] = str(value)
 
-        # Add guest_phone_last4 to custom_data for custom field display
+        # Merge room-specific data (e.g., roomTypeName, roomName)
+        if room_data and isinstance(room_data, dict):
+            for key, value in room_data.items():
+                # Skip None, empty, and complex values
+                if value is None or value == "" or isinstance(value, (dict, list)):
+                    continue
+                # Skip ID fields
+                if key.lower().endswith("id") or key == "id":
+                    continue
+                # Room data overrides top-level reservation data
+                custom_data[key] = str(value)
+
+        # Add guest_phone_last4 as a special computed field
         if phone_last4:
             custom_data["guest_phone_last4"] = phone_last4
 

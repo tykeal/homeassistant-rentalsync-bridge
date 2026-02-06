@@ -52,6 +52,7 @@ const elements = {
     customFieldsModal: document.getElementById('custom-fields-modal'),
     customFieldsList: document.getElementById('custom-fields-list'),
     addFieldBtn: document.getElementById('add-field-btn'),
+    addAllFieldsBtn: document.getElementById('add-all-fields-btn'),
     saveFieldsBtn: document.getElementById('save-fields-btn'),
 };
 
@@ -967,15 +968,20 @@ function addField() {
     ).map(input => input.value).filter(Boolean);
 
     // Filter available fields to only show unconfigured ones
-    const unconfiguredFields = Object.entries(customFieldsModal.availableFields).filter(
-        ([fieldName, /* displayLabel - unused in filter */]) => !configuredFieldNames.includes(fieldName)
+    // API returns array of {field_key, display_name, sample_value, source}
+    const unconfiguredFields = customFieldsModal.availableFields.filter(
+        (field) => !configuredFieldNames.includes(field.field_key)
     );
 
-    // Create dropdown options
-    const options = unconfiguredFields.map(
-        ([fieldName, displayLabel]) =>
-            `<option value="${escapeHtml(fieldName)}">${escapeHtml(displayLabel)}</option>`
-    ).join('');
+    // Create dropdown options with sample value hints (only if sample exists)
+    // Use explicit null/undefined check to preserve falsy values like "0" or "false"
+    const options = unconfiguredFields.map((field) => {
+        const hint = (field.sample_value !== null && field.sample_value !== undefined && field.sample_value !== '')
+            ? ` (e.g. ${field.sample_value})`
+            : '';
+        const label = `${field.display_name}${hint}`;
+        return `<option value="${escapeHtml(field.field_key)}" data-display="${escapeHtml(field.display_name)}">${escapeHtml(label)}</option>`;
+    }).join('');
 
     fieldItem.innerHTML = `
         <select data-field="field_name">
@@ -989,7 +995,47 @@ function addField() {
         </label>
         <button class="remove-btn" data-action="remove-field">&times;</button>
     `;
+
+    // Auto-populate label when field is selected
+    const select = fieldItem.querySelector('select');
+    const labelInput = fieldItem.querySelector('[data-field="display_label"]');
+    select.addEventListener('change', () => {
+        const selectedOption = select.options[select.selectedIndex];
+        if (selectedOption && selectedOption.dataset.display) {
+            labelInput.value = selectedOption.dataset.display;
+        }
+    });
+
     elements.customFieldsList.appendChild(fieldItem);
+}
+
+function addAllFields() {
+    // Get list of already configured field names
+    const configuredFieldNames = Array.from(
+        elements.customFieldsList.querySelectorAll('[data-field="field_name"]')
+    ).map(input => input.value).filter(Boolean);
+
+    // Filter available fields to only show unconfigured ones
+    const unconfiguredFields = customFieldsModal.availableFields.filter(
+        (field) => !configuredFieldNames.includes(field.field_key)
+    );
+
+    // Add each unconfigured field
+    for (const field of unconfiguredFields) {
+        const fieldItem = document.createElement('div');
+        fieldItem.className = 'field-item';
+
+        fieldItem.innerHTML = `
+            <input type="text" readonly value="${escapeHtml(field.field_key)}" data-field="field_name" class="readonly-field">
+            <input type="text" placeholder="Display label" value="${escapeHtml(field.display_name)}" data-field="display_label">
+            <label class="toggle-switch">
+                <input type="checkbox" checked data-field="enabled">
+                <span class="toggle-slider"></span>
+            </label>
+            <button class="remove-btn" data-action="remove-field">&times;</button>
+        `;
+        elements.customFieldsList.appendChild(fieldItem);
+    }
 }
 
 async function saveCustomFields() {
@@ -1087,6 +1133,7 @@ function initEventListeners() {
     elements.saveSyncBtn.addEventListener('click', saveSyncSettings);
     elements.syncPropertiesBtn.addEventListener('click', syncPropertiesFromCloudbeds);
     elements.addFieldBtn.addEventListener('click', addField);
+    elements.addAllFieldsBtn.addEventListener('click', addAllFields);
     elements.saveFieldsBtn.addEventListener('click', saveCustomFields);
     elements.bulkEnableBtn.addEventListener('click', bulkEnable);
     elements.bulkDisableBtn.addEventListener('click', bulkDisable);
