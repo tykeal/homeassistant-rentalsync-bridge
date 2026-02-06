@@ -178,8 +178,12 @@ class AvailableFieldRepository:
         """Discover and store fields from a reservation.
 
         Discovers fields from both the top-level reservation and from
-        the rooms array (if present) to capture room-specific fields
-        like roomTypeName and roomName.
+        the first room in the rooms array (if present) to capture
+        room-specific fields like roomTypeName and roomName.
+
+        Only the first room is inspected for field discovery since all
+        rooms share the same schema - we only need to identify which
+        field keys exist, not sample every room's values.
 
         Args:
             listing_id: Listing ID to associate fields with.
