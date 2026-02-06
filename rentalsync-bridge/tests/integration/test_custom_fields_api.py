@@ -149,8 +149,8 @@ class TestUpdateCustomFields:
     """Tests for PUT /api/listings/{id}/custom-fields endpoint."""
 
     @pytest.mark.asyncio
-    async def test_create_new_fields(self, fields_app, fields_session):
-        """Test creating new custom fields."""
+    async def test_create_new_fields_builtin(self, fields_app, fields_session):
+        """Test creating new built-in custom fields."""
         listing = Listing(
             cloudbeds_id="PROP1",
             name="Test Property",
@@ -165,20 +165,16 @@ class TestUpdateCustomFields:
         async with AsyncClient(
             transport=ASGITransport(app=fields_app), base_url="http://test"
         ) as client:
+            # Use built-in field (always available)
             response = await client.put(
                 f"/api/listings/{listing.id}/custom-fields",
                 headers={"Authorization": "Bearer test"},
                 json={
                     "fields": [
                         {
-                            "field_name": "booking_notes",
-                            "display_label": "Notes",
+                            "field_name": "guest_phone_last4",
+                            "display_label": "Phone (Last 4)",
                             "enabled": True,
-                        },
-                        {
-                            "field_name": "arrival_time",
-                            "display_label": "Arrival",
-                            "enabled": False,
                         },
                     ]
                 },
@@ -186,7 +182,55 @@ class TestUpdateCustomFields:
 
         assert response.status_code == 200
         data = response.json()
-        assert len(data["fields"]) == 2
+        assert len(data["fields"]) == 1
+        assert data["fields"][0]["field_name"] == "guest_phone_last4"
+
+    @pytest.mark.asyncio
+    async def test_create_new_fields_discovered(self, fields_app, fields_session):
+        """Test creating custom fields from discovered fields."""
+        from src.models.available_field import AvailableField
+
+        listing = Listing(
+            cloudbeds_id="PROP2",
+            name="Test Property 2",
+            ical_url_slug="test-property-2",
+            enabled=True,
+            sync_enabled=True,
+        )
+        fields_session.add(listing)
+        await fields_session.commit()
+        await fields_session.refresh(listing)
+
+        # First discover the field (simulates sync discovering it)
+        avail_field = AvailableField(
+            listing_id=listing.id,
+            field_key="notes",
+            display_name="Notes",
+        )
+        fields_session.add(avail_field)
+        await fields_session.commit()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=fields_app), base_url="http://test"
+        ) as client:
+            response = await client.put(
+                f"/api/listings/{listing.id}/custom-fields",
+                headers={"Authorization": "Bearer test"},
+                json={
+                    "fields": [
+                        {
+                            "field_name": "notes",
+                            "display_label": "Booking Notes",
+                            "enabled": True,
+                        },
+                    ]
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["fields"]) == 1
+        assert data["fields"][0]["field_name"] == "notes"
 
     @pytest.mark.asyncio
     async def test_update_existing_fields(self, fields_app, fields_session):
@@ -202,10 +246,11 @@ class TestUpdateCustomFields:
         await fields_session.commit()
         await fields_session.refresh(listing)
 
+        # Create an existing field using built-in field
         field = CustomField(
             listing_id=listing.id,
-            field_name="booking_notes",
-            display_label="Notes",
+            field_name="guest_phone_last4",
+            display_label="Phone",
             enabled=True,
             sort_order=0,
         )
@@ -221,8 +266,8 @@ class TestUpdateCustomFields:
                 json={
                     "fields": [
                         {
-                            "field_name": "booking_notes",
-                            "display_label": "Booking Notes Updated",
+                            "field_name": "guest_phone_last4",
+                            "display_label": "Phone (Last 4 Digits) Updated",
                             "enabled": False,
                         },
                     ]
@@ -232,7 +277,7 @@ class TestUpdateCustomFields:
         assert response.status_code == 200
         data = response.json()
         assert len(data["fields"]) == 1
-        assert data["fields"][0]["display_label"] == "Booking Notes Updated"
+        assert data["fields"][0]["display_label"] == "Phone (Last 4 Digits) Updated"
         assert data["fields"][0]["enabled"] is False
 
     @pytest.mark.asyncio

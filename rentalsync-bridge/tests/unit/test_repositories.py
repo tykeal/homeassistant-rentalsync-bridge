@@ -8,7 +8,7 @@ import pytest
 from src.models import Booking, CustomField, Listing
 from src.repositories.booking_repository import BookingRepository
 from src.repositories.custom_field_repository import (
-    AVAILABLE_FIELDS,
+    BUILTIN_FIELDS,
     CustomFieldRepository,
 )
 from src.repositories.listing_repository import ListingRepository
@@ -344,8 +344,8 @@ class TestCustomFieldRepository:
     """Tests for CustomFieldRepository."""
 
     @pytest.mark.asyncio
-    async def test_create_custom_field(self, async_session):
-        """Test creating a custom field."""
+    async def test_create_custom_field_builtin(self, async_session):
+        """Test creating a built-in custom field."""
         listing_repo = ListingRepository(async_session)
         listing = await listing_repo.create(
             Listing(
@@ -360,7 +360,41 @@ class TestCustomFieldRepository:
         repo = CustomFieldRepository(async_session)
         field = CustomField(
             listing_id=listing.id,
-            field_name="booking_notes",
+            field_name="guest_phone_last4",
+            display_label="Phone Last 4",
+            enabled=True,
+            sort_order=0,
+        )
+
+        created = await repo.create(field)
+
+        assert created.id is not None
+        assert created.field_name == "guest_phone_last4"
+
+    @pytest.mark.asyncio
+    async def test_create_custom_field_discovered(self, async_session):
+        """Test creating a custom field from discovered fields."""
+        from src.repositories.available_field_repository import AvailableFieldRepository
+
+        listing_repo = ListingRepository(async_session)
+        listing = await listing_repo.create(
+            Listing(
+                cloudbeds_id="cf_discovered_test",
+                name="CF Discovered Test",
+                enabled=True,
+                sync_enabled=True,
+                timezone="UTC",
+            )
+        )
+
+        # First discover a field
+        avail_repo = AvailableFieldRepository(async_session)
+        await avail_repo.upsert_field(listing.id, "notes", "Sample note")
+
+        repo = CustomFieldRepository(async_session)
+        field = CustomField(
+            listing_id=listing.id,
+            field_name="notes",
             display_label="Notes",
             enabled=True,
             sort_order=0,
@@ -369,7 +403,7 @@ class TestCustomFieldRepository:
         created = await repo.create(field)
 
         assert created.id is not None
-        assert created.field_name == "booking_notes"
+        assert created.field_name == "notes"
 
     @pytest.mark.asyncio
     async def test_create_invalid_field_name(self, async_session):
@@ -412,29 +446,21 @@ class TestCustomFieldRepository:
         )
 
         repo = CustomFieldRepository(async_session)
+        # Use built-in field (always available)
         await repo.create(
             CustomField(
                 listing_id=listing.id,
-                field_name="booking_notes",
-                display_label="Notes",
+                field_name="guest_phone_last4",
+                display_label="Phone",
                 enabled=True,
                 sort_order=0,
-            )
-        )
-        await repo.create(
-            CustomField(
-                listing_id=listing.id,
-                field_name="arrival_time",
-                display_label="Arrival",
-                enabled=False,
-                sort_order=1,
             )
         )
 
         enabled = await repo.get_enabled_for_listing(listing.id)
 
         assert len(enabled) == 1
-        assert enabled[0].field_name == "booking_notes"
+        assert enabled[0].field_name == "guest_phone_last4"
 
     @pytest.mark.asyncio
     async def test_create_defaults_for_listing(self, async_session):
@@ -453,28 +479,28 @@ class TestCustomFieldRepository:
         repo = CustomFieldRepository(async_session)
         created = await repo.create_defaults_for_listing(listing.id)
 
+        # Only built-in fields are created as defaults now
         assert len(created) >= 1
         field_names = [f.field_name for f in created]
-        assert "booking_notes" in field_names
+        assert "guest_phone_last4" in field_names
 
-    def test_available_fields(self):
-        """Test available fields dictionary."""
-        fields = CustomFieldRepository.get_available_fields()
+    def test_builtin_fields(self):
+        """Test built-in fields dictionary."""
+        fields = CustomFieldRepository.get_builtin_fields()
 
-        assert "booking_notes" in fields
-        assert "arrival_time" in fields
-        assert len(fields) == len(AVAILABLE_FIELDS)
+        assert "guest_phone_last4" in fields
+        assert len(fields) == len(BUILTIN_FIELDS)
 
-    def test_guest_phone_last4_in_available_fields(self):
-        """Test guest_phone_last4 is in AVAILABLE_FIELDS dictionary."""
-        fields = CustomFieldRepository.get_available_fields()
+    def test_guest_phone_last4_in_builtin_fields(self):
+        """Test guest_phone_last4 is in BUILTIN_FIELDS dictionary."""
+        fields = CustomFieldRepository.get_builtin_fields()
 
         assert "guest_phone_last4" in fields
         assert fields["guest_phone_last4"] == "Guest Phone (Last 4 Digits)"
 
     @pytest.mark.asyncio
     async def test_create_guest_phone_last4_field(self, async_session):
-        """Test creating guest_phone_last4 custom field."""
+        """Test creating guest_phone_last4 custom field (built-in field)."""
         listing_repo = ListingRepository(async_session)
         listing = await listing_repo.create(
             Listing(

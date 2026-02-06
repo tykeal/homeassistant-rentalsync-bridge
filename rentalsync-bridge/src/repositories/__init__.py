@@ -2,16 +2,18 @@
 # SPDX-License-Identifier: Apache-2.0
 """RentalSync Bridge repositories package."""
 
+from src.repositories.available_field_repository import AvailableFieldRepository
 from src.repositories.booking_repository import BookingRepository
 from src.repositories.custom_field_repository import (
-    AVAILABLE_FIELDS,
+    BUILTIN_FIELDS,
     CustomFieldRepository,
 )
 from src.repositories.listing_repository import MAX_LISTINGS, ListingRepository
 
 __all__ = [
-    "AVAILABLE_FIELDS",
+    "BUILTIN_FIELDS",
     "MAX_LISTINGS",
+    "AvailableFieldRepository",
     "BookingRepository",
     "CustomFieldRepository",
     "ListingRepository",

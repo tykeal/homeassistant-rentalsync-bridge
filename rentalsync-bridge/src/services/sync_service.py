@@ -12,6 +12,7 @@ from src.database import get_session_factory
 from src.models.booking import Booking
 from src.models.listing import Listing
 from src.models.oauth_credential import OAuthCredential
+from src.repositories.available_field_repository import AvailableFieldRepository
 from src.repositories.booking_repository import BookingRepository
 from src.repositories.room_repository import RoomRepository
 from src.services.calendar_service import CalendarCache
@@ -52,6 +53,7 @@ class SyncService:
         self._session_factory = session_factory
         self._booking_repo = BookingRepository(session)
         self._room_repo = RoomRepository(session)
+        self._available_field_repo = AvailableFieldRepository(session)
 
     async def sync_listing(
         self,
@@ -141,6 +143,7 @@ class SyncService:
         counts = {"inserted": 0, "updated": 0, "cancelled": 0}
         seen_booking_ids: set[str] = set()
         seen_reservation_ids: set[str] = set()  # Track base reservation IDs
+        fields_discovered = False
 
         for reservation in reservations:
             cloudbeds_booking_id = reservation.get("id") or reservation.get(
@@ -152,6 +155,13 @@ class SyncService:
 
             # Track the reservation ID from API for cancellation detection
             seen_reservation_ids.add(str(cloudbeds_booking_id))
+
+            # Discover available fields from first reservation only (performance)
+            if not fields_discovered:
+                await self._available_field_repo.discover_fields_from_reservation(
+                    listing.id, reservation
+                )
+                fields_discovered = True
 
             # Extract booking data
             booking_data = self._extract_booking_data(reservation)
@@ -431,31 +441,29 @@ class SyncService:
     def _extract_custom_data(reservation: dict, phone_last4: str | None) -> dict:
         """Extract custom field data from Cloudbeds reservation.
 
+        Dynamically extracts all scalar (non-dict, non-list) values from
+        the reservation, making them available for custom field configuration.
+
         Args:
             reservation: Reservation dict from Cloudbeds API.
             phone_last4: Extracted phone last 4 digits.
 
         Returns:
-            Dict of custom field values.
+            Dict of custom field values keyed by original Cloudbeds field name.
         """
         custom_data: dict[str, str] = {}
-        custom_field_mapping = {
-            "booking_notes": ["notes", "bookingNotes"],
-            "arrival_time": ["arrivalTime", "estimatedArrivalTime"],
-            "departure_time": ["departureTime"],
-            "num_guests": ["guestsCount", "adults"],
-            "room_type_name": ["roomTypeName", "roomType"],
-            "source_name": ["sourceName", "source"],
-            "special_requests": ["specialRequests"],
-        }
 
-        for field_name, keys in custom_field_mapping.items():
-            for key in keys:
-                if reservation.get(key):
-                    custom_data[field_name] = str(reservation[key])
-                    break
+        for key, value in reservation.items():
+            # Skip None, empty, and complex values (dicts, lists)
+            if value is None or value == "" or isinstance(value, (dict, list)):
+                continue
+            # Skip ID fields (internal use only)
+            if key.lower().endswith("id") or key == "id":
+                continue
+            # Store the value as string
+            custom_data[key] = str(value)
 
-        # Add guest_phone_last4 to custom_data for custom field display
+        # Add guest_phone_last4 as a special computed field
         if phone_last4:
             custom_data["guest_phone_last4"] = phone_last4
 

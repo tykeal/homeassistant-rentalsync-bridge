@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database import get_db
+from src.models.available_field import AvailableField
 from src.models.custom_field import CustomField
 from src.repositories.custom_field_repository import CustomFieldRepository
 from src.repositories.listing_repository import ListingRepository
@@ -129,8 +130,9 @@ async def update_custom_fields(
             detail="Listing not found",
         )
 
-    # Get valid field names for validation
-    available_fields = CustomFieldRepository.get_available_fields()
+    # Get valid field names for validation (dynamically discovered + built-in)
+    custom_repo = CustomFieldRepository(db)
+    available_fields = await custom_repo.get_available_fields_for_listing(listing_id)
 
     for i, field_data in enumerate(request.fields):
         field_name = field_data.get("field_name")
@@ -141,7 +143,7 @@ async def update_custom_fields(
         if not field_name or not display_label:
             continue
 
-        # Validate field_name against allowed fields
+        # Validate field_name against available fields for this listing
         if field_name not in available_fields:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -196,11 +198,19 @@ async def update_custom_fields(
     }
 
 
+class AvailableFieldResponse(BaseModel):
+    """Response model for an available custom field."""
+
+    field_key: str = Field(description="Field key from Cloudbeds")
+    display_name: str = Field(description="Human-readable display name")
+    sample_value: str | None = Field(description="Sample value from last sync")
+
+
 class AvailableCustomFieldsResponse(BaseModel):
     """Response model for available custom fields."""
 
-    available_fields: dict[str, str] = Field(
-        description="Dictionary of field_name to display_label"
+    available_fields: list[AvailableFieldResponse] = Field(
+        description="List of available fields"
     )
     listing_id: int = Field(description="Listing ID")
 
@@ -215,12 +225,15 @@ async def get_available_custom_fields(
 ) -> dict[str, Any]:
     """Get available custom fields that can be configured for a listing.
 
+    Returns dynamically discovered fields from Cloudbeds sync plus built-in
+    fields. Fields are discovered during sync from actual reservation data.
+
     Args:
         listing_id: Listing ID.
         db: Database session.
 
     Returns:
-        Dictionary of all available custom field names and their display labels.
+        List of available custom fields with their display names and sample values.
 
     Raises:
         HTTPException: 404 if listing not found.
@@ -234,10 +247,41 @@ async def get_available_custom_fields(
             detail="Listing not found",
         )
 
-    # Get all available fields from the repository
-    available_fields = CustomFieldRepository.get_available_fields()
+    # Get dynamically discovered fields
+    result = await db.execute(
+        select(AvailableField)
+        .where(AvailableField.listing_id == listing_id)
+        .order_by(AvailableField.display_name)
+    )
+    discovered_fields = result.scalars().all()
+
+    # Build response with discovered fields
+    available: list[dict[str, Any]] = [
+        {
+            "field_key": f.field_key,
+            "display_name": f.display_name,
+            "sample_value": f.sample_value,
+        }
+        for f in discovered_fields
+    ]
+
+    # Add built-in fields
+    builtin = CustomFieldRepository.get_builtin_fields()
+    for key, name in builtin.items():
+        # Don't add if already discovered
+        if not any(f["field_key"] == key for f in available):
+            available.append(
+                {
+                    "field_key": key,
+                    "display_name": name,
+                    "sample_value": None,
+                }
+            )
+
+    # Sort by display name
+    available.sort(key=lambda x: x["display_name"])
 
     return {
-        "available_fields": available_fields,
+        "available_fields": available,
         "listing_id": listing_id,
     }
