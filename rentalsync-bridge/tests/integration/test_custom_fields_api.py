@@ -334,3 +334,59 @@ class TestUpdateCustomFields:
             )
 
         assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_field_by_omission(self, fields_app, fields_session):
+        """Test that fields not in update request are deleted."""
+        listing = Listing(
+            cloudbeds_id="PROP1",
+            name="Test Property",
+            ical_url_slug="test-property",
+            enabled=True,
+            sync_enabled=True,
+        )
+        fields_session.add(listing)
+        await fields_session.commit()
+        await fields_session.refresh(listing)
+
+        # Create two existing fields
+        field1 = CustomField(
+            listing_id=listing.id,
+            field_name="guest_phone_last4",
+            display_label="Phone",
+            enabled=True,
+            sort_order=0,
+        )
+        field2 = CustomField(
+            listing_id=listing.id,
+            field_name="guestName",
+            display_label="Guest",
+            enabled=True,
+            sort_order=1,
+        )
+        fields_session.add_all([field1, field2])
+        await fields_session.commit()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=fields_app), base_url="http://test"
+        ) as client:
+            # Only include one field in update - the other should be deleted
+            response = await client.put(
+                f"/api/listings/{listing.id}/custom-fields",
+                headers={"Authorization": "Bearer test"},
+                json={
+                    "fields": [
+                        {
+                            "field_name": "guestName",
+                            "display_label": "Guest Name",
+                            "enabled": True,
+                        },
+                    ]
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["fields"]) == 1
+        assert data["fields"][0]["field_name"] == "guestName"
+        # guest_phone_last4 should be deleted

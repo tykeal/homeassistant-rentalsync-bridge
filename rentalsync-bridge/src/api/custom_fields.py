@@ -134,6 +134,20 @@ async def update_custom_fields(
     custom_repo = CustomFieldRepository(db)
     available_fields = await custom_repo.get_available_fields_for_listing(listing_id)
 
+    # Collect field names from request to determine which to delete
+    requested_field_names = {
+        f.get("field_name") for f in request.fields if f.get("field_name")
+    }
+
+    # Delete fields not in the request
+    existing_result = await db.execute(
+        select(CustomField).where(CustomField.listing_id == listing_id)
+    )
+    existing_fields = existing_result.scalars().all()
+    for existing in existing_fields:
+        if existing.field_name not in requested_field_names:
+            await db.delete(existing)
+
     for i, field_data in enumerate(request.fields):
         field_name = field_data.get("field_name")
         display_label = field_data.get("display_label")
@@ -157,12 +171,12 @@ async def update_custom_fields(
                 CustomField.field_name == field_name,
             )
         )
-        existing = result.scalar_one_or_none()
+        existing_field = result.scalar_one_or_none()
 
-        if existing:
-            existing.display_label = display_label
-            existing.enabled = enabled
-            existing.sort_order = sort_order
+        if existing_field:
+            existing_field.display_label = display_label
+            existing_field.enabled = enabled
+            existing_field.sort_order = sort_order
         else:
             field = CustomField(
                 listing_id=listing_id,
