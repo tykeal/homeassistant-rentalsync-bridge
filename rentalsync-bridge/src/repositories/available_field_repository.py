@@ -12,10 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.models.available_field import AvailableField
 
 # Fields to exclude from discovery (internal/system fields)
+# Using re.IGNORECASE flag in _should_exclude_field for case-insensitive matching
 EXCLUDED_FIELD_PATTERNS = [
     r"^_",  # Internal fields starting with underscore
-    r"ID$",  # ID fields (propertyID, reservationID, etc.)
-    r"^id$",
+    r"id$",  # ID fields ending in id/ID/Id (reservationId, propertyID, etc.)
 ]
 
 # Fields that should always be available (built-in/computed)
@@ -74,7 +74,10 @@ def _should_exclude_field(field_key: str) -> bool:
     Returns:
         True if field should be excluded.
     """
-    return any(re.search(pattern, field_key) for pattern in EXCLUDED_FIELD_PATTERNS)
+    return any(
+        re.search(pattern, field_key, re.IGNORECASE)
+        for pattern in EXCLUDED_FIELD_PATTERNS
+    )
 
 
 class AvailableFieldRepository:

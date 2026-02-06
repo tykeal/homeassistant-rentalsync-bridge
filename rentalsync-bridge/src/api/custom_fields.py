@@ -135,25 +135,11 @@ async def update_custom_fields(
     custom_repo = CustomFieldRepository(db)
     available_fields = await custom_repo.get_available_fields_for_listing(listing_id)
 
-    # Collect field names from request to determine which to delete
-    requested_field_names = {
-        f.get("field_name") for f in request.fields if f.get("field_name")
-    }
-
-    # Delete fields not in the request
-    existing_result = await db.execute(
-        select(CustomField).where(CustomField.listing_id == listing_id)
-    )
-    existing_fields = existing_result.scalars().all()
-    for existing in existing_fields:
-        if existing.field_name not in requested_field_names:
-            await db.delete(existing)
-
-    for i, field_data in enumerate(request.fields):
+    # Collect and validate field names from request BEFORE making any changes
+    requested_field_names: set[str] = set()
+    for field_data in request.fields:
         field_name = field_data.get("field_name")
         display_label = field_data.get("display_label")
-        enabled = field_data.get("enabled", True)
-        sort_order = field_data.get("sort_order", i)
 
         if not field_name or not display_label:
             continue
@@ -165,6 +151,26 @@ async def update_custom_fields(
                 detail=f"Invalid field_name '{field_name}'. "
                 f"Must be one of: {', '.join(sorted(available_fields.keys()))}",
             )
+        requested_field_names.add(field_name)
+
+    # Delete fields not in the request (validation passed, safe to modify)
+    existing_result = await db.execute(
+        select(CustomField).where(CustomField.listing_id == listing_id)
+    )
+    existing_fields = existing_result.scalars().all()
+    for existing in existing_fields:
+        if existing.field_name not in requested_field_names:
+            await db.delete(existing)
+
+    # Create or update fields
+    for i, field_data in enumerate(request.fields):
+        field_name = field_data.get("field_name")
+        display_label = field_data.get("display_label")
+        enabled = field_data.get("enabled", True)
+        sort_order = field_data.get("sort_order", i)
+
+        if not field_name or not display_label:
+            continue
 
         result = await db.execute(
             select(CustomField).where(

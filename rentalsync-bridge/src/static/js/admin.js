@@ -974,8 +974,11 @@ function addField() {
     );
 
     // Create dropdown options with sample value hints (only if sample exists)
+    // Use explicit null/undefined check to preserve falsy values like "0" or "false"
     const options = unconfiguredFields.map((field) => {
-        const hint = field.sample_value ? ` (e.g. ${field.sample_value})` : '';
+        const hint = (field.sample_value !== null && field.sample_value !== undefined && field.sample_value !== '')
+            ? ` (e.g. ${field.sample_value})`
+            : '';
         const label = `${field.display_name}${hint}`;
         return `<option value="${escapeHtml(field.field_key)}" data-display="${escapeHtml(field.display_name)}">${escapeHtml(label)}</option>`;
     }).join('');

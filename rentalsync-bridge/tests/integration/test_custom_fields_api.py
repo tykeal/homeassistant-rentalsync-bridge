@@ -6,6 +6,7 @@ from collections.abc import AsyncGenerator
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from src.database import Base, get_db
 from src.main import create_app
@@ -348,17 +349,18 @@ class TestUpdateCustomFields:
         fields_session.add(listing)
         await fields_session.commit()
         await fields_session.refresh(listing)
+        listing_id = listing.id  # Store ID before session changes
 
         # Create two existing fields
         field1 = CustomField(
-            listing_id=listing.id,
+            listing_id=listing_id,
             field_name="guest_phone_last4",
             display_label="Phone",
             enabled=True,
             sort_order=0,
         )
         field2 = CustomField(
-            listing_id=listing.id,
+            listing_id=listing_id,
             field_name="guestName",
             display_label="Guest",
             enabled=True,
@@ -372,7 +374,7 @@ class TestUpdateCustomFields:
         ) as client:
             # Only include one field in update - the other should be deleted
             response = await client.put(
-                f"/api/listings/{listing.id}/custom-fields",
+                f"/api/listings/{listing_id}/custom-fields",
                 headers={"Authorization": "Bearer test"},
                 json={
                     "fields": [
@@ -389,4 +391,13 @@ class TestUpdateCustomFields:
         data = response.json()
         assert len(data["fields"]) == 1
         assert data["fields"][0]["field_name"] == "guestName"
-        # guest_phone_last4 should be deleted
+
+        # Verify guest_phone_last4 was actually deleted from the database
+        fields_session.expire_all()
+        result = await fields_session.execute(
+            select(CustomField).where(CustomField.listing_id == listing_id)
+        )
+        remaining_fields = result.scalars().all()
+        remaining_names = [f.field_name for f in remaining_fields]
+        assert "guest_phone_last4" not in remaining_names
+        assert "guestName" in remaining_names

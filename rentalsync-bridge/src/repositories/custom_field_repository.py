@@ -7,11 +7,11 @@ from collections.abc import Sequence
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models.available_field import AvailableField
 from src.models.custom_field import CustomField
 from src.repositories.available_field_repository import (
     BUILTIN_FIELDS,
     DEFAULT_CLOUDBEDS_FIELDS,
+    AvailableFieldRepository,
 )
 
 
@@ -102,8 +102,8 @@ class CustomFieldRepository:
     async def get_available_fields_for_listing(self, listing_id: int) -> dict[str, str]:
         """Get available fields for a listing.
 
-        Combines: default Cloudbeds fields + discovered fields + built-in fields.
-        This ensures users can configure fields even before first sync.
+        Delegates to AvailableFieldRepository.get_all_field_keys() to ensure
+        consistent field composition logic across the codebase.
 
         Args:
             listing_id: Listing ID to get fields for.
@@ -111,17 +111,8 @@ class CustomFieldRepository:
         Returns:
             Dictionary mapping field_key to display_name.
         """
-        # Start with default Cloudbeds fields
-        fields = DEFAULT_CLOUDBEDS_FIELDS.copy()
-        # Add/override with discovered fields from actual data
-        result = await self._session.execute(
-            select(AvailableField).where(AvailableField.listing_id == listing_id)
-        )
-        available = result.scalars().all()
-        fields.update({f.field_key: f.display_name for f in available})
-        # Add built-in computed fields
-        fields.update(BUILTIN_FIELDS)
-        return fields
+        available_repo = AvailableFieldRepository(self._session)
+        return await available_repo.get_all_field_keys(listing_id)
 
     async def create(self, field: CustomField) -> CustomField:
         """Create a new custom field.
