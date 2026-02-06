@@ -12,7 +12,10 @@ from src.database import get_session_factory
 from src.models.booking import Booking
 from src.models.listing import Listing
 from src.models.oauth_credential import OAuthCredential
-from src.repositories.available_field_repository import AvailableFieldRepository
+from src.repositories.available_field_repository import (
+    AvailableFieldRepository,
+    _should_exclude_field,
+)
 from src.repositories.booking_repository import BookingRepository
 from src.repositories.room_repository import RoomRepository
 from src.services.calendar_service import CalendarCache
@@ -532,8 +535,8 @@ class SyncService:
             # Skip None, empty, and complex values (dicts, lists)
             if value is None or value == "" or isinstance(value, (dict, list)):
                 continue
-            # Skip ID fields (internal use only)
-            if key.lower().endswith("id") or key == "id":
+            # Skip ID fields using shared exclusion logic
+            if _should_exclude_field(key):
                 continue
             # Store the value as string
             custom_data[key] = str(value)
@@ -544,8 +547,8 @@ class SyncService:
                 # Skip None, empty, and complex values
                 if value is None or value == "" or isinstance(value, (dict, list)):
                     continue
-                # Skip ID fields
-                if key.lower().endswith("id") or key == "id":
+                # Skip ID fields using shared exclusion logic
+                if _should_exclude_field(key):
                     continue
                 # Room data overrides top-level reservation data
                 custom_data[key] = str(value)

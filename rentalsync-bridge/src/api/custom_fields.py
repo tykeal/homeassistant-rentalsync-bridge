@@ -158,11 +158,17 @@ async def update_custom_fields(
         select(CustomField).where(CustomField.listing_id == listing_id)
     )
     existing_fields = existing_result.scalars().all()
+
+    # Build lookup for existing fields to avoid N+1 queries
+    existing_by_name: dict[str, CustomField] = {
+        f.field_name: f for f in existing_fields
+    }
+
     for existing in existing_fields:
         if existing.field_name not in requested_field_names:
             await db.delete(existing)
 
-    # Create or update fields
+    # Create or update fields using the lookup
     for i, field_data in enumerate(request.fields):
         field_name = field_data.get("field_name")
         display_label = field_data.get("display_label")
@@ -172,13 +178,7 @@ async def update_custom_fields(
         if not field_name or not display_label:
             continue
 
-        result = await db.execute(
-            select(CustomField).where(
-                CustomField.listing_id == listing_id,
-                CustomField.field_name == field_name,
-            )
-        )
-        existing_field = result.scalar_one_or_none()
+        existing_field = existing_by_name.get(field_name)
 
         if existing_field:
             existing_field.display_label = display_label

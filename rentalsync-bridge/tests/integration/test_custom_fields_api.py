@@ -188,7 +188,11 @@ class TestUpdateCustomFields:
 
     @pytest.mark.asyncio
     async def test_create_new_fields_discovered(self, fields_app, fields_session):
-        """Test creating custom fields from discovered fields."""
+        """Test creating custom fields from discovered fields.
+
+        Uses a field key not in DEFAULT_CLOUDBEDS_FIELDS to verify
+        that discovery is actually required for the field to be valid.
+        """
         from src.models.available_field import AvailableField
 
         listing = Listing(
@@ -201,27 +205,49 @@ class TestUpdateCustomFields:
         fields_session.add(listing)
         await fields_session.commit()
         await fields_session.refresh(listing)
+        listing_id = listing.id
 
-        # First discover the field (simulates sync discovering it)
-        avail_field = AvailableField(
-            listing_id=listing.id,
-            field_key="notes",
-            display_name="Notes",
-        )
-        fields_session.add(avail_field)
-        await fields_session.commit()
-
+        # First verify the field is rejected before discovery
         async with AsyncClient(
             transport=ASGITransport(app=fields_app), base_url="http://test"
         ) as client:
             response = await client.put(
-                f"/api/listings/{listing.id}/custom-fields",
+                f"/api/listings/{listing_id}/custom-fields",
                 headers={"Authorization": "Bearer test"},
                 json={
                     "fields": [
                         {
-                            "field_name": "notes",
-                            "display_label": "Booking Notes",
+                            "field_name": "myCustomApiField",
+                            "display_label": "My Custom Field",
+                            "enabled": True,
+                        },
+                    ]
+                },
+            )
+        assert response.status_code == 400
+        assert "Invalid field_name" in response.json()["detail"]
+
+        # Now discover the field (simulates sync discovering it)
+        avail_field = AvailableField(
+            listing_id=listing_id,
+            field_key="myCustomApiField",
+            display_name="My Custom API Field",
+        )
+        fields_session.add(avail_field)
+        await fields_session.commit()
+
+        # Now it should succeed
+        async with AsyncClient(
+            transport=ASGITransport(app=fields_app), base_url="http://test"
+        ) as client:
+            response = await client.put(
+                f"/api/listings/{listing_id}/custom-fields",
+                headers={"Authorization": "Bearer test"},
+                json={
+                    "fields": [
+                        {
+                            "field_name": "myCustomApiField",
+                            "display_label": "My Custom Field",
                             "enabled": True,
                         },
                     ]
@@ -231,7 +257,7 @@ class TestUpdateCustomFields:
         assert response.status_code == 200
         data = response.json()
         assert len(data["fields"]) == 1
-        assert data["fields"][0]["field_name"] == "notes"
+        assert data["fields"][0]["field_name"] == "myCustomApiField"
 
     @pytest.mark.asyncio
     async def test_update_existing_fields(self, fields_app, fields_session):

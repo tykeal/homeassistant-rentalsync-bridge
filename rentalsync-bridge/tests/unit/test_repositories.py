@@ -373,7 +373,11 @@ class TestCustomFieldRepository:
 
     @pytest.mark.asyncio
     async def test_create_custom_field_discovered(self, async_session):
-        """Test creating a custom field from discovered fields."""
+        """Test creating a custom field from discovered fields.
+
+        Uses a field key not in DEFAULT_CLOUDBEDS_FIELDS to verify
+        that discovery is actually required for the field to be valid.
+        """
         from src.repositories.available_field_repository import AvailableFieldRepository
 
         listing_repo = ListingRepository(async_session)
@@ -387,23 +391,35 @@ class TestCustomFieldRepository:
             )
         )
 
-        # First discover a field
-        avail_repo = AvailableFieldRepository(async_session)
-        await avail_repo.upsert_field(listing.id, "notes", "Sample note")
-
         repo = CustomFieldRepository(async_session)
-        field = CustomField(
+
+        # First, verify field is rejected before discovery
+        field_before = CustomField(
             listing_id=listing.id,
-            field_name="notes",
-            display_label="Notes",
+            field_name="myCustomApiField",
+            display_label="My Custom Field",
             enabled=True,
             sort_order=0,
         )
+        with pytest.raises(ValueError, match="Invalid field_name"):
+            await repo.create(field_before)
 
-        created = await repo.create(field)
+        # Now discover the field
+        avail_repo = AvailableFieldRepository(async_session)
+        await avail_repo.upsert_field(listing.id, "myCustomApiField", "Sample value")
+
+        # Now creating should succeed
+        field_after = CustomField(
+            listing_id=listing.id,
+            field_name="myCustomApiField",
+            display_label="My Custom Field",
+            enabled=True,
+            sort_order=0,
+        )
+        created = await repo.create(field_after)
 
         assert created.id is not None
-        assert created.field_name == "notes"
+        assert created.field_name == "myCustomApiField"
 
     @pytest.mark.asyncio
     async def test_create_invalid_field_name(self, async_session):
