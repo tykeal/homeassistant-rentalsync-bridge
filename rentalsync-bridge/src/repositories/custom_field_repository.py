@@ -9,11 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.available_field import AvailableField
 from src.models.custom_field import CustomField
-
-# Built-in fields always available (computed/special fields)
-BUILTIN_FIELDS: dict[str, str] = {
-    "guest_phone_last4": "Guest Phone (Last 4 Digits)",
-}
+from src.repositories.available_field_repository import (
+    BUILTIN_FIELDS,
+    DEFAULT_CLOUDBEDS_FIELDS,
+)
 
 
 class CustomFieldRepository:
@@ -101,7 +100,10 @@ class CustomFieldRepository:
         return result.scalar_one_or_none()
 
     async def get_available_fields_for_listing(self, listing_id: int) -> dict[str, str]:
-        """Get available fields for a listing (discovered + built-in).
+        """Get available fields for a listing.
+
+        Combines: default Cloudbeds fields + discovered fields + built-in fields.
+        This ensures users can configure fields even before first sync.
 
         Args:
             listing_id: Listing ID to get fields for.
@@ -109,12 +111,15 @@ class CustomFieldRepository:
         Returns:
             Dictionary mapping field_key to display_name.
         """
+        # Start with default Cloudbeds fields
+        fields = DEFAULT_CLOUDBEDS_FIELDS.copy()
+        # Add/override with discovered fields from actual data
         result = await self._session.execute(
             select(AvailableField).where(AvailableField.listing_id == listing_id)
         )
         available = result.scalars().all()
-        fields = {f.field_key: f.display_name for f in available}
-        # Add built-in fields
+        fields.update({f.field_key: f.display_name for f in available})
+        # Add built-in computed fields
         fields.update(BUILTIN_FIELDS)
         return fields
 
@@ -204,9 +209,20 @@ class CustomFieldRepository:
     def get_builtin_fields() -> dict[str, str]:
         """Get dictionary of built-in custom field names and labels.
 
-        These are always available regardless of Cloudbeds data.
+        These are computed/special fields always available.
 
         Returns:
             Dictionary mapping field_name to display_label.
         """
         return BUILTIN_FIELDS.copy()
+
+    @staticmethod
+    def get_default_cloudbeds_fields() -> dict[str, str]:
+        """Get dictionary of default Cloudbeds field names and labels.
+
+        These are common fields available even without sync data.
+
+        Returns:
+            Dictionary mapping field_name to display_label.
+        """
+        return DEFAULT_CLOUDBEDS_FIELDS.copy()

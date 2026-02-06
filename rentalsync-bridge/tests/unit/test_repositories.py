@@ -526,3 +526,44 @@ class TestCustomFieldRepository:
         assert created.id is not None
         assert created.field_name == "guest_phone_last4"
         assert created.display_label == "Guest Phone (Last 4 Digits)"
+
+    def test_default_cloudbeds_fields(self):
+        """Test default Cloudbeds fields are available."""
+        fields = CustomFieldRepository.get_default_cloudbeds_fields()
+
+        # Should have common Cloudbeds fields
+        assert "guestName" in fields
+        assert "notes" in fields
+        assert "sourceName" in fields
+        assert "status" in fields
+        # Should have many fields available
+        assert len(fields) >= 10
+
+    @pytest.mark.asyncio
+    async def test_create_default_cloudbeds_field(self, async_session):
+        """Test creating a field from default Cloudbeds fields."""
+        listing_repo = ListingRepository(async_session)
+        listing = await listing_repo.create(
+            Listing(
+                cloudbeds_id="default_field_test",
+                name="Default Field Test",
+                enabled=True,
+                sync_enabled=True,
+                timezone="UTC",
+            )
+        )
+
+        repo = CustomFieldRepository(async_session)
+        # Use a default Cloudbeds field (no need to discover first)
+        field = CustomField(
+            listing_id=listing.id,
+            field_name="notes",
+            display_label="Booking Notes",
+            enabled=True,
+            sort_order=0,
+        )
+
+        created = await repo.create(field)
+
+        assert created.id is not None
+        assert created.field_name == "notes"

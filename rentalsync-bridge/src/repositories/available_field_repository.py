@@ -18,9 +18,35 @@ EXCLUDED_FIELD_PATTERNS = [
     r"^id$",
 ]
 
-# Fields that should always be available (built-in)
+# Fields that should always be available (built-in/computed)
 BUILTIN_FIELDS: dict[str, str] = {
     "guest_phone_last4": "Guest Phone (Last 4 Digits)",
+}
+
+# Default Cloudbeds fields - always available even without reservations
+# These are common fields returned by the Cloudbeds API
+DEFAULT_CLOUDBEDS_FIELDS: dict[str, str] = {
+    "guestName": "Guest Name",
+    "guestFirstName": "Guest First Name",
+    "guestLastName": "Guest Last Name",
+    "guestEmail": "Guest Email",
+    "guestPhone": "Guest Phone",
+    "guestCountry": "Guest Country",
+    "notes": "Booking Notes",
+    "status": "Booking Status",
+    "sourceName": "Booking Source",
+    "startDate": "Check-in Date",
+    "endDate": "Check-out Date",
+    "dateCreated": "Date Created",
+    "adults": "Number of Adults",
+    "children": "Number of Children",
+    "balance": "Balance Due",
+    "total": "Total Amount",
+    "paid": "Amount Paid",
+    "roomTypeName": "Room Type",
+    "roomName": "Room Name",
+    "confirmationCode": "Confirmation Code",
+    "estimatedArrivalTime": "Estimated Arrival Time",
 }
 
 
@@ -175,7 +201,8 @@ class AvailableFieldRepository:
     async def get_all_field_keys(self, listing_id: int) -> dict[str, str]:
         """Get all available field keys and display names for a listing.
 
-        Combines dynamically discovered fields with built-in fields.
+        Combines: default Cloudbeds fields + discovered fields + built-in fields.
+        Discovered fields override defaults if they have the same key.
 
         Args:
             listing_id: Listing ID to get fields for.
@@ -183,8 +210,11 @@ class AvailableFieldRepository:
         Returns:
             Dictionary mapping field_key to display_name.
         """
+        # Start with default Cloudbeds fields
+        result = DEFAULT_CLOUDBEDS_FIELDS.copy()
+        # Add/override with discovered fields from actual data
         fields = await self.get_for_listing(listing_id)
-        result = {f.field_key: f.display_name for f in fields}
-        # Add built-in fields
+        result.update({f.field_key: f.display_name for f in fields})
+        # Add built-in computed fields
         result.update(BUILTIN_FIELDS)
         return result

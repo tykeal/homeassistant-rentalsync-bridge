@@ -967,15 +967,17 @@ function addField() {
     ).map(input => input.value).filter(Boolean);
 
     // Filter available fields to only show unconfigured ones
-    const unconfiguredFields = Object.entries(customFieldsModal.availableFields).filter(
-        ([fieldName, /* displayLabel - unused in filter */]) => !configuredFieldNames.includes(fieldName)
+    // API returns array of {field_key, display_name, sample_value, source}
+    const unconfiguredFields = customFieldsModal.availableFields.filter(
+        (field) => !configuredFieldNames.includes(field.field_key)
     );
 
-    // Create dropdown options
-    const options = unconfiguredFields.map(
-        ([fieldName, displayLabel]) =>
-            `<option value="${escapeHtml(fieldName)}">${escapeHtml(displayLabel)}</option>`
-    ).join('');
+    // Create dropdown options with sample value hints
+    const options = unconfiguredFields.map((field) => {
+        const hint = field.sample_value ? ` (e.g. ${field.sample_value})` : '';
+        const label = `${field.display_name}${hint}`;
+        return `<option value="${escapeHtml(field.field_key)}">${escapeHtml(label)}</option>`;
+    }).join('');
 
     fieldItem.innerHTML = `
         <select data-field="field_name">

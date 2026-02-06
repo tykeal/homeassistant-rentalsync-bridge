@@ -122,11 +122,15 @@ class TestGetAvailableCustomFields:
 
         available = response["available_fields"]
 
+        # Should include default Cloudbeds fields + built-in fields
+        assert len(available) > 0
+
         # Verify each entry has expected keys
         for field in available:
             assert "field_key" in field
             assert "display_name" in field
             assert "sample_value" in field
+            assert "source" in field
             assert isinstance(field["field_key"], str)
             assert isinstance(field["display_name"], str)
             assert len(field["field_key"]) > 0

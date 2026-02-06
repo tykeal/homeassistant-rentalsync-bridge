@@ -204,6 +204,9 @@ class AvailableFieldResponse(BaseModel):
     field_key: str = Field(description="Field key from Cloudbeds")
     display_name: str = Field(description="Human-readable display name")
     sample_value: str | None = Field(description="Sample value from last sync")
+    source: str = Field(
+        description="Field source: 'default', 'discovered', or 'builtin'"
+    )
 
 
 class AvailableCustomFieldsResponse(BaseModel):
@@ -254,27 +257,43 @@ async def get_available_custom_fields(
         .order_by(AvailableField.display_name)
     )
     discovered_fields = result.scalars().all()
+    discovered_keys = {f.field_key for f in discovered_fields}
 
-    # Build response with discovered fields
+    # Start with default Cloudbeds fields (always available)
+    defaults = CustomFieldRepository.get_default_cloudbeds_fields()
     available: list[dict[str, Any]] = [
         {
-            "field_key": f.field_key,
-            "display_name": f.display_name,
-            "sample_value": f.sample_value,
+            "field_key": key,
+            "display_name": name,
+            "sample_value": None,
+            "source": "default",
         }
-        for f in discovered_fields
+        for key, name in defaults.items()
+        if key not in discovered_keys  # Don't duplicate discovered fields
     ]
 
-    # Add built-in fields
+    # Add discovered fields (may override defaults with sample values)
+    for f in discovered_fields:
+        available.append(
+            {
+                "field_key": f.field_key,
+                "display_name": f.display_name,
+                "sample_value": f.sample_value,
+                "source": "discovered",
+            }
+        )
+
+    # Add built-in computed fields
     builtin = CustomFieldRepository.get_builtin_fields()
+    existing_keys = {f["field_key"] for f in available}
     for key, name in builtin.items():
-        # Don't add if already discovered
-        if not any(f["field_key"] == key for f in available):
+        if key not in existing_keys:
             available.append(
                 {
                     "field_key": key,
                     "display_name": name,
                     "sample_value": None,
+                    "source": "builtin",
                 }
             )
 
