@@ -196,7 +196,8 @@ class AvailableFieldRepository:
             if value is None or value == "" or isinstance(value, (dict, list)):
                 continue
 
-            sample = str(value)[:500] if value else None
+            # Value is already validated as not None/empty, safe to convert
+            sample = str(value)[:500]
             field = await self.upsert_field(listing_id, key, sample)
             if field:
                 discovered.append(field)
@@ -211,7 +212,8 @@ class AvailableFieldRepository:
                     if value is None or value == "" or isinstance(value, (dict, list)):
                         continue
 
-                    sample = str(value)[:500] if value else None
+                    # Value is already validated as not None/empty, safe to convert
+                    sample = str(value)[:500]
                     field = await self.upsert_field(listing_id, key, sample)
                     if field:
                         discovered.append(field)
