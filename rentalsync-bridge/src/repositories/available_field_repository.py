@@ -177,6 +177,10 @@ class AvailableFieldRepository:
     ) -> list[AvailableField]:
         """Discover and store fields from a reservation.
 
+        Discovers fields from both the top-level reservation and from
+        the rooms array (if present) to capture room-specific fields
+        like roomTypeName and roomName.
+
         Args:
             listing_id: Listing ID to associate fields with.
             reservation: Reservation dict from Cloudbeds API.
@@ -186,6 +190,7 @@ class AvailableFieldRepository:
         """
         discovered: list[AvailableField] = []
 
+        # Discover from top-level reservation fields
         for key, value in reservation.items():
             # Skip None, empty, and complex values (dicts, lists)
             if value is None or value == "" or isinstance(value, (dict, list)):
@@ -195,6 +200,21 @@ class AvailableFieldRepository:
             field = await self.upsert_field(listing_id, key, sample)
             if field:
                 discovered.append(field)
+
+        # Also discover from first room in rooms array (if present)
+        rooms = reservation.get("rooms", [])
+        if rooms and isinstance(rooms, list) and len(rooms) > 0:
+            first_room = rooms[0]
+            if isinstance(first_room, dict):
+                for key, value in first_room.items():
+                    # Skip None, empty, and complex values
+                    if value is None or value == "" or isinstance(value, (dict, list)):
+                        continue
+
+                    sample = str(value)[:500] if value else None
+                    field = await self.upsert_field(listing_id, key, sample)
+                    if field:
+                        discovered.append(field)
 
         return discovered
 
