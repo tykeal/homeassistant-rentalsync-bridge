@@ -12,11 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.models.available_field import AvailableField
 
 # Fields to exclude from discovery (internal/system fields)
-EXCLUDED_FIELD_PATTERNS = [
-    r"^_",  # Internal fields starting with underscore
-    r"[A-Z]d$",  # ID fields ending in Id (camelCase: reservationId, roomId)
-    r"ID$",  # ID fields ending in ID (ALLCAPS: propertyID, roomID)
-    r"^id$",  # Exact match for "id" field
+# Precompiled for performance in tight loops during sync/discovery
+_EXCLUDED_FIELD_PATTERNS = [
+    re.compile(r"^_"),  # Internal fields starting with underscore
+    re.compile(r"[A-Z]d$"),  # ID fields ending in Id (camelCase)
+    re.compile(r"ID$"),  # ID fields ending in ID (ALLCAPS)
+    re.compile(r"^id$"),  # Exact match for "id" field
 ]
 
 # Fields that should always be available (built-in/computed)
@@ -81,7 +82,7 @@ def should_exclude_field(field_key: str) -> bool:
     Returns:
         True if field should be excluded.
     """
-    return any(re.search(pattern, field_key) for pattern in EXCLUDED_FIELD_PATTERNS)
+    return any(pattern.search(field_key) for pattern in _EXCLUDED_FIELD_PATTERNS)
 
 
 class AvailableFieldRepository:
