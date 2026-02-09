@@ -66,7 +66,7 @@ def _camel_to_display(name: str) -> str:
     return spaced.title()
 
 
-def _should_exclude_field(field_key: str) -> bool:
+def should_exclude_field(field_key: str) -> bool:
     """Check if a field should be excluded from discovery.
 
     Excludes ID fields (reservationId, propertyID, etc.) but not fields
@@ -148,7 +148,7 @@ class AvailableFieldRepository:
         Returns:
             Created/updated field, or None if field should be excluded.
         """
-        if _should_exclude_field(field_key):
+        if should_exclude_field(field_key):
             return None
 
         existing = await self.get_by_field_key(listing_id, field_key)
@@ -156,16 +156,28 @@ class AvailableFieldRepository:
 
         if existing:
             existing.last_seen_at = now
-            if sample_value and not existing.sample_value:
+            # Only update sample if we have a new value and existing is empty
+            # Use explicit None/empty check to preserve falsy values like "0"
+            if (
+                sample_value is not None
+                and sample_value != ""
+                and (existing.sample_value is None or existing.sample_value == "")
+            ):
                 existing.sample_value = sample_value[:500]
             await self._session.flush()
             return existing
 
+        # Store sample_value preserving falsy values like "0" or "false"
+        stored_sample = (
+            sample_value[:500]
+            if sample_value is not None and sample_value != ""
+            else None
+        )
         field = AvailableField(
             listing_id=listing_id,
             field_key=field_key,
             display_name=_camel_to_display(field_key),
-            sample_value=sample_value[:500] if sample_value else None,
+            sample_value=stored_sample,
             discovered_at=now,
             last_seen_at=now,
         )
@@ -178,6 +190,7 @@ class AvailableFieldRepository:
         self,
         listing_id: int,
         reservation: dict,
+        already_discovered: set[str] | None = None,
     ) -> list[AvailableField]:
         """Discover and store fields from a reservation.
 
@@ -189,17 +202,27 @@ class AvailableFieldRepository:
         rooms share the same schema - we only need to identify which
         field keys exist, not sample every room's values.
 
+        Uses already_discovered set to skip fields already processed in
+        this sync run, avoiding redundant database operations.
+
         Args:
             listing_id: Listing ID to associate fields with.
             reservation: Reservation dict from Cloudbeds API.
+            already_discovered: Optional set of field keys already processed
+                in this sync run. Will be updated with newly discovered keys.
 
         Returns:
             List of discovered/updated fields.
         """
         discovered: list[AvailableField] = []
+        if already_discovered is None:
+            already_discovered = set()
 
         # Discover from top-level reservation fields
         for key, value in reservation.items():
+            # Skip already-discovered fields in this sync run
+            if key in already_discovered:
+                continue
             # Skip None, empty, and complex values (dicts, lists)
             if value is None or value == "" or isinstance(value, (dict, list)):
                 continue
@@ -209,6 +232,7 @@ class AvailableFieldRepository:
             field = await self.upsert_field(listing_id, key, sample)
             if field:
                 discovered.append(field)
+                already_discovered.add(key)
 
         # Also discover from first room in rooms array (if present)
         rooms = reservation.get("rooms", [])
@@ -216,6 +240,9 @@ class AvailableFieldRepository:
             first_room = rooms[0]
             if isinstance(first_room, dict):
                 for key, value in first_room.items():
+                    # Skip already-discovered fields in this sync run
+                    if key in already_discovered:
+                        continue
                     # Skip None, empty, and complex values
                     if value is None or value == "" or isinstance(value, (dict, list)):
                         continue
@@ -225,6 +252,7 @@ class AvailableFieldRepository:
                     field = await self.upsert_field(listing_id, key, sample)
                     if field:
                         discovered.append(field)
+                        already_discovered.add(key)
 
         return discovered
 

@@ -136,13 +136,23 @@ async def update_custom_fields(
     available_fields = await custom_repo.get_available_fields_for_listing(listing_id)
 
     # Collect and validate field names from request BEFORE making any changes
+    # Fail fast on malformed entries to prevent unintended deletions
     requested_field_names: set[str] = set()
-    for field_data in request.fields:
+    for i, field_data in enumerate(request.fields):
         field_name = field_data.get("field_name")
         display_label = field_data.get("display_label")
 
-        if not field_name or not display_label:
-            continue
+        # Reject entries missing required keys instead of silently skipping
+        if not field_name:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Field at index {i} missing required 'field_name'",
+            )
+        if not display_label:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Field '{field_name}' missing required 'display_label'",
+            )
 
         # Validate field_name against available fields for this listing
         if field_name not in available_fields:
@@ -169,14 +179,12 @@ async def update_custom_fields(
             await db.delete(existing)
 
     # Create or update fields using the lookup
+    # All fields are validated above, so we can safely process all entries
     for i, field_data in enumerate(request.fields):
-        field_name = field_data.get("field_name")
-        display_label = field_data.get("display_label")
+        field_name = field_data["field_name"]
+        display_label = field_data["display_label"]
         enabled = field_data.get("enabled", True)
         sort_order = field_data.get("sort_order", i)
-
-        if not field_name or not display_label:
-            continue
 
         existing_field = existing_by_name.get(field_name)
 

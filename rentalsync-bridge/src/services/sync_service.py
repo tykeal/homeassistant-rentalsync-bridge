@@ -14,7 +14,7 @@ from src.models.listing import Listing
 from src.models.oauth_credential import OAuthCredential
 from src.repositories.available_field_repository import (
     AvailableFieldRepository,
-    _should_exclude_field,
+    should_exclude_field,
 )
 from src.repositories.booking_repository import BookingRepository
 from src.repositories.room_repository import RoomRepository
@@ -146,7 +146,7 @@ class SyncService:
         counts = {"inserted": 0, "updated": 0, "cancelled": 0}
         seen_booking_ids: set[str] = set()
         seen_reservation_ids: set[str] = set()  # Track base reservation IDs
-        fields_discovered = False
+        discovered_field_keys: set[str] = set()  # Track discovered fields across all
 
         for reservation in reservations:
             cloudbeds_booking_id = reservation.get("id") or reservation.get(
@@ -159,12 +159,11 @@ class SyncService:
             # Track the reservation ID from API for cancellation detection
             seen_reservation_ids.add(str(cloudbeds_booking_id))
 
-            # Discover available fields from first reservation only (performance)
-            if not fields_discovered:
-                await self._available_field_repo.discover_fields_from_reservation(
-                    listing.id, reservation
-                )
-                fields_discovered = True
+            # Discover available fields from each reservation (deduped by repo)
+            # This ensures optional/conditional fields are captured across the sync
+            await self._available_field_repo.discover_fields_from_reservation(
+                listing.id, reservation, discovered_field_keys
+            )
 
             # Extract booking data
             booking_data = self._extract_booking_data(reservation)
@@ -352,8 +351,8 @@ class SyncService:
                 # Skip None, empty, and complex values
                 if value is None or value == "" or isinstance(value, (dict, list)):
                     continue
-                # Skip ID fields
-                if key.lower().endswith("id") or key == "id":
+                # Skip ID fields using shared exclusion logic
+                if should_exclude_field(key):
                     continue
                 # Room data overrides reservation-level data
                 merged[key] = str(value)
@@ -536,7 +535,7 @@ class SyncService:
             if value is None or value == "" or isinstance(value, (dict, list)):
                 continue
             # Skip ID fields using shared exclusion logic
-            if _should_exclude_field(key):
+            if should_exclude_field(key):
                 continue
             # Store the value as string
             custom_data[key] = str(value)
@@ -548,7 +547,7 @@ class SyncService:
                 if value is None or value == "" or isinstance(value, (dict, list)):
                     continue
                 # Skip ID fields using shared exclusion logic
-                if _should_exclude_field(key):
+                if should_exclude_field(key):
                     continue
                 # Room data overrides top-level reservation data
                 custom_data[key] = str(value)

@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from src.models import Booking, CustomField, Listing
+from src.repositories.available_field_repository import AvailableFieldRepository
 from src.repositories.booking_repository import BookingRepository
 from src.repositories.custom_field_repository import (
     BUILTIN_FIELDS,
@@ -583,3 +584,113 @@ class TestCustomFieldRepository:
 
         assert created.id is not None
         assert created.field_name == "notes"
+
+
+class TestAvailableFieldRepository:
+    """Tests for AvailableFieldRepository."""
+
+    @pytest.mark.asyncio
+    async def test_upsert_preserves_falsy_sample_zero(self, async_session):
+        """Test that sample_value '0' is preserved (not treated as empty)."""
+        listing_repo = ListingRepository(async_session)
+        listing = await listing_repo.create(
+            Listing(
+                cloudbeds_id="falsy_test",
+                name="Falsy Test",
+                enabled=True,
+                sync_enabled=True,
+                timezone="UTC",
+            )
+        )
+
+        repo = AvailableFieldRepository(async_session)
+        field = await repo.upsert_field(listing.id, "testAmount", "0")
+
+        assert field is not None
+        assert field.sample_value == "0"
+
+    @pytest.mark.asyncio
+    async def test_upsert_preserves_falsy_sample_false(self, async_session):
+        """Test that sample_value 'false' is preserved."""
+        listing_repo = ListingRepository(async_session)
+        listing = await listing_repo.create(
+            Listing(
+                cloudbeds_id="falsy_false",
+                name="Falsy False Test",
+                enabled=True,
+                sync_enabled=True,
+                timezone="UTC",
+            )
+        )
+
+        repo = AvailableFieldRepository(async_session)
+        field = await repo.upsert_field(listing.id, "isActive", "false")
+
+        assert field is not None
+        assert field.sample_value == "false"
+
+    @pytest.mark.asyncio
+    async def test_upsert_empty_string_becomes_none(self, async_session):
+        """Test that empty string sample_value becomes None."""
+        listing_repo = ListingRepository(async_session)
+        listing = await listing_repo.create(
+            Listing(
+                cloudbeds_id="empty_sample",
+                name="Empty Sample",
+                enabled=True,
+                sync_enabled=True,
+                timezone="UTC",
+            )
+        )
+
+        repo = AvailableFieldRepository(async_session)
+        field = await repo.upsert_field(listing.id, "testField", "")
+
+        assert field is not None
+        assert field.sample_value is None
+
+
+class TestShouldExcludeField:
+    """Tests for should_exclude_field function."""
+
+    def test_excludes_camelcase_id_suffix(self):
+        """Test that camelCase ID suffixes are excluded."""
+        from src.repositories.available_field_repository import should_exclude_field
+
+        assert should_exclude_field("reservationId") is True
+        assert should_exclude_field("roomId") is True
+        assert should_exclude_field("customerId") is True
+
+    def test_excludes_allcaps_id_suffix(self):
+        """Test that ALLCAPS ID suffixes are excluded."""
+        from src.repositories.available_field_repository import should_exclude_field
+
+        assert should_exclude_field("propertyID") is True
+        assert should_exclude_field("roomID") is True
+
+    def test_excludes_exact_id(self):
+        """Test that exact 'id' is excluded."""
+        from src.repositories.available_field_repository import should_exclude_field
+
+        assert should_exclude_field("id") is True
+
+    def test_does_not_exclude_paid(self):
+        """Test that 'paid' is NOT excluded (legitimate field)."""
+        from src.repositories.available_field_repository import should_exclude_field
+
+        assert should_exclude_field("paid") is False
+
+    def test_does_not_exclude_valid(self):
+        """Test that 'valid' is NOT excluded."""
+        from src.repositories.available_field_repository import should_exclude_field
+
+        assert should_exclude_field("valid") is False
+
+    def test_does_not_exclude_regular_fields(self):
+        """Test that regular fields are not excluded."""
+        from src.repositories.available_field_repository import should_exclude_field
+
+        assert should_exclude_field("guestName") is False
+        assert should_exclude_field("balance") is False
+        assert should_exclude_field("notes") is False
+        assert should_exclude_field("status") is False

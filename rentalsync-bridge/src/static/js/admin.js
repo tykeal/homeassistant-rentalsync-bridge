@@ -973,6 +973,12 @@ function addField() {
         (field) => !configuredFieldNames.includes(field.field_key)
     );
 
+    // Build lookup map from field_key to display_name for raw values
+    const displayNameLookup = {};
+    unconfiguredFields.forEach(field => {
+        displayNameLookup[field.field_key] = field.display_name;
+    });
+
     // Create dropdown options with sample value hints (only if sample exists)
     // Use explicit null/undefined check to preserve falsy values like "0" or "false"
     const options = unconfiguredFields.map((field) => {
@@ -980,7 +986,7 @@ function addField() {
             ? ` (e.g. ${field.sample_value})`
             : '';
         const label = `${field.display_name}${hint}`;
-        return `<option value="${escapeHtml(field.field_key)}" data-display="${escapeHtml(field.display_name)}">${escapeHtml(label)}</option>`;
+        return `<option value="${escapeHtml(field.field_key)}">${escapeHtml(label)}</option>`;
     }).join('');
 
     fieldItem.innerHTML = `
@@ -996,13 +1002,13 @@ function addField() {
         <button class="remove-btn" data-action="remove-field">&times;</button>
     `;
 
-    // Auto-populate label when field is selected
+    // Auto-populate label when field is selected (use lookup for raw value)
     const select = fieldItem.querySelector('select');
     const labelInput = fieldItem.querySelector('[data-field="display_label"]');
     select.addEventListener('change', () => {
-        const selectedOption = select.options[select.selectedIndex];
-        if (selectedOption && selectedOption.dataset.display) {
-            labelInput.value = selectedOption.dataset.display;
+        const fieldKey = select.value;
+        if (fieldKey && displayNameLookup[fieldKey]) {
+            labelInput.value = displayNameLookup[fieldKey];
         }
     });
 
