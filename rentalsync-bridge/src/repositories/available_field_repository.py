@@ -24,6 +24,9 @@ BUILTIN_FIELDS: dict[str, str] = {
     "guest_phone_last4": "Guest Phone (Last 4 Digits)",
 }
 
+# Max fields to show in error messages before truncating
+ERROR_MESSAGE_MAX_FIELDS = 10
+
 # Default Cloudbeds fields - always available even without reservations
 # These are common fields returned by the Cloudbeds API
 DEFAULT_CLOUDBEDS_FIELDS: dict[str, str] = {
@@ -186,6 +189,31 @@ class AvailableFieldRepository:
         await self._session.refresh(field)
         return field
 
+    @staticmethod
+    def _collect_field_candidates(
+        data: dict,
+        already_discovered: set[str],
+        existing_keys: set[str],
+    ) -> list[tuple[str, str]]:
+        """Collect field candidates from a dict for discovery.
+
+        Args:
+            data: Dict of fields to inspect (reservation or room).
+            already_discovered: Set of keys already seen in this sync.
+            existing_keys: Set of keys already collected as candidates.
+
+        Returns:
+            List of (key, sample_value) tuples for valid candidates.
+        """
+        candidates: list[tuple[str, str]] = []
+        for key, value in data.items():
+            if key in already_discovered or key in existing_keys:
+                continue
+            if value is None or value == "" or isinstance(value, (dict, list)):
+                continue
+            candidates.append((key, str(value)[:500]))
+        return candidates
+
     async def discover_fields_from_reservation(
         self,
         listing_id: int,
@@ -218,43 +246,85 @@ class AvailableFieldRepository:
         if already_discovered is None:
             already_discovered = set()
 
-        # Discover from top-level reservation fields
-        for key, value in reservation.items():
-            # Skip already-discovered fields in this sync run
-            if key in already_discovered:
-                continue
-            # Skip None, empty, and complex values (dicts, lists)
-            if value is None or value == "" or isinstance(value, (dict, list)):
-                continue
+        # Collect candidates from reservation (top-level)
+        candidates = self._collect_field_candidates(
+            reservation, already_discovered, set()
+        )
+        candidate_keys = {c[0] for c in candidates}
 
-            # Value is already validated as not None/empty, safe to convert
-            sample = str(value)[:500]
-            field = await self.upsert_field(listing_id, key, sample)
-            if field:
-                discovered.append(field)
-                already_discovered.add(key)
-
-        # Also discover from first room in rooms array (if present)
+        # Also collect from first room in rooms array (if present)
         rooms = reservation.get("rooms", [])
         if rooms and isinstance(rooms, list) and len(rooms) > 0:
             first_room = rooms[0]
             if isinstance(first_room, dict):
-                for key, value in first_room.items():
-                    # Skip already-discovered fields in this sync run
-                    if key in already_discovered:
-                        continue
-                    # Skip None, empty, and complex values
-                    if value is None or value == "" or isinstance(value, (dict, list)):
-                        continue
+                room_candidates = self._collect_field_candidates(
+                    first_room, already_discovered, candidate_keys
+                )
+                candidates.extend(room_candidates)
 
-                    # Value is already validated as not None/empty, safe to convert
-                    sample = str(value)[:500]
-                    field = await self.upsert_field(listing_id, key, sample)
-                    if field:
-                        discovered.append(field)
-                        already_discovered.add(key)
+        if not candidates:
+            return discovered
 
+        # Bulk-fetch existing fields for this listing to avoid N+1 queries
+        existing_fields = await self.get_for_listing(listing_id)
+        existing_by_key: dict[str, AvailableField] = {
+            f.field_key: f for f in existing_fields
+        }
+
+        now = datetime.now(UTC)
+        for key, sample in candidates:
+            if should_exclude_field(key):
+                continue
+
+            field = self._upsert_field_in_memory(
+                listing_id, key, sample, existing_by_key, now
+            )
+            discovered.append(field)
+            already_discovered.add(key)
+
+        await self._session.flush()
         return discovered
+
+    def _upsert_field_in_memory(
+        self,
+        listing_id: int,
+        key: str,
+        sample: str,
+        existing_by_key: dict[str, AvailableField],
+        now: datetime,
+    ) -> AvailableField:
+        """Create or update a field using in-memory lookup.
+
+        Args:
+            listing_id: Listing ID for new fields.
+            key: Field key.
+            sample: Sample value.
+            existing_by_key: Lookup dict of existing fields.
+            now: Current timestamp.
+
+        Returns:
+            The created or updated field.
+        """
+        existing = existing_by_key.get(key)
+        if existing:
+            existing.last_seen_at = now
+            if sample and (
+                existing.sample_value is None or existing.sample_value == ""
+            ):
+                existing.sample_value = sample
+            return existing
+
+        field = AvailableField(
+            listing_id=listing_id,
+            field_key=key,
+            display_name=_camel_to_display(key),
+            sample_value=sample if sample else None,
+            discovered_at=now,
+            last_seen_at=now,
+        )
+        self._session.add(field)
+        existing_by_key[key] = field
+        return field
 
     async def get_all_field_keys(self, listing_id: int) -> dict[str, str]:
         """Get all available field keys and display names for a listing.

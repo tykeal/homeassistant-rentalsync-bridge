@@ -540,17 +540,9 @@ class SyncService:
             # Store the value as string
             custom_data[key] = str(value)
 
-        # Merge room-specific data (e.g., roomTypeName, roomName)
-        if room_data and isinstance(room_data, dict):
-            for key, value in room_data.items():
-                # Skip None, empty, and complex values
-                if value is None or value == "" or isinstance(value, (dict, list)):
-                    continue
-                # Skip ID fields using shared exclusion logic
-                if should_exclude_field(key):
-                    continue
-                # Room data overrides top-level reservation data
-                custom_data[key] = str(value)
+        # Merge room-specific data using shared helper to avoid duplication
+        if room_data:
+            custom_data = SyncService._merge_room_custom_data(custom_data, room_data)
 
         # Add guest_phone_last4 as a special computed field
         if phone_last4:

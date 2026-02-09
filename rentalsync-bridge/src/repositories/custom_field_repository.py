@@ -11,6 +11,7 @@ from src.models.custom_field import CustomField
 from src.repositories.available_field_repository import (
     BUILTIN_FIELDS,
     DEFAULT_CLOUDBEDS_FIELDS,
+    ERROR_MESSAGE_MAX_FIELDS,
     AvailableFieldRepository,
 )
 
@@ -128,7 +129,13 @@ class CustomFieldRepository:
         """
         available = await self.get_available_fields_for_listing(field.listing_id)
         if field.field_name not in available:
-            allowed = ", ".join(sorted(available.keys()))
+            # Truncate allowed fields list to avoid unwieldy error messages
+            sorted_keys = sorted(available.keys())
+            if len(sorted_keys) > ERROR_MESSAGE_MAX_FIELDS:
+                shown = ", ".join(sorted_keys[:ERROR_MESSAGE_MAX_FIELDS])
+                allowed = f"{shown}... ({len(sorted_keys)} total fields available)"
+            else:
+                allowed = ", ".join(sorted_keys)
             msg = f"Invalid field_name '{field.field_name}'. Allowed: {allowed}"
             raise ValueError(msg)
 
