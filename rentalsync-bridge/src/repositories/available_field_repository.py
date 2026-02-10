@@ -70,6 +70,21 @@ def _camel_to_display(name: str) -> str:
     return spaced.title()
 
 
+def _get_display_name(field_key: str) -> str:
+    """Get display name for a field, preferring curated defaults.
+
+    Uses curated display names from DEFAULT_CLOUDBEDS_FIELDS when available,
+    falling back to auto-generated names via _camel_to_display.
+
+    Args:
+        field_key: Field key to get display name for.
+
+    Returns:
+        Human-readable display name.
+    """
+    return DEFAULT_CLOUDBEDS_FIELDS.get(field_key, _camel_to_display(field_key))
+
+
 def should_exclude_field(field_key: str) -> bool:
     """Check if a field should be excluded from discovery.
 
@@ -119,20 +134,23 @@ class AvailableFieldRepository:
         """
         self._session = session
 
-    async def get_for_listing(self, listing_id: int) -> Sequence[AvailableField]:
+    async def get_for_listing(
+        self, listing_id: int, *, ordered: bool = True
+    ) -> Sequence[AvailableField]:
         """Get all available fields for a listing.
 
         Args:
             listing_id: Listing ID to filter by.
+            ordered: If True, order by display_name (default). Set to False
+                for internal operations where ordering is unnecessary.
 
         Returns:
-            Sequence of available fields ordered by display_name.
+            Sequence of available fields.
         """
-        result = await self._session.execute(
-            select(AvailableField)
-            .where(AvailableField.listing_id == listing_id)
-            .order_by(AvailableField.display_name)
-        )
+        query = select(AvailableField).where(AvailableField.listing_id == listing_id)
+        if ordered:
+            query = query.order_by(AvailableField.display_name)
+        result = await self._session.execute(query)
         return result.scalars().all()
 
     async def get_by_field_key(
@@ -199,7 +217,7 @@ class AvailableFieldRepository:
         field = AvailableField(
             listing_id=listing_id,
             field_key=field_key,
-            display_name=_camel_to_display(field_key),
+            display_name=_get_display_name(field_key),
             sample_value=stored_sample,
             discovered_at=now,
             last_seen_at=now,
@@ -292,7 +310,7 @@ class AvailableFieldRepository:
             return discovered
 
         # Bulk-fetch existing fields for this listing to avoid N+1 queries
-        existing_fields = await self.get_for_listing(listing_id)
+        existing_fields = await self.get_for_listing(listing_id, ordered=False)
         existing_by_key: dict[str, AvailableField] = {
             f.field_key: f for f in existing_fields
         }
@@ -341,7 +359,7 @@ class AvailableFieldRepository:
         field = AvailableField(
             listing_id=listing_id,
             field_key=key,
-            display_name=_camel_to_display(key),
+            display_name=_get_display_name(key),
             sample_value=sample if sample else None,
             discovered_at=now,
             last_seen_at=now,
@@ -365,7 +383,7 @@ class AvailableFieldRepository:
         # Start with default Cloudbeds fields
         result = DEFAULT_CLOUDBEDS_FIELDS.copy()
         # Add/override with discovered fields from actual data
-        fields = await self.get_for_listing(listing_id)
+        fields = await self.get_for_listing(listing_id, ordered=False)
         result.update({f.field_key: f.display_name for f in fields})
         # Add built-in computed fields
         result.update(BUILTIN_FIELDS)
@@ -386,7 +404,7 @@ class AvailableFieldRepository:
             List of dicts with field_key, display_name, sample_value, source.
         """
         # Get discovered fields from database
-        discovered_fields = await self.get_for_listing(listing_id)
+        discovered_fields = await self.get_for_listing(listing_id, ordered=False)
         discovered_keys = {f.field_key for f in discovered_fields}
 
         # Start with default Cloudbeds fields (always available)

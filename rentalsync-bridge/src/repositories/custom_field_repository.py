@@ -30,6 +30,7 @@ class CustomFieldRepository:
             session: Async SQLAlchemy session.
         """
         self._session = session
+        self._available_field_repo = AvailableFieldRepository(session)
 
     async def get_by_id(self, field_id: int) -> CustomField | None:
         """Get custom field by ID.
@@ -112,8 +113,7 @@ class CustomFieldRepository:
         Returns:
             Dictionary mapping field_key to display_name.
         """
-        available_repo = AvailableFieldRepository(self._session)
-        return await available_repo.get_all_field_keys(listing_id)
+        return await self._available_field_repo.get_all_field_keys(listing_id)
 
     async def create(self, field: CustomField) -> CustomField:
         """Create a new custom field.
