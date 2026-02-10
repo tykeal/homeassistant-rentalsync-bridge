@@ -382,8 +382,6 @@ class TestCustomFieldRepository:
         Uses a field key not in DEFAULT_CLOUDBEDS_FIELDS to verify
         that discovery is actually required for the field to be valid.
         """
-        from src.repositories.available_field_repository import AvailableFieldRepository
-
         listing_repo = ListingRepository(async_session)
         listing = await listing_repo.create(
             Listing(

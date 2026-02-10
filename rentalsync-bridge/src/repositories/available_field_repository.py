@@ -3,7 +3,7 @@
 """Repository for AvailableField database operations."""
 
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -83,6 +83,25 @@ def should_exclude_field(field_key: str) -> bool:
         True if field should be excluded.
     """
     return any(pattern.search(field_key) for pattern in _EXCLUDED_FIELD_PATTERNS)
+
+
+def format_allowed_fields_message(field_keys: Iterable[str]) -> str:
+    """Format allowed fields list for error messages, truncating if needed.
+
+    Centralizes error message formatting to ensure consistency across
+    API and repository callers.
+
+    Args:
+        field_keys: Collection of allowed field keys.
+
+    Returns:
+        Formatted string with field names, truncated if over limit.
+    """
+    sorted_keys = sorted(field_keys)
+    if len(sorted_keys) > ERROR_MESSAGE_MAX_FIELDS:
+        shown = ", ".join(sorted_keys[:ERROR_MESSAGE_MAX_FIELDS])
+        return f"{shown}... ({len(sorted_keys)} total)"
+    return ", ".join(sorted_keys)
 
 
 class AvailableFieldRepository:

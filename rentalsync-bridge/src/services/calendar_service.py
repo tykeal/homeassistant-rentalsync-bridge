@@ -321,7 +321,8 @@ class CalendarService:
         """
         if dt.tzinfo is None:
             # Naive datetime - assume it's in the target timezone
-            return dt.date()
+            # Explicitly apply timezone before extracting date
+            return dt.replace(tzinfo=tz).date()
         # Already aware - convert to target timezone, then extract date
         return dt.astimezone(tz).date()
 

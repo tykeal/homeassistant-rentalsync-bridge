@@ -1026,7 +1026,8 @@ function addAllFields() {
         (field) => !configuredFieldNames.includes(field.field_key)
     );
 
-    // Add each unconfigured field
+    // Build all field items in a DocumentFragment to minimize reflow
+    const fragment = document.createDocumentFragment();
     for (const field of unconfiguredFields) {
         const fieldItem = document.createElement('div');
         fieldItem.className = 'field-item';
@@ -1040,8 +1041,9 @@ function addAllFields() {
             </label>
             <button class="remove-btn" data-action="remove-field">&times;</button>
         `;
-        elements.customFieldsList.appendChild(fieldItem);
+        fragment.appendChild(fieldItem);
     }
+    elements.customFieldsList.appendChild(fragment);
 }
 
 async function saveCustomFields() {

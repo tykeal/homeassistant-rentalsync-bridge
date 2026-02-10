@@ -14,22 +14,13 @@ from src.api.ical import get_calendar_cache
 from src.database import get_db
 from src.models.available_field import AvailableField
 from src.models.custom_field import CustomField
-from src.repositories.available_field_repository import ERROR_MESSAGE_MAX_FIELDS
+from src.repositories.available_field_repository import format_allowed_fields_message
 from src.repositories.custom_field_repository import CustomFieldRepository
 from src.repositories.listing_repository import ListingRepository
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/listings", tags=["Custom Fields"])
-
-
-def _format_allowed_fields_list(available_fields: dict[str, str]) -> str:
-    """Format available fields list for error messages, truncating if needed."""
-    sorted_keys = sorted(available_fields.keys())
-    if len(sorted_keys) > ERROR_MESSAGE_MAX_FIELDS:
-        shown = ", ".join(sorted_keys[:ERROR_MESSAGE_MAX_FIELDS])
-        return f"{shown}... ({len(sorted_keys)} total)"
-    return ", ".join(sorted_keys)
 
 
 class CustomFieldResponse(BaseModel):
@@ -173,7 +164,7 @@ async def update_custom_fields(
 
         # Validate field_name against available fields for this listing
         if field_name not in available_fields:
-            allowed = _format_allowed_fields_list(available_fields)
+            allowed = format_allowed_fields_message(available_fields.keys())
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid field_name '{field_name}'. Must be one of: {allowed}",
