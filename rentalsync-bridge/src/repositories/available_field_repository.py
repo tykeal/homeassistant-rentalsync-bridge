@@ -224,7 +224,6 @@ class AvailableFieldRepository:
         )
         self._session.add(field)
         await self._session.flush()
-        await self._session.refresh(field)
         return field
 
     @staticmethod
@@ -347,33 +346,24 @@ class AvailableFieldRepository:
         if not reservations:
             return []
 
-        # Collect all candidates across all reservations first
-        already_discovered: set[str] = set()
-        all_candidates: list[tuple[str, str]] = []
+        # Collect unique candidates using dict (key -> first sample value seen)
+        # This dedupes during collection, avoiding the need for a second pass
+        candidates_by_key: dict[str, str] = {}
 
         for reservation in reservations:
-            # Collect candidates from reservation (top-level)
-            candidates = self._collect_field_candidates(
-                reservation, already_discovered, set()
-            )
-            candidate_keys = {c[0] for c in candidates}
+            # Collect from reservation top-level
+            self._collect_unique_candidates(reservation, candidates_by_key, set())
 
             # Also collect from first room in rooms array (if present)
             rooms = reservation.get("rooms", [])
             if rooms and isinstance(rooms, list) and len(rooms) > 0:
                 first_room = rooms[0]
                 if isinstance(first_room, dict):
-                    room_candidates = self._collect_field_candidates(
-                        first_room, already_discovered, candidate_keys
+                    self._collect_unique_candidates(
+                        first_room, candidates_by_key, set(candidates_by_key.keys())
                     )
-                    candidates.extend(room_candidates)
 
-            # Add to already_discovered to dedupe across reservations
-            for key, _ in candidates:
-                already_discovered.add(key)
-            all_candidates.extend(candidates)
-
-        if not all_candidates:
+        if not candidates_by_key:
             return []
 
         # Single DB fetch for all existing fields
@@ -385,14 +375,8 @@ class AvailableFieldRepository:
         # Upsert all fields in memory
         discovered: list[AvailableField] = []
         now = datetime.now(UTC)
-        seen_keys: set[str] = set()
 
-        for key, sample in all_candidates:
-            # Skip if we've already processed this key in this batch
-            if key in seen_keys:
-                continue
-            seen_keys.add(key)
-
+        for key, sample in candidates_by_key.items():
             field = self._upsert_field_in_memory(
                 listing_id, key, sample, existing_by_key, now
             )
@@ -401,6 +385,31 @@ class AvailableFieldRepository:
         # Single flush for all changes
         await self._session.flush()
         return discovered
+
+    def _collect_unique_candidates(
+        self,
+        data: dict,
+        candidates_by_key: dict[str, str],
+        existing_keys: set[str],
+    ) -> None:
+        """Collect field candidates into a dict, deduping by key.
+
+        Args:
+            data: Dict to extract fields from.
+            candidates_by_key: Dict to populate (key -> sample value).
+                Keys already present will not be overwritten.
+            existing_keys: Keys to skip (already collected from parent).
+        """
+        for key, value in data.items():
+            # Skip if already collected or if excluded
+            if key in candidates_by_key or key in existing_keys:
+                continue
+            if not isinstance(value, (str, int, float, bool)):
+                continue
+            if should_exclude_field(key):
+                continue
+            # Only store first sample value seen for each key
+            candidates_by_key[key] = str(value)[:500]
 
     def _upsert_field_in_memory(
         self,

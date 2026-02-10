@@ -3,7 +3,7 @@
 """Custom fields API endpoints."""
 
 import logging
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -229,7 +229,7 @@ async def update_custom_fields(
     logger.info("Updated custom fields for listing %s", listing_id)
 
     # Invalidate calendar cache for this listing (all room caches)
-    if listing.ical_url_slug:
+    if listing.ical_url_slug is not None:
         cache = get_calendar_cache()
         cache.invalidate_prefix(listing.ical_url_slug)
         logger.debug("Invalidated calendar cache for listing %s", listing.ical_url_slug)
@@ -262,7 +262,7 @@ class AvailableFieldResponse(BaseModel):
     field_key: str = Field(description="Field key from Cloudbeds")
     display_name: str = Field(description="Human-readable display name")
     sample_value: str | None = Field(description="Sample value from last sync")
-    source: str = Field(
+    source: Literal["default", "discovered", "builtin"] = Field(
         description="Field source: 'default', 'discovered', or 'builtin'"
     )
 

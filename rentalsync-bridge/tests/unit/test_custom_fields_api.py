@@ -174,7 +174,7 @@ class TestUpdateCustomFieldsCacheInvalidation:
 
     @pytest.mark.asyncio
     @patch("src.api.custom_fields.get_calendar_cache")
-    @patch("src.api.custom_fields.AvailableFieldRepository")
+    @patch("src.repositories.custom_field_repository.AvailableFieldRepository")
     @patch("src.api.custom_fields.ListingRepository")
     async def test_cache_invalidated_when_listing_has_ical_slug(
         self,
@@ -205,7 +205,7 @@ class TestUpdateCustomFieldsCacheInvalidation:
         mock_listing_repo.get_by_id = AsyncMock(return_value=listing)
         mock_listing_repo_cls.return_value = mock_listing_repo
 
-        # Mock AvailableFieldRepository
+        # Mock AvailableFieldRepository (used by CustomFieldRepository)
         mock_available_repo = MagicMock()
         mock_available_repo.get_all_field_keys = AsyncMock(
             return_value={"guestName": "Guest Name"}
@@ -241,7 +241,7 @@ class TestUpdateCustomFieldsCacheInvalidation:
 
     @pytest.mark.asyncio
     @patch("src.api.custom_fields.get_calendar_cache")
-    @patch("src.api.custom_fields.AvailableFieldRepository")
+    @patch("src.repositories.custom_field_repository.AvailableFieldRepository")
     @patch("src.api.custom_fields.ListingRepository")
     async def test_cache_not_invalidated_when_listing_has_no_ical_slug(
         self,
@@ -272,7 +272,7 @@ class TestUpdateCustomFieldsCacheInvalidation:
         mock_listing_repo.get_by_id = AsyncMock(return_value=listing)
         mock_listing_repo_cls.return_value = mock_listing_repo
 
-        # Mock AvailableFieldRepository
+        # Mock AvailableFieldRepository (used by CustomFieldRepository)
         mock_available_repo = MagicMock()
         mock_available_repo.get_all_field_keys = AsyncMock(
             return_value={"guestName": "Guest Name"}
