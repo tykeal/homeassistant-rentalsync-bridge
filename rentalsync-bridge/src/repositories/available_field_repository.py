@@ -198,6 +198,9 @@ class AvailableFieldRepository:
     ) -> list[tuple[str, str]]:
         """Collect field candidates from a dict for discovery.
 
+        Filters out excluded fields (ID fields, internal fields) during
+        collection to avoid triggering unnecessary database operations.
+
         Args:
             data: Dict of fields to inspect (reservation or room).
             already_discovered: Set of keys already seen in this sync.
@@ -211,6 +214,9 @@ class AvailableFieldRepository:
             if key in already_discovered or key in existing_keys:
                 continue
             if value is None or value == "" or isinstance(value, (dict, list)):
+                continue
+            # Filter excluded fields during collection to avoid DB work
+            if should_exclude_field(key):
                 continue
             candidates.append((key, str(value)[:500]))
         return candidates
@@ -274,9 +280,7 @@ class AvailableFieldRepository:
 
         now = datetime.now(UTC)
         for key, sample in candidates:
-            if should_exclude_field(key):
-                continue
-
+            # Exclusion already applied in _collect_field_candidates
             field = self._upsert_field_in_memory(
                 listing_id, key, sample, existing_by_key, now
             )

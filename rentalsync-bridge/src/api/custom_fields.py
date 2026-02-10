@@ -164,6 +164,13 @@ async def update_custom_fields(
                 detail=f"Field '{field_name}' missing required 'display_label'",
             )
 
+        # Reject duplicate field names in the same request
+        if field_name in requested_field_names:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Duplicate field_name '{field_name}' at index {i}",
+            )
+
         # Validate field_name against available fields for this listing
         if field_name not in available_fields:
             allowed = _format_allowed_fields_list(available_fields)
