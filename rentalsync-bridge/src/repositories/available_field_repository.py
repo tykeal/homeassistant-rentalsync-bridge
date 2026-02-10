@@ -56,18 +56,25 @@ DEFAULT_CLOUDBEDS_FIELDS: dict[str, str] = {
 
 
 def _camel_to_display(name: str) -> str:
-    """Convert camelCase to Display Name.
+    """Convert field name to human-readable Display Name.
+
+    Handles camelCase, snake_case, kebab-case, and digit boundaries.
 
     Args:
-        name: camelCase field name.
+        name: Field name in any common format.
 
     Returns:
         Human-readable display name.
     """
-    # Insert space before uppercase letters
-    spaced = re.sub(r"([a-z])([A-Z])", r"\1 \2", name)
-    # Capitalize first letter of each word
-    return spaced.title()
+    # Replace underscores and hyphens with spaces
+    spaced = name.replace("_", " ").replace("-", " ")
+    # Insert space before uppercase letters (camelCase -> camel Case)
+    spaced = re.sub(r"([a-z])([A-Z])", r"\1 \2", spaced)
+    # Insert space between letters and digits (field2 -> field 2)
+    spaced = re.sub(r"([a-zA-Z])(\d)", r"\1 \2", spaced)
+    spaced = re.sub(r"(\d)([a-zA-Z])", r"\1 \2", spaced)
+    # Collapse multiple spaces and capitalize each word
+    return " ".join(spaced.split()).title()
 
 
 def _get_display_name(field_key: str) -> str:

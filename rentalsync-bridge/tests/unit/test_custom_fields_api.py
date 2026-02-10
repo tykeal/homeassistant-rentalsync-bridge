@@ -216,8 +216,12 @@ class TestUpdateCustomFieldsCacheInvalidation:
         mock_cache = MagicMock()
         mock_get_cache.return_value = mock_cache
 
-        # Mock db session methods
-        mock_db_session.execute = AsyncMock(return_value=MagicMock())
+        # Mock db session methods with proper chaining for scalars().all()
+        mock_scalars_result = MagicMock()
+        mock_scalars_result.all.return_value = []
+        mock_execute_result = MagicMock()
+        mock_execute_result.scalars.return_value = mock_scalars_result
+        mock_db_session.execute = AsyncMock(return_value=mock_execute_result)
         mock_db_session.commit = AsyncMock()
 
         # Create request with one field
@@ -283,8 +287,12 @@ class TestUpdateCustomFieldsCacheInvalidation:
         mock_cache = MagicMock()
         mock_get_cache.return_value = mock_cache
 
-        # Mock db session methods
-        mock_db_session.execute = AsyncMock(return_value=MagicMock())
+        # Mock db session methods with proper chaining for scalars().all()
+        mock_scalars_result = MagicMock()
+        mock_scalars_result.all.return_value = []
+        mock_execute_result = MagicMock()
+        mock_execute_result.scalars.return_value = mock_scalars_result
+        mock_db_session.execute = AsyncMock(return_value=mock_execute_result)
         mock_db_session.commit = AsyncMock()
 
         # Create request
