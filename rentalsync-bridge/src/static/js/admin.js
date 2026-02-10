@@ -973,10 +973,11 @@ function addField() {
         (field) => !configuredFieldNames.includes(field.field_key)
     );
 
-    // Build lookup map from field_key to display_name for raw values
-    const displayNameLookup = {};
+    // Build lookup map from field_key to display_name using Map
+    // to prevent prototype pollution from API-provided keys
+    const displayNameLookup = new Map();
     unconfiguredFields.forEach(field => {
-        displayNameLookup[field.field_key] = field.display_name;
+        displayNameLookup.set(field.field_key, field.display_name);
     });
 
     // Build select element via DOM APIs to avoid XSS in attribute contexts
@@ -1027,11 +1028,11 @@ function addField() {
     fieldItem.appendChild(toggleLabel);
     fieldItem.appendChild(removeBtn);
 
-    // Auto-populate label when field is selected (use lookup for raw value)
+    // Auto-populate label when field is selected (use Map.get for raw value)
     selectEl.addEventListener('change', () => {
         const fieldKey = selectEl.value;
-        if (fieldKey && displayNameLookup[fieldKey]) {
-            displayLabelInput.value = displayNameLookup[fieldKey];
+        if (fieldKey && displayNameLookup.has(fieldKey)) {
+            displayLabelInput.value = displayNameLookup.get(fieldKey);
         }
     });
 

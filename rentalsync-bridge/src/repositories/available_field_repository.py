@@ -264,21 +264,15 @@ class AvailableFieldRepository:
         Returns:
             List of discovered/updated fields (excluding already_discovered).
         """
-        # Delegate to batch method for consistent filtering logic
-        all_discovered = await self.discover_fields_from_reservations(
-            listing_id, [reservation]
+        # Delegate to batch method, passing already_discovered to skip DB work
+        discovered = await self.discover_fields_from_reservations(
+            listing_id, [reservation], exclude_keys=already_discovered
         )
 
-        # Filter out fields that were already discovered by caller
+        # Update caller's already_discovered set with new fields
         if already_discovered is not None:
-            discovered = [
-                f for f in all_discovered if f.field_key not in already_discovered
-            ]
-            # Update caller's already_discovered set with new fields
             for field in discovered:
                 already_discovered.add(field.field_key)
-        else:
-            discovered = all_discovered
 
         return discovered
 
@@ -286,6 +280,7 @@ class AvailableFieldRepository:
         self,
         listing_id: int,
         reservations: list[dict],
+        exclude_keys: set[str] | None = None,
     ) -> list[AvailableField]:
         """Discover and store fields from multiple reservations in a single batch.
 
@@ -295,6 +290,8 @@ class AvailableFieldRepository:
         Args:
             listing_id: Listing ID to associate fields with.
             reservations: List of reservation dicts from Cloudbeds API.
+            exclude_keys: Optional set of keys to skip during discovery.
+                Used to avoid redundant DB work for already-seen keys.
 
         Returns:
             List of all discovered/updated fields.
@@ -302,21 +299,28 @@ class AvailableFieldRepository:
         if not reservations:
             return []
 
-        # Collect unique candidates using dict (key -> first sample value seen)
+        if exclude_keys is None:
+            exclude_keys = set()
+
+        # Collect unique candidates using dict (key -> sample value or None)
         # This dedupes during collection, avoiding the need for a second pass
-        candidates_by_key: dict[str, str] = {}
+        candidates_by_key: dict[str, str | None] = {}
 
         for reservation in reservations:
             # Collect from reservation top-level
-            self._collect_unique_candidates(reservation, candidates_by_key, set())
+            self._collect_unique_candidates(
+                reservation, candidates_by_key, exclude_keys
+            )
 
             # Also collect from first room in rooms array (if present)
             rooms = reservation.get("rooms", [])
             if rooms and isinstance(rooms, list) and len(rooms) > 0:
                 first_room = rooms[0]
                 if isinstance(first_room, dict):
+                    # Combine exclude_keys with already-collected keys
+                    combined_exclude = exclude_keys | set(candidates_by_key.keys())
                     self._collect_unique_candidates(
-                        first_room, candidates_by_key, set(candidates_by_key.keys())
+                        first_room, candidates_by_key, combined_exclude
                     )
 
         if not candidates_by_key:
@@ -345,36 +349,44 @@ class AvailableFieldRepository:
     def _collect_unique_candidates(
         self,
         data: dict,
-        candidates_by_key: dict[str, str],
+        candidates_by_key: dict[str, str | None],
         existing_keys: set[str],
     ) -> None:
         """Collect field candidates into a dict, deduping by key.
 
+        Discovers fields even when values are None or empty, storing the
+        sample value as None. This ensures legitimately present but empty
+        Cloudbeds custom fields are still discovered.
+
         Args:
             data: Dict to extract fields from.
-            candidates_by_key: Dict to populate (key -> sample value).
+            candidates_by_key: Dict to populate (key -> sample value or None).
                 Keys already present will not be overwritten.
-            existing_keys: Keys to skip (already collected from parent).
+            existing_keys: Keys to skip (already collected or excluded).
         """
         for key, value in data.items():
             # Skip if already collected or if excluded
             if key in candidates_by_key or key in existing_keys:
                 continue
-            if not isinstance(value, (str, int, float, bool)):
-                continue
-            # Skip empty strings (no meaningful sample value)
-            if value == "":
+            # Skip complex values (dicts, lists) - these aren't scalar fields
+            if isinstance(value, (dict, list)):
                 continue
             if should_exclude_field(key):
                 continue
-            # Only store first sample value seen for each key
-            candidates_by_key[key] = str(value)[:500]
+            # Store sample value, or None if empty/None
+            if value is None or value == "":
+                candidates_by_key[key] = None
+            elif isinstance(value, (str, int, float, bool)):
+                candidates_by_key[key] = str(value)[:500]
+            # Skip other types (datetime, Decimal, etc.) but still discover key
+            else:
+                candidates_by_key[key] = None
 
     def _upsert_field_in_memory(
         self,
         listing_id: int,
         key: str,
-        sample: str,
+        sample: str | None,
         existing_by_key: dict[str, AvailableField],
         now: datetime,
     ) -> AvailableField:
