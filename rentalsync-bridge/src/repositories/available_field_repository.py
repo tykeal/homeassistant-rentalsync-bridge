@@ -406,6 +406,9 @@ class AvailableFieldRepository:
                 continue
             if not isinstance(value, (str, int, float, bool)):
                 continue
+            # Skip empty strings (no meaningful sample value)
+            if value == "":
+                continue
             if should_exclude_field(key):
                 continue
             # Only store first sample value seen for each key

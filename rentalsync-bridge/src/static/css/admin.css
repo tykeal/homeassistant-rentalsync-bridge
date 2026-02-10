@@ -602,7 +602,9 @@ header .subtitle {
 
 .field-buttons {
     display: flex;
+    flex-wrap: wrap;
     gap: 10px;
+    row-gap: 8px;
     margin-top: 15px;
 }
 
