@@ -600,6 +600,14 @@ header .subtitle {
     flex-shrink: 0;
 }
 
+.field-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    row-gap: 8px;
+    margin-top: 15px;
+}
+
 /* Utility Classes */
 .hidden {
     display: none !important;

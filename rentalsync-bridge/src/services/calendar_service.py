@@ -5,7 +5,7 @@
 import hashlib
 import logging
 from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -226,9 +226,9 @@ class CalendarService:
         summary = booking.event_title
         event.add("summary", self._truncate_summary(summary))
 
-        # All-day event dates with timezone
-        dtstart = self._to_date_with_tz(booking.check_in_date, tz)
-        dtend = self._to_date_with_tz(booking.check_out_date, tz)
+        # All-day event dates (extract date in listing's timezone)
+        dtstart = self._to_ical_date(booking.check_in_date, tz)
+        dtend = self._to_ical_date(booking.check_out_date, tz)
 
         event.add("dtstart", dtstart)
         event.add("dtend", dtend)
@@ -305,23 +305,26 @@ class CalendarService:
             logger.warning("Invalid timezone '%s', falling back to UTC", timezone_str)
             return ZoneInfo("UTC")
 
-    def _to_date_with_tz(self, dt: datetime, tz: ZoneInfo) -> datetime:
-        """Convert datetime to timezone-aware date.
+    def _to_ical_date(self, dt: datetime, tz: ZoneInfo) -> date:
+        """Convert datetime to date for all-day iCal events.
 
-        For iCal all-day events, we use the date only.
+        For iCal all-day events, we return a date object (not datetime).
+        This produces DTSTART;VALUE=DATE:YYYYMMDD format which booking
+        platforms expect, rather than DTSTART:YYYYMMDDTHHMMSSZ.
 
         Args:
             dt: Input datetime (may be naive or aware).
-            tz: Target timezone.
+            tz: Target timezone for date extraction.
 
         Returns:
-            Timezone-aware datetime.
+            Date object for the event day.
         """
         if dt.tzinfo is None:
             # Naive datetime - assume it's in the target timezone
-            return dt.replace(tzinfo=tz)
-        # Already aware - convert to target timezone
-        return dt.astimezone(tz)
+            # Explicitly apply timezone before extracting date
+            return dt.replace(tzinfo=tz).date()
+        # Already aware - convert to target timezone, then extract date
+        return dt.astimezone(tz).date()
 
     def _generate_uid(self, booking: Booking) -> str:
         """Generate unique event ID for booking.

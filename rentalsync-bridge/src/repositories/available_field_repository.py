@@ -1,0 +1,504 @@
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+"""Repository for AvailableField database operations."""
+
+import re
+from collections.abc import Iterable, Sequence
+from datetime import UTC, datetime
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.models.available_field import AvailableField
+
+# Fields to exclude from discovery (internal/system fields)
+# Precompiled for performance in tight loops during sync/discovery
+_EXCLUDED_FIELD_PATTERNS = [
+    re.compile(r"^_"),  # Internal fields starting with underscore
+    re.compile(r"Id$"),  # ID fields ending in Id (camelCase: reservationId)
+    re.compile(r"ID$"),  # ID fields ending in ID (ALLCAPS: propertyID)
+    re.compile(r"^id$"),  # Exact match for "id" field
+]
+
+# Fields that should always be available (built-in/computed)
+BUILTIN_FIELDS: dict[str, str] = {
+    "guest_phone_last4": "Guest Phone (Last 4 Digits)",
+}
+
+# Max fields to show in error messages before truncating
+ERROR_MESSAGE_MAX_FIELDS = 10
+
+# Default Cloudbeds fields - always available even without reservations
+# These are common fields returned by the Cloudbeds API
+DEFAULT_CLOUDBEDS_FIELDS: dict[str, str] = {
+    "guestName": "Guest Name",
+    "guestFirstName": "Guest First Name",
+    "guestLastName": "Guest Last Name",
+    "guestEmail": "Guest Email",
+    "guestPhone": "Guest Phone",
+    "guestCountry": "Guest Country",
+    "notes": "Booking Notes",
+    "status": "Booking Status",
+    "sourceName": "Booking Source",
+    "startDate": "Check-in Date",
+    "endDate": "Check-out Date",
+    "dateCreated": "Date Created",
+    "adults": "Number of Adults",
+    "children": "Number of Children",
+    "balance": "Balance Due",
+    "total": "Total Amount",
+    "paid": "Amount Paid",
+    "roomTypeName": "Room Type",
+    "roomName": "Room Name",
+    "confirmationCode": "Confirmation Code",
+    "estimatedArrivalTime": "Estimated Arrival Time",
+}
+
+
+def _camel_to_display(name: str) -> str:
+    """Convert field name to human-readable Display Name.
+
+    Handles camelCase, snake_case, kebab-case, and digit boundaries.
+
+    Args:
+        name: Field name in any common format.
+
+    Returns:
+        Human-readable display name.
+    """
+    # Replace underscores and hyphens with spaces
+    spaced = name.replace("_", " ").replace("-", " ")
+    # Insert space before uppercase letters (camelCase -> camel Case)
+    spaced = re.sub(r"([a-z])([A-Z])", r"\1 \2", spaced)
+    # Insert space between letters and digits (field2 -> field 2)
+    spaced = re.sub(r"([a-zA-Z])(\d)", r"\1 \2", spaced)
+    spaced = re.sub(r"(\d)([a-zA-Z])", r"\1 \2", spaced)
+    # Collapse multiple spaces and capitalize each word
+    return " ".join(spaced.split()).title()
+
+
+def _get_display_name(field_key: str) -> str:
+    """Get display name for a field, preferring curated defaults.
+
+    Uses curated display names from DEFAULT_CLOUDBEDS_FIELDS when available,
+    falling back to auto-generated names via _camel_to_display.
+
+    Args:
+        field_key: Field key to get display name for.
+
+    Returns:
+        Human-readable display name.
+    """
+    return DEFAULT_CLOUDBEDS_FIELDS.get(field_key, _camel_to_display(field_key))
+
+
+def should_exclude_field(field_key: str) -> bool:
+    """Check if a field should be excluded from discovery.
+
+    Excludes ID fields (reservationId, propertyID, etc.) but not fields
+    that happen to end in 'id' like 'paid'.
+
+    Args:
+        field_key: Field key to check.
+
+    Returns:
+        True if field should be excluded.
+    """
+    return any(pattern.search(field_key) for pattern in _EXCLUDED_FIELD_PATTERNS)
+
+
+def format_allowed_fields_message(field_keys: Iterable[str]) -> str:
+    """Format allowed fields list for error messages, truncating if needed.
+
+    Centralizes error message formatting to ensure consistency across
+    API and repository callers.
+
+    Args:
+        field_keys: Collection of allowed field keys.
+
+    Returns:
+        Formatted string with field names, truncated if over limit.
+    """
+    sorted_keys = sorted(field_keys)
+    if len(sorted_keys) > ERROR_MESSAGE_MAX_FIELDS:
+        shown = ", ".join(sorted_keys[:ERROR_MESSAGE_MAX_FIELDS])
+        return f"{shown}... ({len(sorted_keys)} total)"
+    return ", ".join(sorted_keys)
+
+
+class AvailableFieldRepository:
+    """Repository for AvailableField CRUD operations.
+
+    Provides async database operations for dynamically discovered
+    Cloudbeds fields.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        """Initialize repository with database session.
+
+        Args:
+            session: Async SQLAlchemy session.
+        """
+        self._session = session
+
+    async def get_for_listing(
+        self, listing_id: int, *, ordered: bool = True
+    ) -> Sequence[AvailableField]:
+        """Get all available fields for a listing.
+
+        Args:
+            listing_id: Listing ID to filter by.
+            ordered: If True, order by display_name (default). Set to False
+                for internal operations where ordering is unnecessary.
+
+        Returns:
+            Sequence of available fields.
+        """
+        query = select(AvailableField).where(AvailableField.listing_id == listing_id)
+        if ordered:
+            query = query.order_by(AvailableField.display_name)
+        result = await self._session.execute(query)
+        return result.scalars().all()
+
+    async def get_by_field_key(
+        self, listing_id: int, field_key: str
+    ) -> AvailableField | None:
+        """Get available field by listing and field key.
+
+        Args:
+            listing_id: Listing ID to filter by.
+            field_key: Field key to look up.
+
+        Returns:
+            AvailableField if found, None otherwise.
+        """
+        result = await self._session.execute(
+            select(AvailableField).where(
+                AvailableField.listing_id == listing_id,
+                AvailableField.field_key == field_key,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def upsert_field(
+        self,
+        listing_id: int,
+        field_key: str,
+        sample_value: str | None = None,
+    ) -> AvailableField | None:
+        """Create or update an available field.
+
+        Args:
+            listing_id: Listing ID to create field for.
+            field_key: Field key from Cloudbeds.
+            sample_value: Sample value for display.
+
+        Returns:
+            Created/updated field, or None if field should be excluded.
+        """
+        if should_exclude_field(field_key):
+            return None
+
+        existing = await self.get_by_field_key(listing_id, field_key)
+        now = datetime.now(UTC)
+
+        if existing:
+            existing.last_seen_at = now
+            # Only update sample if we have a new value and existing is empty
+            # Use explicit None/empty check to preserve falsy values like "0"
+            if (
+                sample_value is not None
+                and sample_value != ""
+                and (existing.sample_value is None or existing.sample_value == "")
+            ):
+                existing.sample_value = sample_value[:500]
+            await self._session.flush()
+            return existing
+
+        # Store sample_value preserving falsy values like "0" or "false"
+        stored_sample = (
+            sample_value[:500]
+            if sample_value is not None and sample_value != ""
+            else None
+        )
+        field = AvailableField(
+            listing_id=listing_id,
+            field_key=field_key,
+            display_name=_get_display_name(field_key),
+            sample_value=stored_sample,
+            discovered_at=now,
+            last_seen_at=now,
+        )
+        self._session.add(field)
+        await self._session.flush()
+        return field
+
+    async def discover_fields_from_reservation(
+        self,
+        listing_id: int,
+        reservation: dict,
+        already_discovered: set[str] | None = None,
+    ) -> list[AvailableField]:
+        """Discover and store fields from a reservation.
+
+        Discovers fields from both the top-level reservation and from
+        the first room in the rooms array (if present) to capture
+        room-specific fields like roomTypeName and roomName.
+
+        Only the first room is inspected for field discovery since all
+        rooms share the same schema - we only need to identify which
+        field keys exist, not sample every room's values.
+
+        Uses already_discovered set to skip fields already processed in
+        this sync run, avoiding redundant database operations.
+
+        Note: This method delegates to discover_fields_from_reservations()
+        to ensure consistent filtering logic across single and batch discovery.
+
+        Args:
+            listing_id: Listing ID to associate fields with.
+            reservation: Reservation dict from Cloudbeds API.
+            already_discovered: Optional set of field keys already processed
+                in this sync run. Will be updated with newly discovered keys.
+
+        Returns:
+            List of discovered/updated fields (excluding already_discovered).
+        """
+        # Delegate to batch method, passing already_discovered to skip DB work
+        discovered = await self.discover_fields_from_reservations(
+            listing_id, [reservation], exclude_keys=already_discovered
+        )
+
+        # Update caller's already_discovered set with new fields
+        if already_discovered is not None:
+            for field in discovered:
+                already_discovered.add(field.field_key)
+
+        return discovered
+
+    async def discover_fields_from_reservations(
+        self,
+        listing_id: int,
+        reservations: list[dict],
+        exclude_keys: set[str] | None = None,
+    ) -> list[AvailableField]:
+        """Discover and store fields from multiple reservations in a single batch.
+
+        More efficient than calling discover_fields_from_reservation per
+        reservation, as this does a single DB fetch and single flush.
+
+        Args:
+            listing_id: Listing ID to associate fields with.
+            reservations: List of reservation dicts from Cloudbeds API.
+            exclude_keys: Optional set of keys to skip during discovery.
+                Used to avoid redundant DB work for already-seen keys.
+
+        Returns:
+            List of all discovered/updated fields.
+        """
+        if not reservations:
+            return []
+
+        if exclude_keys is None:
+            exclude_keys = set()
+
+        # Collect unique candidates using dict (key -> sample value or None)
+        # This dedupes during collection, avoiding the need for a second pass
+        candidates_by_key: dict[str, str | None] = {}
+
+        for reservation in reservations:
+            # Collect from reservation top-level
+            self._collect_unique_candidates(
+                reservation, candidates_by_key, exclude_keys
+            )
+
+            # Also collect from first room in rooms array (if present)
+            rooms = reservation.get("rooms", [])
+            if rooms and isinstance(rooms, list) and len(rooms) > 0:
+                first_room = rooms[0]
+                if isinstance(first_room, dict):
+                    # Combine exclude_keys with already-collected keys
+                    combined_exclude = exclude_keys | set(candidates_by_key.keys())
+                    self._collect_unique_candidates(
+                        first_room, candidates_by_key, combined_exclude
+                    )
+
+        if not candidates_by_key:
+            return []
+
+        # Single DB fetch for all existing fields
+        existing_fields = await self.get_for_listing(listing_id, ordered=False)
+        existing_by_key: dict[str, AvailableField] = {
+            f.field_key: f for f in existing_fields
+        }
+
+        # Upsert all fields in memory
+        discovered: list[AvailableField] = []
+        now = datetime.now(UTC)
+
+        for key, sample in candidates_by_key.items():
+            field = self._upsert_field_in_memory(
+                listing_id, key, sample, existing_by_key, now
+            )
+            discovered.append(field)
+
+        # Single flush for all changes
+        await self._session.flush()
+        return discovered
+
+    def _collect_unique_candidates(
+        self,
+        data: dict,
+        candidates_by_key: dict[str, str | None],
+        existing_keys: set[str],
+    ) -> None:
+        """Collect field candidates into a dict, deduping by key.
+
+        Discovers fields even when values are None or empty, storing the
+        sample value as None. This ensures legitimately present but empty
+        Cloudbeds custom fields are still discovered.
+
+        Args:
+            data: Dict to extract fields from.
+            candidates_by_key: Dict to populate (key -> sample value or None).
+                Keys already present will not be overwritten.
+            existing_keys: Keys to skip (already collected or excluded).
+        """
+        for key, value in data.items():
+            # Skip if already collected or if excluded
+            if key in candidates_by_key or key in existing_keys:
+                continue
+            # Skip complex values (dicts, lists) - these aren't scalar fields
+            if isinstance(value, (dict, list)):
+                continue
+            if should_exclude_field(key):
+                continue
+            # Store sample value, or None if empty/None
+            if value is None or value == "":
+                candidates_by_key[key] = None
+            elif isinstance(value, (str, int, float, bool)):
+                candidates_by_key[key] = str(value)[:500]
+            # Skip other types (datetime, Decimal, etc.) but still discover key
+            else:
+                candidates_by_key[key] = None
+
+    def _upsert_field_in_memory(
+        self,
+        listing_id: int,
+        key: str,
+        sample: str | None,
+        existing_by_key: dict[str, AvailableField],
+        now: datetime,
+    ) -> AvailableField:
+        """Create or update a field using in-memory lookup.
+
+        Args:
+            listing_id: Listing ID for new fields.
+            key: Field key.
+            sample: Sample value.
+            existing_by_key: Lookup dict of existing fields.
+            now: Current timestamp.
+
+        Returns:
+            The created or updated field.
+        """
+        existing = existing_by_key.get(key)
+        if existing:
+            existing.last_seen_at = now
+            if sample and (
+                existing.sample_value is None or existing.sample_value == ""
+            ):
+                existing.sample_value = sample
+            return existing
+
+        field = AvailableField(
+            listing_id=listing_id,
+            field_key=key,
+            display_name=_get_display_name(key),
+            sample_value=sample if sample else None,
+            discovered_at=now,
+            last_seen_at=now,
+        )
+        self._session.add(field)
+        existing_by_key[key] = field
+        return field
+
+    async def get_all_field_keys(self, listing_id: int) -> dict[str, str]:
+        """Get all available field keys and display names for a listing.
+
+        Combines: default Cloudbeds fields + discovered fields + built-in fields.
+        Discovered fields override defaults if they have the same key.
+
+        Args:
+            listing_id: Listing ID to get fields for.
+
+        Returns:
+            Dictionary mapping field_key to display_name.
+        """
+        # Start with default Cloudbeds fields
+        result = DEFAULT_CLOUDBEDS_FIELDS.copy()
+        # Add/override with discovered fields from actual data
+        fields = await self.get_for_listing(listing_id, ordered=False)
+        result.update({f.field_key: f.display_name for f in fields})
+        # Add built-in computed fields
+        result.update(BUILTIN_FIELDS)
+        return result
+
+    async def get_enriched_available_fields(
+        self, listing_id: int
+    ) -> list[dict[str, str | None]]:
+        """Get all available fields with metadata for API responses.
+
+        Combines default, discovered, and built-in fields with source and
+        sample value information for UI display.
+
+        Args:
+            listing_id: Listing ID to get fields for.
+
+        Returns:
+            List of dicts with field_key, display_name, sample_value, source.
+        """
+        # Get discovered fields from database
+        discovered_fields = await self.get_for_listing(listing_id, ordered=False)
+        discovered_keys = {f.field_key for f in discovered_fields}
+
+        # Start with default Cloudbeds fields (always available)
+        available: list[dict[str, str | None]] = [
+            {
+                "field_key": key,
+                "display_name": name,
+                "sample_value": None,
+                "source": "default",
+            }
+            for key, name in DEFAULT_CLOUDBEDS_FIELDS.items()
+            if key not in discovered_keys  # Don't duplicate discovered fields
+        ]
+
+        # Add discovered fields (may override defaults with sample values)
+        for f in discovered_fields:
+            available.append(
+                {
+                    "field_key": f.field_key,
+                    "display_name": f.display_name,
+                    "sample_value": f.sample_value,
+                    "source": "discovered",
+                }
+            )
+
+        # Add built-in computed fields
+        existing_keys = {f["field_key"] for f in available}
+        for key, name in BUILTIN_FIELDS.items():
+            if key not in existing_keys:
+                available.append(
+                    {
+                        "field_key": key,
+                        "display_name": name,
+                        "sample_value": None,
+                        "source": "builtin",
+                    }
+                )
+
+        # Sort by display name
+        available.sort(key=lambda x: x["display_name"] or "")
+
+        return available

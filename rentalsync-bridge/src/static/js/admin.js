@@ -52,6 +52,7 @@ const elements = {
     customFieldsModal: document.getElementById('custom-fields-modal'),
     customFieldsList: document.getElementById('custom-fields-list'),
     addFieldBtn: document.getElementById('add-field-btn'),
+    addAllFieldsBtn: document.getElementById('add-all-fields-btn'),
     saveFieldsBtn: document.getElementById('save-fields-btn'),
 };
 
@@ -910,7 +911,7 @@ function renderCustomFields(fields) {
                 <input type="checkbox" ${field.enabled ? 'checked' : ''} data-field="enabled">
                 <span class="toggle-slider"></span>
             </label>
-            <button class="remove-btn" data-action="remove-field">&times;</button>
+            <button type="button" class="remove-btn" data-action="remove-field" aria-label="Remove field">&times;</button>
         </div>
     `).join('');
 
@@ -967,29 +968,142 @@ function addField() {
     ).map(input => input.value).filter(Boolean);
 
     // Filter available fields to only show unconfigured ones
-    const unconfiguredFields = Object.entries(customFieldsModal.availableFields).filter(
-        ([fieldName, /* displayLabel - unused in filter */]) => !configuredFieldNames.includes(fieldName)
+    // API returns array of {field_key, display_name, sample_value, source}
+    const unconfiguredFields = customFieldsModal.availableFields.filter(
+        (field) => !configuredFieldNames.includes(field.field_key)
     );
 
-    // Create dropdown options
-    const options = unconfiguredFields.map(
-        ([fieldName, displayLabel]) =>
-            `<option value="${escapeHtml(fieldName)}">${escapeHtml(displayLabel)}</option>`
-    ).join('');
+    // Build lookup map from field_key to display_name using Map
+    // to prevent prototype pollution from API-provided keys
+    const displayNameLookup = new Map();
+    unconfiguredFields.forEach(field => {
+        displayNameLookup.set(field.field_key, field.display_name);
+    });
 
-    fieldItem.innerHTML = `
-        <select data-field="field_name">
-            <option value="">Select field...</option>
-            ${options}
-        </select>
-        <input type="text" placeholder="Display label" data-field="display_label">
-        <label class="toggle-switch">
-            <input type="checkbox" checked data-field="enabled">
-            <span class="toggle-slider"></span>
-        </label>
-        <button class="remove-btn" data-action="remove-field">&times;</button>
-    `;
+    // Build select element via DOM APIs to avoid XSS in attribute contexts
+    const selectEl = document.createElement('select');
+    selectEl.dataset.field = 'field_name';
+
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = 'Select field...';
+    selectEl.appendChild(defaultOption);
+
+    // Use explicit null/undefined check to preserve falsy values like "0" or "false"
+    for (const field of unconfiguredFields) {
+        const opt = document.createElement('option');
+        opt.value = field.field_key;
+        const hint = (field.sample_value !== null && field.sample_value !== undefined && field.sample_value !== '')
+            ? ` (e.g. ${field.sample_value})`
+            : '';
+        opt.textContent = `${field.display_name}${hint}`;
+        selectEl.appendChild(opt);
+    }
+
+    const displayLabelInput = document.createElement('input');
+    displayLabelInput.type = 'text';
+    displayLabelInput.placeholder = 'Display label';
+    displayLabelInput.dataset.field = 'display_label';
+
+    const toggleLabel = document.createElement('label');
+    toggleLabel.className = 'toggle-switch';
+    const toggleCheckbox = document.createElement('input');
+    toggleCheckbox.type = 'checkbox';
+    toggleCheckbox.checked = true;
+    toggleCheckbox.dataset.field = 'enabled';
+    const toggleSlider = document.createElement('span');
+    toggleSlider.className = 'toggle-slider';
+    toggleLabel.appendChild(toggleCheckbox);
+    toggleLabel.appendChild(toggleSlider);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'remove-btn';
+    removeBtn.dataset.action = 'remove-field';
+    removeBtn.textContent = '×';
+    removeBtn.setAttribute('aria-label', 'Remove field');
+
+    fieldItem.appendChild(selectEl);
+    fieldItem.appendChild(displayLabelInput);
+    fieldItem.appendChild(toggleLabel);
+    fieldItem.appendChild(removeBtn);
+
+    // Auto-populate label when field is selected (use Map.get for raw value)
+    selectEl.addEventListener('change', () => {
+        const fieldKey = selectEl.value;
+        if (fieldKey && displayNameLookup.has(fieldKey)) {
+            displayLabelInput.value = displayNameLookup.get(fieldKey);
+        }
+    });
+
     elements.customFieldsList.appendChild(fieldItem);
+}
+
+function addAllFields() {
+    // Remove any empty/unselected field rows first to prevent duplicates
+    const existingItems = elements.customFieldsList.querySelectorAll('.field-item');
+    existingItems.forEach(item => {
+        const fieldNameInput = item.querySelector('[data-field="field_name"]');
+        if (fieldNameInput && !fieldNameInput.value) {
+            item.remove();
+        }
+    });
+
+    // Get list of already configured field names
+    const configuredFieldNames = Array.from(
+        elements.customFieldsList.querySelectorAll('[data-field="field_name"]')
+    ).map(input => input.value).filter(Boolean);
+
+    // Filter available fields to only show unconfigured ones
+    const unconfiguredFields = customFieldsModal.availableFields.filter(
+        (field) => !configuredFieldNames.includes(field.field_key)
+    );
+
+    // Build all field items in a DocumentFragment to minimize reflow
+    const fragment = document.createDocumentFragment();
+    for (const field of unconfiguredFields) {
+        const fieldItem = document.createElement('div');
+        fieldItem.className = 'field-item';
+
+        // Build elements via DOM APIs to avoid XSS in attribute contexts
+        const fieldNameInput = document.createElement('input');
+        fieldNameInput.type = 'text';
+        fieldNameInput.readOnly = true;
+        fieldNameInput.value = field.field_key;
+        fieldNameInput.dataset.field = 'field_name';
+        fieldNameInput.className = 'readonly-field';
+
+        const displayLabelInput = document.createElement('input');
+        displayLabelInput.type = 'text';
+        displayLabelInput.placeholder = 'Display label';
+        displayLabelInput.value = field.display_name;
+        displayLabelInput.dataset.field = 'display_label';
+
+        const toggleLabel = document.createElement('label');
+        toggleLabel.className = 'toggle-switch';
+        const toggleCheckbox = document.createElement('input');
+        toggleCheckbox.type = 'checkbox';
+        toggleCheckbox.checked = true;
+        toggleCheckbox.dataset.field = 'enabled';
+        const toggleSlider = document.createElement('span');
+        toggleSlider.className = 'toggle-slider';
+        toggleLabel.appendChild(toggleCheckbox);
+        toggleLabel.appendChild(toggleSlider);
+
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'remove-btn';
+        removeBtn.dataset.action = 'remove-field';
+        removeBtn.textContent = '×';
+        removeBtn.setAttribute('aria-label', 'Remove field');
+
+        fieldItem.appendChild(fieldNameInput);
+        fieldItem.appendChild(displayLabelInput);
+        fieldItem.appendChild(toggleLabel);
+        fieldItem.appendChild(removeBtn);
+        fragment.appendChild(fieldItem);
+    }
+    elements.customFieldsList.appendChild(fragment);
 }
 
 async function saveCustomFields() {
@@ -1087,6 +1201,7 @@ function initEventListeners() {
     elements.saveSyncBtn.addEventListener('click', saveSyncSettings);
     elements.syncPropertiesBtn.addEventListener('click', syncPropertiesFromCloudbeds);
     elements.addFieldBtn.addEventListener('click', addField);
+    elements.addAllFieldsBtn.addEventListener('click', addAllFields);
     elements.saveFieldsBtn.addEventListener('click', saveCustomFields);
     elements.bulkEnableBtn.addEventListener('click', bulkEnable);
     elements.bulkDisableBtn.addEventListener('click', bulkDisable);

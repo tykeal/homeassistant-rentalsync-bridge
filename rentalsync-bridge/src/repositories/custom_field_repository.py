@@ -8,26 +8,19 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.custom_field import CustomField
-
-# Predefined custom fields available from Cloudbeds API
-AVAILABLE_FIELDS: dict[str, str] = {
-    "booking_notes": "Booking Notes",
-    "arrival_time": "Arrival Time",
-    "departure_time": "Departure Time",
-    "num_guests": "Number of Guests",
-    "room_type_name": "Room Type",
-    "source_name": "Booking Source",
-    "special_requests": "Special Requests",
-    "estimated_arrival": "Estimated Arrival",
-    "guest_phone_last4": "Guest Phone (Last 4 Digits)",
-}
+from src.repositories.available_field_repository import (
+    BUILTIN_FIELDS,
+    DEFAULT_CLOUDBEDS_FIELDS,
+    AvailableFieldRepository,
+    format_allowed_fields_message,
+)
 
 
 class CustomFieldRepository:
     """Repository for CustomField CRUD operations.
 
     Provides async database operations for CustomField entities with
-    support for the predefined field list from Cloudbeds API.
+    support for dynamically discovered fields from Cloudbeds API.
     """
 
     def __init__(self, session: AsyncSession) -> None:
@@ -37,6 +30,7 @@ class CustomFieldRepository:
             session: Async SQLAlchemy session.
         """
         self._session = session
+        self._available_field_repo = AvailableFieldRepository(session)
 
     async def get_by_id(self, field_id: int) -> CustomField | None:
         """Get custom field by ID.
@@ -107,6 +101,20 @@ class CustomFieldRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_available_fields_for_listing(self, listing_id: int) -> dict[str, str]:
+        """Get available fields for a listing.
+
+        Delegates to AvailableFieldRepository.get_all_field_keys() to ensure
+        consistent field composition logic across the codebase.
+
+        Args:
+            listing_id: Listing ID to get fields for.
+
+        Returns:
+            Dictionary mapping field_key to display_name.
+        """
+        return await self._available_field_repo.get_all_field_keys(listing_id)
+
     async def create(self, field: CustomField) -> CustomField:
         """Create a new custom field.
 
@@ -117,10 +125,11 @@ class CustomFieldRepository:
             Created custom field with ID.
 
         Raises:
-            ValueError: If field_name is not in allowed list.
+            ValueError: If field_name is not in available fields for the listing.
         """
-        if field.field_name not in AVAILABLE_FIELDS:
-            allowed = ", ".join(sorted(AVAILABLE_FIELDS.keys()))
+        available = await self.get_available_fields_for_listing(field.listing_id)
+        if field.field_name not in available:
+            allowed = format_allowed_fields_message(available.keys())
             msg = f"Invalid field_name '{field.field_name}'. Allowed: {allowed}"
             raise ValueError(msg)
 
@@ -154,9 +163,10 @@ class CustomFieldRepository:
     async def create_defaults_for_listing(self, listing_id: int) -> list[CustomField]:
         """Create default custom fields for a new listing.
 
-        Creates the default set of custom fields when a listing is enabled:
-        - booking_notes (enabled by default)
-        - guest_phone_last4 (enabled by default)
+        Creates the built-in guest_phone_last4 field by default. Additional
+        fields from DEFAULT_CLOUDBEDS_FIELDS are always available for
+        configuration. Other dynamic fields will become discoverable after
+        the first sync processes reservations from Cloudbeds.
 
         Args:
             listing_id: Listing ID to create fields for.
@@ -164,9 +174,10 @@ class CustomFieldRepository:
         Returns:
             List of created custom fields.
         """
+        # Only create built-in fields as defaults
+        # Other fields are dynamically discovered during sync
         defaults = [
-            ("booking_notes", "Booking Notes", True, 0),
-            ("guest_phone_last4", "Guest Phone (Last 4 Digits)", True, 1),
+            ("guest_phone_last4", "Guest Phone (Last 4 Digits)", True, 0),
         ]
 
         created: list[CustomField] = []
@@ -189,10 +200,23 @@ class CustomFieldRepository:
         return created
 
     @staticmethod
-    def get_available_fields() -> dict[str, str]:
-        """Get dictionary of available custom field names and labels.
+    def get_builtin_fields() -> dict[str, str]:
+        """Get dictionary of built-in custom field names and labels.
+
+        These are computed/special fields always available.
 
         Returns:
             Dictionary mapping field_name to display_label.
         """
-        return AVAILABLE_FIELDS.copy()
+        return BUILTIN_FIELDS.copy()
+
+    @staticmethod
+    def get_default_cloudbeds_fields() -> dict[str, str]:
+        """Get dictionary of default Cloudbeds field names and labels.
+
+        These are common fields available even without sync data.
+
+        Returns:
+            Dictionary mapping field_name to display_label.
+        """
+        return DEFAULT_CLOUDBEDS_FIELDS.copy()

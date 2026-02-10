@@ -24,6 +24,15 @@ router = APIRouter(tags=["iCal"])
 _calendar_cache = CalendarCache()
 
 
+def get_calendar_cache() -> CalendarCache:
+    """Get the shared calendar cache instance.
+
+    Returns:
+        CalendarCache singleton instance.
+    """
+    return _calendar_cache
+
+
 def get_calendar_service() -> CalendarService:
     """Get calendar service with shared cache.
 

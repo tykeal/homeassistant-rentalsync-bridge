@@ -6,6 +6,7 @@ from collections.abc import AsyncGenerator
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from src.database import Base, get_db
 from src.main import create_app
@@ -149,8 +150,8 @@ class TestUpdateCustomFields:
     """Tests for PUT /api/listings/{id}/custom-fields endpoint."""
 
     @pytest.mark.asyncio
-    async def test_create_new_fields(self, fields_app, fields_session):
-        """Test creating new custom fields."""
+    async def test_create_new_fields_builtin(self, fields_app, fields_session):
+        """Test creating new built-in custom fields."""
         listing = Listing(
             cloudbeds_id="PROP1",
             name="Test Property",
@@ -165,20 +166,16 @@ class TestUpdateCustomFields:
         async with AsyncClient(
             transport=ASGITransport(app=fields_app), base_url="http://test"
         ) as client:
+            # Use built-in field (always available)
             response = await client.put(
                 f"/api/listings/{listing.id}/custom-fields",
                 headers={"Authorization": "Bearer test"},
                 json={
                     "fields": [
                         {
-                            "field_name": "booking_notes",
-                            "display_label": "Notes",
+                            "field_name": "guest_phone_last4",
+                            "display_label": "Phone (Last 4)",
                             "enabled": True,
-                        },
-                        {
-                            "field_name": "arrival_time",
-                            "display_label": "Arrival",
-                            "enabled": False,
                         },
                     ]
                 },
@@ -186,7 +183,81 @@ class TestUpdateCustomFields:
 
         assert response.status_code == 200
         data = response.json()
-        assert len(data["fields"]) == 2
+        assert len(data["fields"]) == 1
+        assert data["fields"][0]["field_name"] == "guest_phone_last4"
+
+    @pytest.mark.asyncio
+    async def test_create_new_fields_discovered(self, fields_app, fields_session):
+        """Test creating custom fields from discovered fields.
+
+        Uses a field key not in DEFAULT_CLOUDBEDS_FIELDS to verify
+        that discovery is actually required for the field to be valid.
+        """
+        from src.models.available_field import AvailableField
+
+        listing = Listing(
+            cloudbeds_id="PROP2",
+            name="Test Property 2",
+            ical_url_slug="test-property-2",
+            enabled=True,
+            sync_enabled=True,
+        )
+        fields_session.add(listing)
+        await fields_session.commit()
+        await fields_session.refresh(listing)
+        listing_id = listing.id
+
+        # First verify the field is rejected before discovery
+        async with AsyncClient(
+            transport=ASGITransport(app=fields_app), base_url="http://test"
+        ) as client:
+            response = await client.put(
+                f"/api/listings/{listing_id}/custom-fields",
+                headers={"Authorization": "Bearer test"},
+                json={
+                    "fields": [
+                        {
+                            "field_name": "myCustomApiField",
+                            "display_label": "My Custom Field",
+                            "enabled": True,
+                        },
+                    ]
+                },
+            )
+        assert response.status_code == 400
+        assert "Invalid field_name" in response.json()["detail"]
+
+        # Now discover the field (simulates sync discovering it)
+        avail_field = AvailableField(
+            listing_id=listing_id,
+            field_key="myCustomApiField",
+            display_name="My Custom API Field",
+        )
+        fields_session.add(avail_field)
+        await fields_session.commit()
+
+        # Now it should succeed
+        async with AsyncClient(
+            transport=ASGITransport(app=fields_app), base_url="http://test"
+        ) as client:
+            response = await client.put(
+                f"/api/listings/{listing_id}/custom-fields",
+                headers={"Authorization": "Bearer test"},
+                json={
+                    "fields": [
+                        {
+                            "field_name": "myCustomApiField",
+                            "display_label": "My Custom Field",
+                            "enabled": True,
+                        },
+                    ]
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["fields"]) == 1
+        assert data["fields"][0]["field_name"] == "myCustomApiField"
 
     @pytest.mark.asyncio
     async def test_update_existing_fields(self, fields_app, fields_session):
@@ -202,10 +273,11 @@ class TestUpdateCustomFields:
         await fields_session.commit()
         await fields_session.refresh(listing)
 
+        # Create an existing field using built-in field
         field = CustomField(
             listing_id=listing.id,
-            field_name="booking_notes",
-            display_label="Notes",
+            field_name="guest_phone_last4",
+            display_label="Phone",
             enabled=True,
             sort_order=0,
         )
@@ -221,8 +293,8 @@ class TestUpdateCustomFields:
                 json={
                     "fields": [
                         {
-                            "field_name": "booking_notes",
-                            "display_label": "Booking Notes Updated",
+                            "field_name": "guest_phone_last4",
+                            "display_label": "Phone (Last 4 Digits) Updated",
                             "enabled": False,
                         },
                     ]
@@ -232,7 +304,7 @@ class TestUpdateCustomFields:
         assert response.status_code == 200
         data = response.json()
         assert len(data["fields"]) == 1
-        assert data["fields"][0]["display_label"] == "Booking Notes Updated"
+        assert data["fields"][0]["display_label"] == "Phone (Last 4 Digits) Updated"
         assert data["fields"][0]["enabled"] is False
 
     @pytest.mark.asyncio
@@ -272,9 +344,10 @@ class TestUpdateCustomFields:
         detail = response.json()["detail"]
         assert "Invalid field_name" in detail
         assert "invalid_field_name" in detail
-        # Verify error message includes valid field names
+        # Verify error message includes valid field names (may be truncated)
         assert "Must be one of:" in detail
-        assert "guest_phone_last4" in detail  # One of the valid fields
+        # Check for a field that appears early alphabetically
+        assert "adults" in detail or "total" in detail
 
     @pytest.mark.asyncio
     async def test_update_fields_not_found(self, fields_app):
@@ -289,3 +362,69 @@ class TestUpdateCustomFields:
             )
 
         assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_field_by_omission(self, fields_app, fields_session):
+        """Test that fields not in update request are deleted."""
+        listing = Listing(
+            cloudbeds_id="PROP1",
+            name="Test Property",
+            ical_url_slug="test-property",
+            enabled=True,
+            sync_enabled=True,
+        )
+        fields_session.add(listing)
+        await fields_session.commit()
+        await fields_session.refresh(listing)
+        listing_id = listing.id  # Store ID before session changes
+
+        # Create two existing fields
+        field1 = CustomField(
+            listing_id=listing_id,
+            field_name="guest_phone_last4",
+            display_label="Phone",
+            enabled=True,
+            sort_order=0,
+        )
+        field2 = CustomField(
+            listing_id=listing_id,
+            field_name="guestName",
+            display_label="Guest",
+            enabled=True,
+            sort_order=1,
+        )
+        fields_session.add_all([field1, field2])
+        await fields_session.commit()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=fields_app), base_url="http://test"
+        ) as client:
+            # Only include one field in update - the other should be deleted
+            response = await client.put(
+                f"/api/listings/{listing_id}/custom-fields",
+                headers={"Authorization": "Bearer test"},
+                json={
+                    "fields": [
+                        {
+                            "field_name": "guestName",
+                            "display_label": "Guest Name",
+                            "enabled": True,
+                        },
+                    ]
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["fields"]) == 1
+        assert data["fields"][0]["field_name"] == "guestName"
+
+        # Verify guest_phone_last4 was actually deleted from the database
+        fields_session.expire_all()
+        result = await fields_session.execute(
+            select(CustomField).where(CustomField.listing_id == listing_id)
+        )
+        remaining_fields = result.scalars().all()
+        remaining_names = [f.field_name for f in remaining_fields]
+        assert "guest_phone_last4" not in remaining_names
+        assert "guestName" in remaining_names
