@@ -1037,6 +1037,15 @@ function addField() {
 }
 
 function addAllFields() {
+    // Remove any empty/unselected field rows first to prevent duplicates
+    const existingItems = elements.customFieldsList.querySelectorAll('.field-item');
+    existingItems.forEach(item => {
+        const fieldNameInput = item.querySelector('[data-field="field_name"]');
+        if (fieldNameInput && !fieldNameInput.value) {
+            item.remove();
+        }
+    });
+
     // Get list of already configured field names
     const configuredFieldNames = Array.from(
         elements.customFieldsList.querySelectorAll('[data-field="field_name"]')

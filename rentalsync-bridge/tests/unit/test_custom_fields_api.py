@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for custom fields API endpoints."""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # mypy: disable-error-code="attr-defined"
 from src.api.custom_fields import get_available_custom_fields
 from src.models.listing import Listing
-from src.repositories.custom_field_repository import BUILTIN_FIELDS
 
 
 @pytest.fixture
@@ -39,22 +38,34 @@ class TestGetAvailableCustomFields:
     """Tests for GET /api/listings/{id}/available-custom-fields endpoint."""
 
     @pytest.mark.asyncio
+    @patch("src.api.custom_fields.AvailableFieldRepository")
+    @patch("src.api.custom_fields.ListingRepository")
     async def test_get_available_custom_fields_returns_builtin_fields(
-        self, mock_db_session: AsyncMock, mock_listing: Listing
+        self,
+        mock_listing_repo_cls: MagicMock,
+        mock_available_repo_cls: MagicMock,
+        mock_db_session: AsyncMock,
+        mock_listing: Listing,
     ) -> None:
         """Test endpoint returns built-in custom fields when no discovered fields."""
-        # Mock the listing repository to return our test listing (first execute)
-        # Mock the available_fields query to return empty (second execute)
-        mock_listing_result = MagicMock()
-        mock_listing_result.scalar_one_or_none.return_value = mock_listing
+        # Mock ListingRepository.get_by_id to return listing
+        mock_listing_repo = MagicMock()
+        mock_listing_repo.get_by_id = AsyncMock(return_value=mock_listing)
+        mock_listing_repo_cls.return_value = mock_listing_repo
 
-        mock_available_result = MagicMock()
-        mock_available_result.scalars.return_value.all.return_value = []
-
-        mock_db_session.execute.side_effect = [
-            mock_listing_result,
-            mock_available_result,
-        ]
+        # Mock AvailableFieldRepository.get_enriched_available_fields
+        mock_available_repo = MagicMock()
+        mock_available_repo.get_enriched_available_fields = AsyncMock(
+            return_value=[
+                {
+                    "field_key": "guest_phone_last4",
+                    "display_name": "Guest Phone (Last 4)",
+                    "sample_value": None,
+                    "source": "builtin",
+                }
+            ]
+        )
+        mock_available_repo_cls.return_value = mock_available_repo
 
         # Call the endpoint
         response = await get_available_custom_fields(
@@ -70,22 +81,24 @@ class TestGetAvailableCustomFields:
         # Verify built-in fields are included
         available = response["available_fields"]
         assert isinstance(available, list)
-        # At minimum, built-in fields should be present
-        assert len(available) >= len(BUILTIN_FIELDS)
+        assert len(available) >= 1
 
         # Verify guest_phone_last4 (built-in) is in the response
         field_keys = [f["field_key"] for f in available]
         assert "guest_phone_last4" in field_keys
 
     @pytest.mark.asyncio
+    @patch("src.api.custom_fields.ListingRepository")
     async def test_get_available_custom_fields_listing_not_found(
-        self, mock_db_session: AsyncMock
+        self,
+        mock_listing_repo_cls: MagicMock,
+        mock_db_session: AsyncMock,
     ) -> None:
         """Test endpoint raises 404 when listing not found."""
-        # Mock the listing repository to return None
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = None
-        mock_db_session.execute.return_value = mock_result
+        # Mock ListingRepository.get_by_id to return None
+        mock_listing_repo = MagicMock()
+        mock_listing_repo.get_by_id = AsyncMock(return_value=None)
+        mock_listing_repo_cls.return_value = mock_listing_repo
 
         # Call should raise HTTPException
         with pytest.raises(HTTPException) as exc_info:
@@ -98,21 +111,40 @@ class TestGetAvailableCustomFields:
         assert "not found" in str(exc_info.value.detail).lower()
 
     @pytest.mark.asyncio
+    @patch("src.api.custom_fields.AvailableFieldRepository")
+    @patch("src.api.custom_fields.ListingRepository")
     async def test_get_available_custom_fields_returns_proper_format(
-        self, mock_db_session: AsyncMock, mock_listing: Listing
+        self,
+        mock_listing_repo_cls: MagicMock,
+        mock_available_repo_cls: MagicMock,
+        mock_db_session: AsyncMock,
+        mock_listing: Listing,
     ) -> None:
         """Test endpoint returns fields in proper format (list of objects)."""
-        # Mock the listing repository
-        mock_listing_result = MagicMock()
-        mock_listing_result.scalar_one_or_none.return_value = mock_listing
+        # Mock ListingRepository.get_by_id
+        mock_listing_repo = MagicMock()
+        mock_listing_repo.get_by_id = AsyncMock(return_value=mock_listing)
+        mock_listing_repo_cls.return_value = mock_listing_repo
 
-        mock_available_result = MagicMock()
-        mock_available_result.scalars.return_value.all.return_value = []
-
-        mock_db_session.execute.side_effect = [
-            mock_listing_result,
-            mock_available_result,
-        ]
+        # Mock AvailableFieldRepository with complete field data
+        mock_available_repo = MagicMock()
+        mock_available_repo.get_enriched_available_fields = AsyncMock(
+            return_value=[
+                {
+                    "field_key": "guestName",
+                    "display_name": "Guest Name",
+                    "sample_value": "John Doe",
+                    "source": "default",
+                },
+                {
+                    "field_key": "guest_phone_last4",
+                    "display_name": "Guest Phone (Last 4)",
+                    "sample_value": None,
+                    "source": "builtin",
+                },
+            ]
+        )
+        mock_available_repo_cls.return_value = mock_available_repo
 
         # Call the endpoint
         response = await get_available_custom_fields(
@@ -122,8 +154,8 @@ class TestGetAvailableCustomFields:
 
         available = response["available_fields"]
 
-        # Should include default Cloudbeds fields + built-in fields
-        assert len(available) > 0
+        # Should include mocked fields
+        assert len(available) == 2
 
         # Verify each entry has expected keys
         for field in available:

@@ -174,17 +174,20 @@ async def update_custom_fields(
         requested_field_names.add(field_name)
 
     # Bulk delete fields not in the request (validation passed, safe to modify)
+    # Use synchronize_session="fetch" to keep identity map consistent
     if requested_field_names:
         await db.execute(
             delete(CustomField).where(
                 CustomField.listing_id == listing_id,
                 CustomField.field_name.notin_(requested_field_names),
-            )
+            ),
+            execution_options={"synchronize_session": "fetch"},
         )
     else:
         # No fields requested - delete all existing fields for this listing
         await db.execute(
-            delete(CustomField).where(CustomField.listing_id == listing_id)
+            delete(CustomField).where(CustomField.listing_id == listing_id),
+            execution_options={"synchronize_session": "fetch"},
         )
 
     # Get existing fields for update logic
