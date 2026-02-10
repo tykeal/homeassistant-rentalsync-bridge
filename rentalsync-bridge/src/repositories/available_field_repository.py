@@ -370,3 +370,62 @@ class AvailableFieldRepository:
         # Add built-in computed fields
         result.update(BUILTIN_FIELDS)
         return result
+
+    async def get_enriched_available_fields(
+        self, listing_id: int
+    ) -> list[dict[str, str | None]]:
+        """Get all available fields with metadata for API responses.
+
+        Combines default, discovered, and built-in fields with source and
+        sample value information for UI display.
+
+        Args:
+            listing_id: Listing ID to get fields for.
+
+        Returns:
+            List of dicts with field_key, display_name, sample_value, source.
+        """
+        # Get discovered fields from database
+        discovered_fields = await self.get_for_listing(listing_id)
+        discovered_keys = {f.field_key for f in discovered_fields}
+
+        # Start with default Cloudbeds fields (always available)
+        available: list[dict[str, str | None]] = [
+            {
+                "field_key": key,
+                "display_name": name,
+                "sample_value": None,
+                "source": "default",
+            }
+            for key, name in DEFAULT_CLOUDBEDS_FIELDS.items()
+            if key not in discovered_keys  # Don't duplicate discovered fields
+        ]
+
+        # Add discovered fields (may override defaults with sample values)
+        for f in discovered_fields:
+            available.append(
+                {
+                    "field_key": f.field_key,
+                    "display_name": f.display_name,
+                    "sample_value": f.sample_value,
+                    "source": "discovered",
+                }
+            )
+
+        # Add built-in computed fields
+        existing_keys = {f["field_key"] for f in available}
+        for key, name in BUILTIN_FIELDS.items():
+            if key not in existing_keys:
+                available.append(
+                    {
+                        "field_key": key,
+                        "display_name": name,
+                        "sample_value": None,
+                        "source": "builtin",
+                    }
+                )
+
+        # Sort by display name
+        available.sort(key=lambda x: x["display_name"] or "")
+
+        return available

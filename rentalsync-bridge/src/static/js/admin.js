@@ -979,36 +979,57 @@ function addField() {
         displayNameLookup[field.field_key] = field.display_name;
     });
 
-    // Create dropdown options with sample value hints (only if sample exists)
+    // Build select element via DOM APIs to avoid XSS in attribute contexts
+    const selectEl = document.createElement('select');
+    selectEl.dataset.field = 'field_name';
+
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = 'Select field...';
+    selectEl.appendChild(defaultOption);
+
     // Use explicit null/undefined check to preserve falsy values like "0" or "false"
-    const options = unconfiguredFields.map((field) => {
+    for (const field of unconfiguredFields) {
+        const opt = document.createElement('option');
+        opt.value = field.field_key;
         const hint = (field.sample_value !== null && field.sample_value !== undefined && field.sample_value !== '')
             ? ` (e.g. ${field.sample_value})`
             : '';
-        const label = `${field.display_name}${hint}`;
-        return `<option value="${escapeHtml(field.field_key)}">${escapeHtml(label)}</option>`;
-    }).join('');
+        opt.textContent = `${field.display_name}${hint}`;
+        selectEl.appendChild(opt);
+    }
 
-    fieldItem.innerHTML = `
-        <select data-field="field_name">
-            <option value="">Select field...</option>
-            ${options}
-        </select>
-        <input type="text" placeholder="Display label" data-field="display_label">
-        <label class="toggle-switch">
-            <input type="checkbox" checked data-field="enabled">
-            <span class="toggle-slider"></span>
-        </label>
-        <button class="remove-btn" data-action="remove-field">&times;</button>
-    `;
+    const displayLabelInput = document.createElement('input');
+    displayLabelInput.type = 'text';
+    displayLabelInput.placeholder = 'Display label';
+    displayLabelInput.dataset.field = 'display_label';
+
+    const toggleLabel = document.createElement('label');
+    toggleLabel.className = 'toggle-switch';
+    const toggleCheckbox = document.createElement('input');
+    toggleCheckbox.type = 'checkbox';
+    toggleCheckbox.checked = true;
+    toggleCheckbox.dataset.field = 'enabled';
+    const toggleSlider = document.createElement('span');
+    toggleSlider.className = 'toggle-slider';
+    toggleLabel.appendChild(toggleCheckbox);
+    toggleLabel.appendChild(toggleSlider);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'remove-btn';
+    removeBtn.dataset.action = 'remove-field';
+    removeBtn.textContent = '×';
+
+    fieldItem.appendChild(selectEl);
+    fieldItem.appendChild(displayLabelInput);
+    fieldItem.appendChild(toggleLabel);
+    fieldItem.appendChild(removeBtn);
 
     // Auto-populate label when field is selected (use lookup for raw value)
-    const select = fieldItem.querySelector('select');
-    const labelInput = fieldItem.querySelector('[data-field="display_label"]');
-    select.addEventListener('change', () => {
-        const fieldKey = select.value;
+    selectEl.addEventListener('change', () => {
+        const fieldKey = selectEl.value;
         if (fieldKey && displayNameLookup[fieldKey]) {
-            labelInput.value = displayNameLookup[fieldKey];
+            displayLabelInput.value = displayNameLookup[fieldKey];
         }
     });
 
@@ -1032,15 +1053,40 @@ function addAllFields() {
         const fieldItem = document.createElement('div');
         fieldItem.className = 'field-item';
 
-        fieldItem.innerHTML = `
-            <input type="text" readonly value="${escapeHtml(field.field_key)}" data-field="field_name" class="readonly-field">
-            <input type="text" placeholder="Display label" value="${escapeHtml(field.display_name)}" data-field="display_label">
-            <label class="toggle-switch">
-                <input type="checkbox" checked data-field="enabled">
-                <span class="toggle-slider"></span>
-            </label>
-            <button class="remove-btn" data-action="remove-field">&times;</button>
-        `;
+        // Build elements via DOM APIs to avoid XSS in attribute contexts
+        const fieldNameInput = document.createElement('input');
+        fieldNameInput.type = 'text';
+        fieldNameInput.readOnly = true;
+        fieldNameInput.value = field.field_key;
+        fieldNameInput.dataset.field = 'field_name';
+        fieldNameInput.className = 'readonly-field';
+
+        const displayLabelInput = document.createElement('input');
+        displayLabelInput.type = 'text';
+        displayLabelInput.placeholder = 'Display label';
+        displayLabelInput.value = field.display_name;
+        displayLabelInput.dataset.field = 'display_label';
+
+        const toggleLabel = document.createElement('label');
+        toggleLabel.className = 'toggle-switch';
+        const toggleCheckbox = document.createElement('input');
+        toggleCheckbox.type = 'checkbox';
+        toggleCheckbox.checked = true;
+        toggleCheckbox.dataset.field = 'enabled';
+        const toggleSlider = document.createElement('span');
+        toggleSlider.className = 'toggle-slider';
+        toggleLabel.appendChild(toggleCheckbox);
+        toggleLabel.appendChild(toggleSlider);
+
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'remove-btn';
+        removeBtn.dataset.action = 'remove-field';
+        removeBtn.textContent = '×';
+
+        fieldItem.appendChild(fieldNameInput);
+        fieldItem.appendChild(displayLabelInput);
+        fieldItem.appendChild(toggleLabel);
+        fieldItem.appendChild(removeBtn);
         fragment.appendChild(fieldItem);
     }
     elements.customFieldsList.appendChild(fragment);

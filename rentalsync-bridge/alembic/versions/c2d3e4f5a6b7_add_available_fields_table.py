@@ -28,8 +28,18 @@ def upgrade() -> None:
         sa.Column("field_key", sa.String(length=100), nullable=False),
         sa.Column("display_name", sa.String(length=255), nullable=False),
         sa.Column("sample_value", sa.String(length=500), nullable=True),
-        sa.Column("discovered_at", sa.DateTime(), nullable=False),
-        sa.Column("last_seen_at", sa.DateTime(), nullable=False),
+        sa.Column(
+            "discovered_at",
+            sa.DateTime(),
+            nullable=False,
+            server_default=sa.func.current_timestamp(),
+        ),
+        sa.Column(
+            "last_seen_at",
+            sa.DateTime(),
+            nullable=False,
+            server_default=sa.func.current_timestamp(),
+        ),
         sa.ForeignKeyConstraint(
             ["listing_id"],
             ["listings.id"],

@@ -12,9 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.ical import get_calendar_cache
 from src.database import get_db
-from src.models.available_field import AvailableField
 from src.models.custom_field import CustomField
-from src.repositories.available_field_repository import format_allowed_fields_message
+from src.repositories.available_field_repository import (
+    AvailableFieldRepository,
+    format_allowed_fields_message,
+)
 from src.repositories.custom_field_repository import CustomFieldRepository
 from src.repositories.listing_repository import ListingRepository
 
@@ -293,55 +295,9 @@ async def get_available_custom_fields(
             detail="Listing not found",
         )
 
-    # Get dynamically discovered fields
-    result = await db.execute(
-        select(AvailableField)
-        .where(AvailableField.listing_id == listing_id)
-        .order_by(AvailableField.display_name)
-    )
-    discovered_fields = result.scalars().all()
-    discovered_keys = {f.field_key for f in discovered_fields}
-
-    # Start with default Cloudbeds fields (always available)
-    defaults = CustomFieldRepository.get_default_cloudbeds_fields()
-    available: list[dict[str, Any]] = [
-        {
-            "field_key": key,
-            "display_name": name,
-            "sample_value": None,
-            "source": "default",
-        }
-        for key, name in defaults.items()
-        if key not in discovered_keys  # Don't duplicate discovered fields
-    ]
-
-    # Add discovered fields (may override defaults with sample values)
-    for f in discovered_fields:
-        available.append(
-            {
-                "field_key": f.field_key,
-                "display_name": f.display_name,
-                "sample_value": f.sample_value,
-                "source": "discovered",
-            }
-        )
-
-    # Add built-in computed fields
-    builtin = CustomFieldRepository.get_builtin_fields()
-    existing_keys = {f["field_key"] for f in available}
-    for key, name in builtin.items():
-        if key not in existing_keys:
-            available.append(
-                {
-                    "field_key": key,
-                    "display_name": name,
-                    "sample_value": None,
-                    "source": "builtin",
-                }
-            )
-
-    # Sort by display name
-    available.sort(key=lambda x: x["display_name"])
+    # Use centralized field composition from AvailableFieldRepository
+    available_repo = AvailableFieldRepository(db)
+    available = await available_repo.get_enriched_available_fields(listing_id)
 
     return {
         "available_fields": available,
