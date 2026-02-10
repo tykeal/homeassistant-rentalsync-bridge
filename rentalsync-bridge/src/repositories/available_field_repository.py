@@ -15,8 +15,8 @@ from src.models.available_field import AvailableField
 # Precompiled for performance in tight loops during sync/discovery
 _EXCLUDED_FIELD_PATTERNS = [
     re.compile(r"^_"),  # Internal fields starting with underscore
-    re.compile(r"[A-Z]d$"),  # ID fields ending in Id (camelCase)
-    re.compile(r"ID$"),  # ID fields ending in ID (ALLCAPS)
+    re.compile(r"Id$"),  # ID fields ending in Id (camelCase: reservationId)
+    re.compile(r"ID$"),  # ID fields ending in ID (ALLCAPS: propertyID)
     re.compile(r"^id$"),  # Exact match for "id" field
 ]
 

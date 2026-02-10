@@ -7,7 +7,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.ical import get_calendar_cache
@@ -173,7 +173,21 @@ async def update_custom_fields(
             )
         requested_field_names.add(field_name)
 
-    # Delete fields not in the request (validation passed, safe to modify)
+    # Bulk delete fields not in the request (validation passed, safe to modify)
+    if requested_field_names:
+        await db.execute(
+            delete(CustomField).where(
+                CustomField.listing_id == listing_id,
+                CustomField.field_name.notin_(requested_field_names),
+            )
+        )
+    else:
+        # No fields requested - delete all existing fields for this listing
+        await db.execute(
+            delete(CustomField).where(CustomField.listing_id == listing_id)
+        )
+
+    # Get existing fields for update logic
     existing_result = await db.execute(
         select(CustomField).where(CustomField.listing_id == listing_id)
     )
@@ -183,10 +197,6 @@ async def update_custom_fields(
     existing_by_name: dict[str, CustomField] = {
         f.field_name: f for f in existing_fields
     }
-
-    for existing in existing_fields:
-        if existing.field_name not in requested_field_names:
-            await db.delete(existing)
 
     # Create or update fields using the lookup
     # All fields are validated above, so we can safely process all entries
