@@ -167,3 +167,141 @@ class TestGetAvailableCustomFields:
             assert isinstance(field["display_name"], str)
             assert len(field["field_key"]) > 0
             assert len(field["display_name"]) > 0
+
+
+class TestUpdateCustomFieldsCacheInvalidation:
+    """Tests for cache invalidation in update_custom_fields endpoint."""
+
+    @pytest.mark.asyncio
+    @patch("src.api.custom_fields.get_calendar_cache")
+    @patch("src.api.custom_fields.AvailableFieldRepository")
+    @patch("src.api.custom_fields.ListingRepository")
+    async def test_cache_invalidated_when_listing_has_ical_slug(
+        self,
+        mock_listing_repo_cls: MagicMock,
+        mock_available_repo_cls: MagicMock,
+        mock_get_cache: MagicMock,
+        mock_db_session: AsyncMock,
+    ) -> None:
+        """Test that calendar cache is invalidated when ical_url_slug exists."""
+        from src.api.custom_fields import (
+            CustomFieldUpdateRequest,
+            update_custom_fields,
+        )
+
+        # Create listing with ical_url_slug
+        listing = Listing(
+            id=1,
+            cloudbeds_id="PROP123",
+            name="Test Property",
+            ical_url_slug="test-property",
+            enabled=True,
+            sync_enabled=True,
+            timezone="America/Los_Angeles",
+        )
+
+        # Mock ListingRepository
+        mock_listing_repo = MagicMock()
+        mock_listing_repo.get_by_id = AsyncMock(return_value=listing)
+        mock_listing_repo_cls.return_value = mock_listing_repo
+
+        # Mock AvailableFieldRepository
+        mock_available_repo = MagicMock()
+        mock_available_repo.get_all_field_keys = AsyncMock(
+            return_value={"guestName": "Guest Name"}
+        )
+        mock_available_repo_cls.return_value = mock_available_repo
+
+        # Mock cache
+        mock_cache = MagicMock()
+        mock_get_cache.return_value = mock_cache
+
+        # Mock db session methods
+        mock_db_session.execute = AsyncMock(return_value=MagicMock())
+        mock_db_session.commit = AsyncMock()
+
+        # Create request with one field
+        request = CustomFieldUpdateRequest(
+            fields=[
+                {
+                    "field_name": "guestName",
+                    "display_label": "Guest",
+                    "enabled": True,
+                    "sort_order": 0,
+                }
+            ]
+        )
+
+        # Call the endpoint
+        await update_custom_fields(listing_id=1, request=request, db=mock_db_session)
+
+        # Verify cache was invalidated
+        mock_get_cache.assert_called_once()
+        mock_cache.invalidate_prefix.assert_called_once_with("test-property")
+
+    @pytest.mark.asyncio
+    @patch("src.api.custom_fields.get_calendar_cache")
+    @patch("src.api.custom_fields.AvailableFieldRepository")
+    @patch("src.api.custom_fields.ListingRepository")
+    async def test_cache_not_invalidated_when_listing_has_no_ical_slug(
+        self,
+        mock_listing_repo_cls: MagicMock,
+        mock_available_repo_cls: MagicMock,
+        mock_get_cache: MagicMock,
+        mock_db_session: AsyncMock,
+    ) -> None:
+        """Test that cache is NOT invalidated when ical_url_slug is None."""
+        from src.api.custom_fields import (
+            CustomFieldUpdateRequest,
+            update_custom_fields,
+        )
+
+        # Create listing without ical_url_slug
+        listing = Listing(
+            id=1,
+            cloudbeds_id="PROP123",
+            name="Test Property",
+            ical_url_slug=None,  # No slug
+            enabled=True,
+            sync_enabled=True,
+            timezone="America/Los_Angeles",
+        )
+
+        # Mock ListingRepository
+        mock_listing_repo = MagicMock()
+        mock_listing_repo.get_by_id = AsyncMock(return_value=listing)
+        mock_listing_repo_cls.return_value = mock_listing_repo
+
+        # Mock AvailableFieldRepository
+        mock_available_repo = MagicMock()
+        mock_available_repo.get_all_field_keys = AsyncMock(
+            return_value={"guestName": "Guest Name"}
+        )
+        mock_available_repo_cls.return_value = mock_available_repo
+
+        # Mock cache - should NOT be called
+        mock_cache = MagicMock()
+        mock_get_cache.return_value = mock_cache
+
+        # Mock db session methods
+        mock_db_session.execute = AsyncMock(return_value=MagicMock())
+        mock_db_session.commit = AsyncMock()
+
+        # Create request
+        request = CustomFieldUpdateRequest(
+            fields=[
+                {
+                    "field_name": "guestName",
+                    "display_label": "Guest",
+                    "enabled": True,
+                    "sort_order": 0,
+                }
+            ]
+        )
+
+        # Call the endpoint
+        await update_custom_fields(listing_id=1, request=request, db=mock_db_session)
+
+        # Verify cache was NOT called
+        mock_get_cache.assert_not_called()
+        mock_cache.invalidate_prefix.assert_not_called()

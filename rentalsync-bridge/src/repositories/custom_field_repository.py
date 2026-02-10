@@ -163,8 +163,10 @@ class CustomFieldRepository:
     async def create_defaults_for_listing(self, listing_id: int) -> list[CustomField]:
         """Create default custom fields for a new listing.
 
-        Creates the built-in guest_phone_last4 field by default. Other fields
-        will become available after the first sync discovers them from Cloudbeds.
+        Creates the built-in guest_phone_last4 field by default. Additional
+        fields from DEFAULT_CLOUDBEDS_FIELDS are always available for
+        configuration. Other dynamic fields will become discoverable after
+        the first sync processes reservations from Cloudbeds.
 
         Args:
             listing_id: Listing ID to create fields for.

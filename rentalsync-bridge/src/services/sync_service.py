@@ -146,7 +146,12 @@ class SyncService:
         counts = {"inserted": 0, "updated": 0, "cancelled": 0}
         seen_booking_ids: set[str] = set()
         seen_reservation_ids: set[str] = set()  # Track base reservation IDs
-        discovered_field_keys: set[str] = set()  # Track discovered fields across all
+
+        # Batch discover fields from all reservations in a single operation
+        # This does one DB fetch and one flush instead of per-reservation
+        await self._available_field_repo.discover_fields_from_reservations(
+            listing.id, reservations
+        )
 
         for reservation in reservations:
             cloudbeds_booking_id = reservation.get("id") or reservation.get(
@@ -158,12 +163,6 @@ class SyncService:
 
             # Track the reservation ID from API for cancellation detection
             seen_reservation_ids.add(str(cloudbeds_booking_id))
-
-            # Discover available fields from each reservation (deduped by repo)
-            # This ensures optional/conditional fields are captured across the sync
-            await self._available_field_repo.discover_fields_from_reservation(
-                listing.id, reservation, discovered_field_keys
-            )
 
             # Extract booking data
             booking_data = self._extract_booking_data(reservation)
@@ -247,6 +246,7 @@ class SyncService:
         updated = 0
         booking_ids: set[str] = set()
 
+        # Extract transient keys that are only used locally, not passed to upsert
         cloudbeds_room_ids = booking_data.get("cloudbeds_room_ids", [])
         rooms_data = booking_data.get("rooms_data", [])
         base_custom_data = booking_data.get("base_custom_data", {})
@@ -254,13 +254,22 @@ class SyncService:
         # Build a lookup from room ID to room data for merging
         room_data_by_id = self._build_room_data_lookup(rooms_data)
 
+        # Build the base booking dict with only ORM-expected fields
+        base_booking = {
+            "guest_name": booking_data["guest_name"],
+            "guest_phone_last4": booking_data["guest_phone_last4"],
+            "check_in_date": booking_data["check_in_date"],
+            "check_out_date": booking_data["check_out_date"],
+            "status": booking_data["status"],
+        }
+
         # If no rooms specified, create booking without room association
         if not cloudbeds_room_ids:
             booking_id = str(cloudbeds_booking_id)
             booking_ids.add(booking_id)
             # Use base custom data as-is (no room-specific data to merge)
             final_booking_data = {
-                **booking_data,
+                **base_booking,
                 "custom_data": base_custom_data if base_custom_data else None,
             }
             was_created = await self._upsert_single_booking(
@@ -297,7 +306,7 @@ class SyncService:
                     base_custom_data, room_specific_data
                 )
                 final_booking_data = {
-                    **booking_data,
+                    **base_booking,
                     "custom_data": custom_data if custom_data else None,
                 }
 

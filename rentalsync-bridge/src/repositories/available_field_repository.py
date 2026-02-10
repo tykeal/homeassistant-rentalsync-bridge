@@ -327,6 +327,81 @@ class AvailableFieldRepository:
         await self._session.flush()
         return discovered
 
+    async def discover_fields_from_reservations(
+        self,
+        listing_id: int,
+        reservations: list[dict],
+    ) -> list[AvailableField]:
+        """Discover and store fields from multiple reservations in a single batch.
+
+        More efficient than calling discover_fields_from_reservation per
+        reservation, as this does a single DB fetch and single flush.
+
+        Args:
+            listing_id: Listing ID to associate fields with.
+            reservations: List of reservation dicts from Cloudbeds API.
+
+        Returns:
+            List of all discovered/updated fields.
+        """
+        if not reservations:
+            return []
+
+        # Collect all candidates across all reservations first
+        already_discovered: set[str] = set()
+        all_candidates: list[tuple[str, str]] = []
+
+        for reservation in reservations:
+            # Collect candidates from reservation (top-level)
+            candidates = self._collect_field_candidates(
+                reservation, already_discovered, set()
+            )
+            candidate_keys = {c[0] for c in candidates}
+
+            # Also collect from first room in rooms array (if present)
+            rooms = reservation.get("rooms", [])
+            if rooms and isinstance(rooms, list) and len(rooms) > 0:
+                first_room = rooms[0]
+                if isinstance(first_room, dict):
+                    room_candidates = self._collect_field_candidates(
+                        first_room, already_discovered, candidate_keys
+                    )
+                    candidates.extend(room_candidates)
+
+            # Add to already_discovered to dedupe across reservations
+            for key, _ in candidates:
+                already_discovered.add(key)
+            all_candidates.extend(candidates)
+
+        if not all_candidates:
+            return []
+
+        # Single DB fetch for all existing fields
+        existing_fields = await self.get_for_listing(listing_id, ordered=False)
+        existing_by_key: dict[str, AvailableField] = {
+            f.field_key: f for f in existing_fields
+        }
+
+        # Upsert all fields in memory
+        discovered: list[AvailableField] = []
+        now = datetime.now(UTC)
+        seen_keys: set[str] = set()
+
+        for key, sample in all_candidates:
+            # Skip if we've already processed this key in this batch
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+
+            field = self._upsert_field_in_memory(
+                listing_id, key, sample, existing_by_key, now
+            )
+            discovered.append(field)
+
+        # Single flush for all changes
+        await self._session.flush()
+        return discovered
+
     def _upsert_field_in_memory(
         self,
         listing_id: int,
