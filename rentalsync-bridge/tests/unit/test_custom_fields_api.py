@@ -14,9 +14,17 @@ from src.models.listing import Listing
 
 
 @pytest.fixture
-def mock_db_session() -> AsyncMock:
-    """Create a mock database session."""
-    session = AsyncMock(spec=AsyncSession)
+def mock_db_session() -> MagicMock:
+    """Create a mock database session.
+
+    Uses MagicMock base with AsyncMock for async methods only,
+    avoiding unawaited-coroutine warnings for sync methods like add().
+    """
+    session = MagicMock(spec=AsyncSession)
+    session.execute = AsyncMock()
+    session.commit = AsyncMock()
+    session.flush = AsyncMock()
+    session.refresh = AsyncMock()
     return session
 
 

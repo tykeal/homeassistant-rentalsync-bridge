@@ -911,7 +911,7 @@ function renderCustomFields(fields) {
                 <input type="checkbox" ${field.enabled ? 'checked' : ''} data-field="enabled">
                 <span class="toggle-slider"></span>
             </label>
-            <button class="remove-btn" data-action="remove-field" aria-label="Remove field">&times;</button>
+            <button type="button" class="remove-btn" data-action="remove-field" aria-label="Remove field">&times;</button>
         </div>
     `).join('');
 
@@ -1016,6 +1016,7 @@ function addField() {
     toggleLabel.appendChild(toggleSlider);
 
     const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
     removeBtn.className = 'remove-btn';
     removeBtn.dataset.action = 'remove-field';
     removeBtn.textContent = '×';
@@ -1089,6 +1090,7 @@ function addAllFields() {
         toggleLabel.appendChild(toggleSlider);
 
         const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
         removeBtn.className = 'remove-btn';
         removeBtn.dataset.action = 'remove-field';
         removeBtn.textContent = '×';

@@ -1373,3 +1373,97 @@ class TestRoomAssociation:
         # Both should use composite IDs
         booking_ids = {b.cloudbeds_booking_id for b in bookings}
         assert booking_ids == {"RES_TRANSITION::200-0", "RES_TRANSITION::200-1"}
+
+
+class TestMergeRoomCustomData:
+    """Tests for _merge_room_custom_data static method."""
+
+    def test_room_values_override_reservation_values(self) -> None:
+        """Test that room data takes precedence over reservation data."""
+        base = {"guestName": "John", "roomTypeName": "Standard"}
+        room = {"roomTypeName": "Deluxe", "roomName": "101"}
+
+        result = SyncService._merge_room_custom_data(base, room)
+
+        assert result["guestName"] == "John"
+        assert result["roomTypeName"] == "Deluxe"
+        assert result["roomName"] == "101"
+
+    def test_id_fields_excluded_via_should_exclude_field(self) -> None:
+        """Test that ID fields are excluded using shared exclusion logic."""
+        base = {"guestName": "John"}
+        room = {"roomId": "123", "reservationID": "ABC", "roomName": "101"}
+
+        result = SyncService._merge_room_custom_data(base, room)
+
+        assert "roomId" not in result
+        assert "reservationID" not in result
+        assert result["roomName"] == "101"
+        assert result["guestName"] == "John"
+
+    def test_complex_values_skipped(self) -> None:
+        """Test that dict and list values are skipped."""
+        base = {"guestName": "John"}
+        room = {
+            "nested": {"key": "value"},
+            "items": ["a", "b"],
+            "roomName": "101",
+        }
+
+        result = SyncService._merge_room_custom_data(base, room)
+
+        assert "nested" not in result
+        assert "items" not in result
+        assert result["roomName"] == "101"
+
+    def test_none_and_empty_values_skipped(self) -> None:
+        """Test that None and empty string values are skipped."""
+        base = {"guestName": "John", "notes": "Original"}
+        room = {"notes": "", "extra": None, "roomName": "101"}
+
+        result = SyncService._merge_room_custom_data(base, room)
+
+        # Original notes preserved since room's empty string is skipped
+        assert result["notes"] == "Original"
+        assert "extra" not in result
+        assert result["roomName"] == "101"
+
+    def test_falsy_but_meaningful_values_preserved(self) -> None:
+        """Test that falsy values like 0 and False are preserved."""
+        base = {"guestName": "John"}
+        room = {"discount": 0, "isVIP": False, "roomName": "101"}
+
+        result = SyncService._merge_room_custom_data(base, room)
+
+        assert result["discount"] == "0"
+        assert result["isVIP"] == "False"
+        assert result["roomName"] == "101"
+
+    def test_none_room_data_returns_base_copy(self) -> None:
+        """Test that None room data returns copy of base."""
+        base = {"guestName": "John", "notes": "Test"}
+
+        result = SyncService._merge_room_custom_data(base, None)
+
+        assert result == base
+        # Verify it's a copy, not the same object
+        assert result is not base
+
+    def test_empty_dict_room_data_returns_base_copy(self) -> None:
+        """Test that empty room data returns copy of base."""
+        base = {"guestName": "John"}
+
+        result = SyncService._merge_room_custom_data(base, {})
+
+        assert result == base
+
+    def test_values_converted_to_string(self) -> None:
+        """Test that numeric and boolean values are converted to strings."""
+        base = {}
+        room = {"price": 199.99, "nights": 3, "confirmed": True}
+
+        result = SyncService._merge_room_custom_data(base, room)
+
+        assert result["price"] == "199.99"
+        assert result["nights"] == "3"
+        assert result["confirmed"] == "True"

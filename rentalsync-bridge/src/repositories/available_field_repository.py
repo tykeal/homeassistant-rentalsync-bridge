@@ -233,37 +233,6 @@ class AvailableFieldRepository:
         await self._session.flush()
         return field
 
-    @staticmethod
-    def _collect_field_candidates(
-        data: dict,
-        already_discovered: set[str],
-        existing_keys: set[str],
-    ) -> list[tuple[str, str]]:
-        """Collect field candidates from a dict for discovery.
-
-        Filters out excluded fields (ID fields, internal fields) during
-        collection to avoid triggering unnecessary database operations.
-
-        Args:
-            data: Dict of fields to inspect (reservation or room).
-            already_discovered: Set of keys already seen in this sync.
-            existing_keys: Set of keys already collected as candidates.
-
-        Returns:
-            List of (key, sample_value) tuples for valid candidates.
-        """
-        candidates: list[tuple[str, str]] = []
-        for key, value in data.items():
-            if key in already_discovered or key in existing_keys:
-                continue
-            if value is None or value == "" or isinstance(value, (dict, list)):
-                continue
-            # Filter excluded fields during collection to avoid DB work
-            if should_exclude_field(key):
-                continue
-            candidates.append((key, str(value)[:500]))
-        return candidates
-
     async def discover_fields_from_reservation(
         self,
         listing_id: int,
@@ -283,6 +252,9 @@ class AvailableFieldRepository:
         Uses already_discovered set to skip fields already processed in
         this sync run, avoiding redundant database operations.
 
+        Note: This method delegates to discover_fields_from_reservations()
+        to ensure consistent filtering logic across single and batch discovery.
+
         Args:
             listing_id: Listing ID to associate fields with.
             reservation: Reservation dict from Cloudbeds API.
@@ -290,47 +262,24 @@ class AvailableFieldRepository:
                 in this sync run. Will be updated with newly discovered keys.
 
         Returns:
-            List of discovered/updated fields.
+            List of discovered/updated fields (excluding already_discovered).
         """
-        discovered: list[AvailableField] = []
-        if already_discovered is None:
-            already_discovered = set()
-
-        # Collect candidates from reservation (top-level)
-        candidates = self._collect_field_candidates(
-            reservation, already_discovered, set()
+        # Delegate to batch method for consistent filtering logic
+        all_discovered = await self.discover_fields_from_reservations(
+            listing_id, [reservation]
         )
-        candidate_keys = {c[0] for c in candidates}
 
-        # Also collect from first room in rooms array (if present)
-        rooms = reservation.get("rooms", [])
-        if rooms and isinstance(rooms, list) and len(rooms) > 0:
-            first_room = rooms[0]
-            if isinstance(first_room, dict):
-                room_candidates = self._collect_field_candidates(
-                    first_room, already_discovered, candidate_keys
-                )
-                candidates.extend(room_candidates)
+        # Filter out fields that were already discovered by caller
+        if already_discovered is not None:
+            discovered = [
+                f for f in all_discovered if f.field_key not in already_discovered
+            ]
+            # Update caller's already_discovered set with new fields
+            for field in discovered:
+                already_discovered.add(field.field_key)
+        else:
+            discovered = all_discovered
 
-        if not candidates:
-            return discovered
-
-        # Bulk-fetch existing fields for this listing to avoid N+1 queries
-        existing_fields = await self.get_for_listing(listing_id, ordered=False)
-        existing_by_key: dict[str, AvailableField] = {
-            f.field_key: f for f in existing_fields
-        }
-
-        now = datetime.now(UTC)
-        for key, sample in candidates:
-            # Exclusion already applied in _collect_field_candidates
-            field = self._upsert_field_in_memory(
-                listing_id, key, sample, existing_by_key, now
-            )
-            discovered.append(field)
-            already_discovered.add(key)
-
-        await self._session.flush()
         return discovered
 
     async def discover_fields_from_reservations(
