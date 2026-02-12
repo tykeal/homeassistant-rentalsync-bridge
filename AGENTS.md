@@ -122,16 +122,19 @@ Check `REUSE.toml` for file-type-specific header requirements.
 
 ## Testing Requirements
 
-- Run tests before committing: `pytest tests/`
-- Run linting before committing: `ruff check src/ tests/`
+The Python project lives under `rentalsync-bridge/`. Run commands from that
+directory using `uv`:
+
+- Run tests before committing: `cd rentalsync-bridge && uv run pytest tests/`
+- Run linting before committing: `cd rentalsync-bridge && uv run ruff check src/ tests/`
 - All tests must pass before pushing
 - New features should include appropriate test coverage
 
 ## Development Workflow Summary
 
 1. Make changes to code
-2. Run tests locally to verify: `pytest tests/ -x -q`
-3. Run linting: `ruff check src/ tests/`
+2. Run tests locally to verify: `cd rentalsync-bridge && uv run pytest tests/ -x -q`
+3. Run linting: `cd rentalsync-bridge && uv run ruff check src/ tests/`
 4. Stage changes: `git add <files>`
 5. Commit with sign-off and co-authorship:
    ```bash
