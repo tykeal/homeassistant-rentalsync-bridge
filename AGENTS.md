@@ -4,6 +4,12 @@ This document codifies git and development practices for AI agents working on
 this repository. These practices are derived from the project constitution and
 established development conventions.
 
+## Constitution
+
+If `.specify/memory/constitution.md` exists in this repository, read it and
+follow its principles. The constitution takes precedence over this file if
+there is any conflict between the two documents.
+
 ## Git Commit Requirements
 
 ### Commit Message Format
