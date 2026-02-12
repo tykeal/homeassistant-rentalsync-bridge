@@ -72,7 +72,7 @@ This trailer goes at the end of the commit message body.
 ## Pre-Commit Hooks
 
 This repository uses pre-commit hooks that run automatically on `git commit`.
-The hooks enforce:
+The hooks may enforce (non-exhaustive list):
 
 - **reuse** - SPDX license header compliance
 - **ruff** - Python linting and formatting
@@ -80,6 +80,9 @@ The hooks enforce:
 - **interrogate** - Docstring coverage
 - **yamllint** - YAML linting
 - **gitlint** - Commit message format validation
+
+Additional hooks may be configured. Check `.pre-commit-config.yaml` for the
+complete list.
 
 ### If Pre-Commit Fails
 
