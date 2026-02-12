@@ -160,6 +160,6 @@ directory using `uv`:
 | Co-author | `Co-Authored-By: <Model> <email@provider.com>` |
 | Subject format | `Type(scope): description` |
 | Type case | Capitalized (e.g., `Fix`, `Feat`) |
-| Subject length | ≤50 chars recommended |
+| Subject length | ≤50 chars required |
 | Body line length | ≤80 chars |
 | After failed commit | Fix and retry (no reset) |
