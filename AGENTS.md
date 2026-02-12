@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Agent Development Guidelines
 
 This document codifies git and development practices for AI agents working on
