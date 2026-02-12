@@ -56,7 +56,7 @@ Co-Authored-By: <AI Model> <email@provider.com>"
 
 ### Line Length Limits
 
-- **Subject line**: Maximum 50 characters (recommended), hard limit varies
+- **Subject line**: Maximum 50 characters (required per constitution)
 - **Body lines**: Maximum 80 characters
 - URLs in body are exempt from line length (gitlint configured)
 
