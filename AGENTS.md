@@ -85,6 +85,7 @@ The hooks may enforce (non-exhaustive list):
 - **interrogate** - Docstring coverage
 - **yamllint** - YAML linting
 - **gitlint** - Commit message format validation
+- **actionlint** - GitHub Actions workflow validation
 
 Additional hooks may be configured. Check `.pre-commit-config.yaml` for the
 complete list.
