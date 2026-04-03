@@ -107,15 +107,16 @@ class CloudbedsProvider(PMSProvider):
 
         listings: list[PMSListing] = []
         for prop in properties:
-            pms_id = str(prop.get("propertyID", ""))
+            raw_id = prop.get("propertyID")
+            pms_id = str(raw_id) if raw_id is not None else ""
             if not pms_id:
                 logger.warning("Skipping Cloudbeds property with missing ID")
                 continue
             listings.append(
                 PMSListing(
                     pms_id=pms_id,
-                    name=prop["propertyName"],
-                    timezone=prop.get("propertyTimezone", "UTC"),
+                    name=prop.get("propertyName") or "",
+                    timezone=prop.get("propertyTimezone") or "UTC",
                 )
             )
         return listings
@@ -174,7 +175,8 @@ class CloudbedsProvider(PMSProvider):
 
         rooms: list[PMSRoom] = []
         for room in raw:
-            room_id = str(room.get("roomID", ""))
+            raw_room_id = room.get("roomID")
+            room_id = str(raw_room_id) if raw_room_id is not None else ""
             if not room_id:
                 logger.warning(
                     "Skipping Cloudbeds room with missing ID in listing %s",
@@ -184,7 +186,7 @@ class CloudbedsProvider(PMSProvider):
             rooms.append(
                 PMSRoom(
                     pms_room_id=room_id,
-                    name=room.get("roomName", ""),
+                    name=room.get("roomName") or "",
                     room_type=room.get("roomTypeName"),
                 )
             )
@@ -248,10 +250,11 @@ class CloudbedsProvider(PMSProvider):
                 continue
 
             for res in reservations:
-                if str(res.get("guestID", "")) == guest_id:
+                raw_guest_id = res.get("guestID")
+                if (str(raw_guest_id) if raw_guest_id is not None else "") == guest_id:
                     return PMSGuest(
                         guest_id=guest_id,
-                        full_name=res.get("guestName", ""),
+                        full_name=res.get("guestName") or "",
                         phone=res.get("guestPhone"),
                         email=res.get("guestEmail"),
                     )
@@ -324,8 +327,11 @@ class CloudbedsProvider(PMSProvider):
                 continue
 
             for res in reservations:
-                if str(res.get("reservationID", "")) == reservation_id:
-                    return dict(res.get("customFields", {}))
+                raw_res_id = res.get("reservationID")
+                if (
+                    str(raw_res_id) if raw_res_id is not None else ""
+                ) == reservation_id:
+                    return dict(res.get("customFields") or {})
 
         if properties_failed == len(properties) and last_error is not None:
             if isinstance(last_error, CloudbedsServiceError):
@@ -408,7 +414,8 @@ class CloudbedsProvider(PMSProvider):
         check_in = raw.get("startDate") or raw.get("checkInDate", "")
         check_out = raw.get("endDate") or raw.get("checkOutDate", "")
 
-        pms_booking_id = str(raw.get("reservationID", ""))
+        raw_res_id = raw.get("reservationID")
+        pms_booking_id = str(raw_res_id) if raw_res_id is not None else ""
         if not pms_booking_id:
             raise PMSProviderError(
                 "Cloudbeds reservation missing required reservationID"
@@ -423,7 +430,7 @@ class CloudbedsProvider(PMSProvider):
             check_out=_parse_date(check_out),
             status=raw.get("status", "confirmed"),
             room_ids=tuple(room_ids),
-            custom_data=dict(raw.get("customFields", {})),
+            custom_data=dict(raw.get("customFields") or {}),
         )
 
 
