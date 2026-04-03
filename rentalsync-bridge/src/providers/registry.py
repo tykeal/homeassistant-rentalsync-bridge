@@ -77,7 +77,7 @@ def list_providers() -> list[dict[str, Any]]:
     with _lock:
         return [
             {"pms_type": pms_type, "provider_class": cls.__name__}
-            for pms_type, cls in _registry.items()
+            for pms_type, cls in sorted(_registry.items())
         ]
 
 

@@ -100,6 +100,8 @@ class CloudbedsProvider(PMSProvider):
             properties = await self._service.get_properties()
         except CloudbedsServiceError as exc:
             raise self._translate_error(exc) from exc
+        except Exception as exc:
+            raise PMSProviderError(f"Unexpected error from Cloudbeds: {exc}") from exc
 
         return [
             PMSListing(
@@ -138,6 +140,8 @@ class CloudbedsProvider(PMSProvider):
             )
         except CloudbedsServiceError as exc:
             raise self._translate_error(exc) from exc
+        except Exception as exc:
+            raise PMSProviderError(f"Unexpected error from Cloudbeds: {exc}") from exc
 
         return [self._map_reservation(r, listing_pms_id) for r in raw]
 
@@ -157,6 +161,8 @@ class CloudbedsProvider(PMSProvider):
             raw = await self._service.get_rooms(listing_pms_id)
         except CloudbedsServiceError as exc:
             raise self._translate_error(exc) from exc
+        except Exception as exc:
+            raise PMSProviderError(f"Unexpected error from Cloudbeds: {exc}") from exc
 
         return [
             PMSRoom(
@@ -187,8 +193,10 @@ class CloudbedsProvider(PMSProvider):
             properties = await self._service.get_properties()
         except CloudbedsServiceError as exc:
             raise self._translate_error(exc) from exc
+        except Exception as exc:
+            raise PMSProviderError(f"Unexpected error from Cloudbeds: {exc}") from exc
 
-        last_error: CloudbedsServiceError | None = None
+        last_error: Exception | None = None
         properties_failed = 0
 
         for prop in properties:
@@ -207,6 +215,15 @@ class CloudbedsProvider(PMSProvider):
                     exc,
                 )
                 continue
+            except Exception as exc:
+                properties_failed += 1
+                last_error = exc
+                logger.warning(
+                    "Unexpected error fetching reservations for property %s: %s",
+                    prop["propertyID"],
+                    exc,
+                )
+                continue
 
             for res in reservations:
                 if str(res.get("guestID", "")) == guest_id:
@@ -218,7 +235,11 @@ class CloudbedsProvider(PMSProvider):
                     )
 
         if properties_failed == len(properties) and last_error is not None:
-            raise self._translate_error(last_error) from last_error
+            if isinstance(last_error, CloudbedsServiceError):
+                raise self._translate_error(last_error) from last_error
+            raise PMSProviderError(
+                f"Unexpected error from Cloudbeds: {last_error}"
+            ) from last_error
 
         return None
 
@@ -250,8 +271,10 @@ class CloudbedsProvider(PMSProvider):
             properties = await self._service.get_properties()
         except CloudbedsServiceError as exc:
             raise self._translate_error(exc) from exc
+        except Exception as exc:
+            raise PMSProviderError(f"Unexpected error from Cloudbeds: {exc}") from exc
 
-        last_error: CloudbedsServiceError | None = None
+        last_error: Exception | None = None
         properties_failed = 0
 
         for prop in properties:
@@ -268,19 +291,32 @@ class CloudbedsProvider(PMSProvider):
                     exc,
                 )
                 continue
+            except Exception as exc:
+                properties_failed += 1
+                last_error = exc
+                logger.warning(
+                    "Unexpected error fetching reservations for property %s: %s",
+                    prop["propertyID"],
+                    exc,
+                )
+                continue
 
             for res in reservations:
                 if str(res.get("reservationID", "")) == reservation_id:
                     return dict(res.get("customFields", {}))
 
         if properties_failed == len(properties) and last_error is not None:
-            raise self._translate_error(last_error) from last_error
+            if isinstance(last_error, CloudbedsServiceError):
+                raise self._translate_error(last_error) from last_error
+            raise PMSProviderError(
+                f"Unexpected error from Cloudbeds: {last_error}"
+            ) from last_error
 
         return {}
 
     async def refresh_token(
         self,
-        credential: "OAuthCredential",  # noqa: ARG002
+        credential: "OAuthCredential",
     ) -> TokenResult:
         """Refresh the OAuth token.
 
@@ -294,10 +330,10 @@ class CloudbedsProvider(PMSProvider):
                 for interface compatibility).
 
         Raises:
-            PMSAuthenticationError: Always — direct refresh is
+            NotImplementedError: Always — direct refresh is
                 not supported for Cloudbeds providers.
         """
-        raise PMSAuthenticationError(
+        raise NotImplementedError(
             "Cloudbeds token refresh is managed by OAuthService, not the provider layer"
         )
 
@@ -314,6 +350,8 @@ class CloudbedsProvider(PMSProvider):
             await self._service.get_properties()
         except CloudbedsServiceError as exc:
             raise self._translate_error(exc) from exc
+        except Exception as exc:
+            raise PMSProviderError(f"Unexpected error from Cloudbeds: {exc}") from exc
         return True
 
     # -- private mapping -------------------------------------------------------

@@ -229,6 +229,10 @@ class PMSProvider(ABC):
         For client_credentials providers (Guesty): acquires new token.
         For authorization_code providers (Cloudbeds): refreshes existing token.
 
+        Note: Not all providers support direct token refresh through this
+            method. Providers that manage tokens externally (e.g., via a
+            separate OAuth service) may raise NotImplementedError.
+
         Args:
             credential: Current credential record with client_id/secret.
 
@@ -238,6 +242,8 @@ class PMSProvider(ABC):
         Raises:
             PMSProviderError: If token operation fails.
             TokenRateLimitError: If provider-specific token rate limit exceeded.
+            NotImplementedError: If the provider does not support direct
+                token refresh.
         """
         ...
 

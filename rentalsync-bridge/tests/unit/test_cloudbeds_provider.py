@@ -332,10 +332,10 @@ class TestRefreshToken:
     """Tests for CloudbedsProvider.refresh_token."""
 
     @pytest.mark.asyncio
-    async def test_raises_auth_error(self, provider, mock_service):
-        """Test that refresh_token raises PMSAuthenticationError directly."""
+    async def test_raises_not_implemented(self, provider, mock_service):
+        """Test that refresh_token raises NotImplementedError."""
         mock_credential = MagicMock(spec=OAuthCredential)
-        with pytest.raises(PMSAuthenticationError, match="OAuthService"):
+        with pytest.raises(NotImplementedError, match="OAuthService"):
             await provider.refresh_token(credential=mock_credential)
 
 
@@ -387,7 +387,6 @@ class TestErrorTranslation:
         """Test that auth-related error messages map to PMSAuthenticationError."""
         err = CloudbedsServiceError("401 Unauthorized")
         result = CloudbedsProvider._translate_error(err)
-        from src.providers.base import PMSAuthenticationError
 
         assert isinstance(result, PMSAuthenticationError)
 
