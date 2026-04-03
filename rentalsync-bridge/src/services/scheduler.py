@@ -221,9 +221,7 @@ class SyncScheduler:
                         total_updated += counts["updated"]
                         total_cancelled += counts["cancelled"]
                     except Exception:
-                        logger.exception(
-                            "Failed to sync listing %s", listing.cloudbeds_id
-                        )
+                        logger.exception("Failed to sync listing %s", listing.pms_id)
                         continue
 
                 logger.info(

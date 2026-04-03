@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
-"""Listing model for Cloudbeds properties configured for iCal export."""
+"""Listing model for PMS properties configured for iCal export."""
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -23,7 +23,7 @@ def _utc_now() -> datetime:
 
 
 class Listing(Base):
-    """Cloudbeds property configured for iCal export.
+    """PMS property configured for iCal export.
 
     Each listing can have multiple bookings and custom field configurations.
     """
@@ -31,7 +31,7 @@ class Listing(Base):
     __tablename__ = "listings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    cloudbeds_id: Mapped[str] = mapped_column(
+    pms_id: Mapped[str] = mapped_column(
         String(100), nullable=False, unique=True, index=True
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)

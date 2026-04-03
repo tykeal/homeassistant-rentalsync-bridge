@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
-"""Room model for individual units within a Cloudbeds property."""
+"""Room model for individual units within a PMS property."""
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -29,7 +29,7 @@ def _utc_now() -> datetime:
 
 
 class Room(Base):
-    """Individual room/unit within a Cloudbeds property.
+    """Individual room/unit within a PMS property.
 
     Each room has its own iCal calendar URL for syncing to external platforms.
     Rooms are enabled by default and linked to a parent listing (property).
@@ -41,7 +41,7 @@ class Room(Base):
     listing_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("listings.id", ondelete="CASCADE"), nullable=False
     )
-    cloudbeds_room_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    pms_room_id: Mapped[str] = mapped_column(String(100), nullable=False)
     room_name: Mapped[str] = mapped_column(String(255), nullable=False)
     room_type_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     ical_url_slug: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -64,9 +64,7 @@ class Room(Base):
 
     __table_args__ = (
         UniqueConstraint("listing_id", "ical_url_slug", name="uq_room_listing_slug"),
-        UniqueConstraint(
-            "listing_id", "cloudbeds_room_id", name="uq_room_listing_cloudbeds"
-        ),
+        UniqueConstraint("listing_id", "pms_room_id", name="uq_room_listing_pms"),
         Index("idx_room_listing", "listing_id"),
         Index("idx_room_enabled", "enabled"),
     )

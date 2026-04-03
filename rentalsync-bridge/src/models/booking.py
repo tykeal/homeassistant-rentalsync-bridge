@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
-"""Booking model for cached Cloudbeds reservation data."""
+"""Booking model for cached PMS reservation data."""
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -29,7 +29,7 @@ def _utc_now() -> datetime:
 
 
 class Booking(Base):
-    """Cached booking data from Cloudbeds API.
+    """Cached booking data from PMS API.
 
     Bookings are cached locally for iCal generation and refreshed
     periodically via the sync service.
@@ -46,7 +46,7 @@ class Booking(Base):
         ForeignKey("rooms.id", ondelete="SET NULL", name="fk_booking_room_id"),
         nullable=True,
     )
-    cloudbeds_booking_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    pms_booking_id: Mapped[str] = mapped_column(String(255), nullable=False)
     guest_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     guest_phone_last4: Mapped[str | None] = mapped_column(String(4), nullable=True)
     check_in_date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
@@ -68,9 +68,7 @@ class Booking(Base):
     room: Mapped["Room | None"] = relationship("Room", back_populates="bookings")
 
     __table_args__ = (
-        UniqueConstraint(
-            "listing_id", "cloudbeds_booking_id", name="uq_booking_listing_cloudbeds"
-        ),
+        UniqueConstraint("listing_id", "pms_booking_id", name="uq_booking_listing_pms"),
         Index("idx_booking_listing", "listing_id"),
         Index("idx_booking_room", "room_id"),
         Index("idx_booking_dates", "listing_id", "check_in_date", "check_out_date"),
@@ -84,11 +82,11 @@ class Booking(Base):
         Returns:
             Guest name if available, otherwise booking ID.
         """
-        return self.guest_name or self.cloudbeds_booking_id
+        return self.guest_name or self.pms_booking_id
 
     def __repr__(self) -> str:
         """Return string representation."""
         return (
-            f"<Booking(id={self.id}, cloudbeds_id={self.cloudbeds_booking_id}, "
+            f"<Booking(id={self.id}, pms_id={self.pms_booking_id}, "
             f"status={self.status})>"
         )

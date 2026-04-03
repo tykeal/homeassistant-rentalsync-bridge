@@ -286,7 +286,7 @@ class CalendarService:
                     lines.append(f"{field.display_label}: {value}")
 
         # Add booking ID for reference
-        lines.append(f"Booking ID: {booking.cloudbeds_booking_id}")
+        lines.append(f"Booking ID: {booking.pms_booking_id}")
 
         return "\\n".join(lines)
 
@@ -335,8 +335,8 @@ class CalendarService:
         Returns:
             Unique identifier string.
         """
-        # Use hash of listing_id + cloudbeds_booking_id for stability
-        unique_str = f"{booking.listing_id}-{booking.cloudbeds_booking_id}"
+        # Use hash of listing_id + pms_booking_id for stability
+        unique_str = f"{booking.listing_id}-{booking.pms_booking_id}"
         hash_hex = hashlib.sha256(unique_str.encode()).hexdigest()[:16]
         return f"{hash_hex}@rentalsync-bridge"
 

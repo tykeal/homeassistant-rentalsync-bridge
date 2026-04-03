@@ -41,14 +41,14 @@ class BookingRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_by_cloudbeds_id(
-        self, listing_id: int, cloudbeds_booking_id: str
+    async def get_by_pms_id(
+        self, listing_id: int, pms_booking_id: str
     ) -> Booking | None:
-        """Get booking by Cloudbeds booking ID and listing.
+        """Get booking by PMS booking ID and listing.
 
         Args:
             listing_id: Associated listing ID.
-            cloudbeds_booking_id: Cloudbeds reservation ID.
+            pms_booking_id: PMS reservation ID.
 
         Returns:
             Booking if found, None otherwise.
@@ -56,7 +56,7 @@ class BookingRepository:
         result = await self._session.execute(
             select(Booking).where(
                 Booking.listing_id == listing_id,
-                Booking.cloudbeds_booking_id == cloudbeds_booking_id,
+                Booking.pms_booking_id == pms_booking_id,
             )
         )
         return result.scalar_one_or_none()
@@ -235,9 +235,7 @@ class BookingRepository:
         Returns:
             Tuple of (booking, was_created) where was_created is True for new bookings.
         """
-        existing = await self.get_by_cloudbeds_id(
-            booking.listing_id, booking.cloudbeds_booking_id
-        )
+        existing = await self.get_by_pms_id(booking.listing_id, booking.pms_booking_id)
 
         if existing is None:
             created = await self.create(booking)

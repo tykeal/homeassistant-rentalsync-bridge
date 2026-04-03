@@ -30,7 +30,7 @@ class RoomResponse(BaseModel):
 
     id: int = Field(description="Room ID")
     listing_id: int = Field(description="Parent listing ID")
-    cloudbeds_room_id: str = Field(description="Cloudbeds room ID")
+    pms_room_id: str = Field(description="PMS room ID")
     room_name: str = Field(description="Room name")
     room_type_name: str | None = Field(default=None, description="Room type name")
     ical_url_slug: str = Field(description="iCal URL slug")
@@ -78,7 +78,7 @@ def _room_to_response(room: Any) -> dict[str, Any]:
     return {
         "id": room.id,
         "listing_id": room.listing_id,
-        "cloudbeds_room_id": room.cloudbeds_room_id,
+        "pms_room_id": room.pms_room_id,
         "room_name": room.room_name,
         "room_type_name": room.room_type_name,
         "ical_url_slug": room.ical_url_slug,
@@ -179,13 +179,11 @@ async def update_room(
                 request.ical_url_slug if request.ical_url_slug else "unknown"
             )
             detail = f"Slug '{attempted_slug}' is already in use by another room"
-        elif (
-            "uq_room_listing_cloudbeds" in error_msg or "cloudbeds_room_id" in error_msg
-        ):
+        elif "uq_room_listing_pms" in error_msg or "pms_room_id" in error_msg:
             # This shouldn't happen during normal updates since we don't modify
-            # cloudbeds_room_id. Log for debugging and provide generic message.
+            # pms_room_id. Log for debugging and provide generic message.
             logger.error(
-                "Unexpected cloudbeds_room_id conflict during room update: %s",
+                "Unexpected pms_room_id conflict during room update: %s",
                 error_msg,
             )
             detail = "Unexpected database conflict. Please try again."
