@@ -203,3 +203,43 @@ class TestProviderDecorator:
             @provider("taken")
             class DuplicateStub(_StubProvider):
                 pass
+
+
+class TestConcurrency:
+    """Thread-safety tests for the provider registry."""
+
+    def test_concurrent_registrations(self):
+        """Concurrent register_provider calls must not lose entries."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        num_threads = 10
+
+        def _make_and_register(idx: int) -> str:
+            name = f"concurrent-{idx}"
+
+            # Create a unique subclass per thread
+            cls = type(f"Stub{idx}", (_StubProvider,), {})
+            register_provider(name, cls)
+            return name
+
+        with ThreadPoolExecutor(max_workers=num_threads) as pool:
+            futures = [pool.submit(_make_and_register, i) for i in range(num_threads)]
+            names = [f.result() for f in as_completed(futures)]
+
+        registered = {p["pms_type"] for p in list_providers()}
+        assert set(names) == registered
+
+    def test_concurrent_reads_no_error(self):
+        """Concurrent get_provider_class calls must not raise."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        register_provider("reader", _StubProvider)
+
+        def _read(_: int) -> type:
+            return get_provider_class("reader")
+
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            futures = [pool.submit(_read, i) for i in range(10)]
+            results = [f.result() for f in as_completed(futures)]
+
+        assert all(r is _StubProvider for r in results)

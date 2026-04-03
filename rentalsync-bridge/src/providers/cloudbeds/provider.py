@@ -18,6 +18,7 @@ from src.providers.base import (
     PMSRoom,
     TokenResult,
 )
+from src.providers.registry import provider
 from src.services.cloudbeds_service import (
     CloudbedsService,
     CloudbedsServiceError,
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@provider("cloudbeds")
 class CloudbedsProvider(PMSProvider):
     """PMSProvider implementation backed by CloudbedsService."""
 
@@ -373,10 +375,14 @@ class CloudbedsProvider(PMSProvider):
             rooms_data = raw.get(key)
             if isinstance(rooms_data, list):
                 for r in rooms_data:
-                    rid = r.get("roomID") or r.get("roomId")
+                    rid = (
+                        r.get("roomID")
+                        if r.get("roomID") is not None
+                        else r.get("roomId")
+                    )
                     if rid is not None:
                         room_ids.append(str(rid))
-        if not room_ids and raw.get("roomID"):
+        if not room_ids and raw.get("roomID") is not None:
             room_ids.append(str(raw["roomID"]))
 
         check_in = raw.get("startDate") or raw.get("checkInDate", "")
@@ -386,7 +392,7 @@ class CloudbedsProvider(PMSProvider):
             pms_booking_id=str(raw.get("reservationID", "")),
             listing_pms_id=listing_pms_id,
             guest_name=raw.get("guestName"),
-            guest_id=str(raw["guestID"]) if raw.get("guestID") else None,
+            guest_id=str(raw["guestID"]) if raw.get("guestID") is not None else None,
             check_in=_parse_date(check_in),
             check_out=_parse_date(check_out),
             status=raw.get("status", "confirmed"),
