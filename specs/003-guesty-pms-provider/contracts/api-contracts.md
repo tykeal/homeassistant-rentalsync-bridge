@@ -36,7 +36,7 @@ No query parameters. No request body.
       "type": "cloudbeds",
       "name": "Cloudbeds",
       "description": "Cloudbeds property management system",
-      "auth_type": "oauth2_authorization_code",
+      "auth_flow": "oauth2_authorization_code",
       "credential_fields": [
         {
           "name": "client_id",
@@ -74,7 +74,7 @@ No query parameters. No request body.
       "type": "guesty",
       "name": "Guesty",
       "description": "Guesty property management system",
-      "auth_type": "oauth2_client_credentials",
+      "auth_flow": "oauth2_client_credentials",
       "credential_fields": [
         {
           "name": "client_id",
