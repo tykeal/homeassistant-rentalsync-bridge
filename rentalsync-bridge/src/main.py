@@ -101,6 +101,7 @@ def create_app() -> FastAPI:
     app.include_router(custom_fields.router)
     app.include_router(listings.router)
     app.include_router(oauth.router)
+    app.include_router(oauth.providers_router)
     app.include_router(rooms.router)
     app.include_router(settings_api.router)
     app.include_router(status.router)
