@@ -81,6 +81,7 @@ class TestOAuthStatus:
         data = response.json()
         assert data["configured"] is False
         assert data["connected"] is False
+        assert data["pms_type"] is not None
 
     @pytest.mark.asyncio
     async def test_status_with_valid_credentials(self, oauth_app, oauth_session):
@@ -106,6 +107,8 @@ class TestOAuthStatus:
         assert data["configured"] is True
         assert data["connected"] is True
         assert data["token_expired"] is False
+        assert data["pms_type"] == "cloudbeds"
+        assert data["token_requests_remaining"] is None
 
     @pytest.mark.asyncio
     async def test_status_with_expired_credentials(self, oauth_app, oauth_session):
@@ -131,6 +134,30 @@ class TestOAuthStatus:
         assert data["configured"] is True
         assert data["connected"] is False
         assert data["token_expired"] is True
+
+    @pytest.mark.asyncio
+    async def test_status_guesty_credential(self, oauth_app, oauth_session):
+        """Test status returns token_requests_remaining for guesty."""
+        cred = OAuthCredential(client_id="gu_client", pms_type="guesty")
+        cred.client_secret = "secret"
+        cred.access_token = "access"
+        cred.token_expires_at = datetime.now(UTC) + timedelta(hours=1)
+        cred.token_request_count = 2
+        oauth_session.add(cred)
+        await oauth_session.commit()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=oauth_app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/api/oauth/status",
+                headers={"Authorization": "Bearer test"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["pms_type"] == "guesty"
+        assert data["token_requests_remaining"] == 3
 
 
 class TestOAuthConfigure:
@@ -199,6 +226,85 @@ class TestOAuthConfigure:
 
         assert response.status_code == 422
 
+    @pytest.mark.asyncio
+    async def test_configure_guesty_rejects_api_key(self, oauth_app):
+        """Test Guesty rejects api_key authentication."""
+        async with AsyncClient(
+            transport=ASGITransport(app=oauth_app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/oauth/configure",
+                headers={"Authorization": "Bearer test"},
+                json={
+                    "pms_type": "guesty",
+                    "client_id": "gu_client",
+                    "client_secret": "gu_secret",
+                    "api_key": "should_fail",
+                },
+            )
+
+        assert response.status_code == 400
+        assert "API key" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_configure_guesty_rejects_refresh_token(self, oauth_app):
+        """Test Guesty rejects refresh_token."""
+        async with AsyncClient(
+            transport=ASGITransport(app=oauth_app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/oauth/configure",
+                headers={"Authorization": "Bearer test"},
+                json={
+                    "pms_type": "guesty",
+                    "client_id": "gu_client",
+                    "client_secret": "gu_secret",
+                    "refresh_token": "should_fail",
+                },
+            )
+
+        assert response.status_code == 400
+        assert "refresh token" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_configure_guesty_success(self, oauth_app):
+        """Test Guesty configure with only client credentials."""
+        async with AsyncClient(
+            transport=ASGITransport(app=oauth_app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/oauth/configure",
+                headers={"Authorization": "Bearer test"},
+                json={
+                    "pms_type": "guesty",
+                    "client_id": "gu_client",
+                    "client_secret": "gu_secret",
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_configure_cloudbeds_requires_token_or_key(self, oauth_app):
+        """Cloudbeds needs api_key or access_token."""
+        async with AsyncClient(
+            transport=ASGITransport(app=oauth_app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/oauth/configure",
+                headers={"Authorization": "Bearer test"},
+                json={
+                    "pms_type": "cloudbeds",
+                    "client_id": "cb_client",
+                    "client_secret": "cb_secret",
+                },
+            )
+
+        assert response.status_code == 400
+        assert "api_key or access_token" in response.json()["detail"]
+
 
 class TestOAuthRefresh:
     """Tests for POST /api/oauth/refresh endpoint."""
@@ -216,3 +322,42 @@ class TestOAuthRefresh:
 
         assert response.status_code == 400
         assert "No OAuth credentials" in response.json()["detail"]
+
+
+class TestProvidersEndpoint:
+    """Tests for GET /api/providers endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_providers_returns_list(self, oauth_app):
+        """GET /api/providers returns at least the cloudbeds provider."""
+        async with AsyncClient(
+            transport=ASGITransport(app=oauth_app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/api/providers",
+                headers={"Authorization": "Bearer test"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, list)
+        assert len(data) >= 1
+
+        pms_types = {p["pms_type"] for p in data}
+        assert "cloudbeds" in pms_types
+
+    @pytest.mark.asyncio
+    async def test_providers_has_credential_fields(self, oauth_app):
+        """Each provider entry contains credential_fields."""
+        async with AsyncClient(
+            transport=ASGITransport(app=oauth_app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/api/providers",
+                headers={"Authorization": "Bearer test"},
+            )
+
+        data = response.json()
+        for entry in data:
+            assert "credential_fields" in entry
+            assert isinstance(entry["credential_fields"], list)
