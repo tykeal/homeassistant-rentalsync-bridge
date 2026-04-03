@@ -198,15 +198,20 @@ class CloudbedsProvider(PMSProvider):
         except Exception as exc:
             raise PMSProviderError(f"Unexpected error from Cloudbeds: {exc}") from exc
 
+        # TODO(optimization): Cloudbeds API does not support fetching a
+        # single guest by ID across properties.  This iterates all
+        # properties sequentially which is expensive for multi-property
+        # accounts.  Consider caching or a guest→property mapping table.
         last_error: Exception | None = None
         properties_failed = 0
+        now = datetime.now(UTC)
 
         for prop in properties:
             try:
                 reservations = await self._service.get_reservations(
                     property_id=prop["propertyID"],
-                    start_date=datetime.now(UTC) - timedelta(days=365),
-                    end_date=datetime.now(UTC) + timedelta(days=365),
+                    start_date=now - timedelta(days=365),
+                    end_date=now + timedelta(days=365),
                 )
             except CloudbedsServiceError as exc:
                 properties_failed += 1
