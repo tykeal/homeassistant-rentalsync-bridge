@@ -203,6 +203,12 @@ async def configure_oauth(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Either api_key or access_token must be provided",
         )
+    # Cloudbeds: warn if access_token without refresh_token
+    if pms_type == "cloudbeds" and request.access_token and not request.refresh_token:
+        logger.warning(
+            "Cloudbeds credential configured with access_token "
+            "but no refresh_token; token refresh will fail"
+        )
 
     repo = CredentialRepository(db)
     credential = await repo.get_credential(pms_type)
@@ -309,7 +315,7 @@ _CREDENTIAL_FIELDS: dict[str, list[dict[str, str]]] = {
 
 _KNOWN_PROVIDERS: list[dict[str, Any]] = [
     {"pms_type": "cloudbeds", "provider_class": "CloudbedsProvider"},
-    {"pms_type": "guesty", "provider_class": "GuestyProvider"},
+    {"pms_type": "guesty", "provider_class": "GuestyProvider (pending)"},
 ]
 
 providers_router = APIRouter(prefix="/api", tags=["Providers"])

@@ -4,7 +4,7 @@
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import case, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.oauth_credential import OAuthCredential
@@ -107,16 +107,25 @@ class CredentialRepository:
         Args:
             credential_id: Primary key of the credential row.
         """
+        # Atomic increment to avoid lost updates under concurrency
+        now = datetime.now(UTC)
         result = await self._session.execute(
-            select(OAuthCredential).where(OAuthCredential.id == credential_id)
+            update(OAuthCredential)
+            .where(OAuthCredential.id == credential_id)
+            .values(
+                token_request_count=OAuthCredential.token_request_count + 1,
+                token_request_window_start=case(
+                    (
+                        OAuthCredential.token_request_window_start.is_(None),
+                        now,
+                    ),
+                    else_=OAuthCredential.token_request_window_start,
+                ),
+            )
         )
-        credential = result.scalar_one_or_none()
-        if credential is None:
+        if result.rowcount == 0:  # type: ignore[attr-defined]
             msg = f"Credential {credential_id} not found"
             raise ValueError(msg)
-        credential.token_request_count += 1
-        if credential.token_request_window_start is None:
-            credential.token_request_window_start = datetime.now(UTC)
         await self._session.flush()
 
     async def reset_token_request_window(self, credential_id: int) -> None:

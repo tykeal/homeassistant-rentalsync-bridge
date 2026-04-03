@@ -75,7 +75,8 @@ class TestCredentialRepository:
         await async_session.flush()
         cred_id = cred.id
 
-        # Detach and modify
+        # Expunge to simulate a detached instance
+        async_session.expunge(cred)
         cred.client_secret = "updated_secret"
         merged = await repo.save_credential(cred)
         assert merged.id == cred_id
