@@ -236,10 +236,14 @@ No request body (unchanged).
 - Creates/updates Listing records using `pms_id` (was `cloudbeds_id`)
 - For each listing, calls `provider.get_rooms()` to sync rooms
 
-### Response: 200 OK (unchanged format)
+### Response: 200 OK (modified — field name change)
 ```json
 {
-  "synced": 3,
+  "success": true,
+  "created": 1,
+  "updated": 2,
+  "rooms_created": 3,
+  "rooms_updated": 1,
   "listings": [
     {
       "id": 1,
@@ -252,20 +256,20 @@ No request body (unchanged).
 }
 ```
 
-Note: Response field name changes from implicit `cloudbeds_id` in listings to `pms_id`.
-The actual response serialization should use the model field name.
+Note: Response uses the renamed `pms_id` field (previously `cloudbeds_id`).
+This is a breaking change for any client relying on the old field name.
 
 ---
 
-## Unchanged Endpoints
+## Minimally Changed Endpoints
 
-The following endpoints require NO contract changes:
+The following endpoints have no structural contract changes but may have field name changes due to the column rename:
 
 | Endpoint | Reason |
 |----------|--------|
 | `GET /ical/{slug}/{room}.ics` | Operates on Booking model (PMS-agnostic) |
-| `GET /api/listings` | Returns Listing model (column rename is internal) |
-| `GET /api/listings/{id}` | Returns Listing model |
+| `GET /api/listings` | Response field `cloudbeds_id` → `pms_id` (model rename) |
+| `GET /api/listings/{id}` | Response field `cloudbeds_id` → `pms_id` |
 | `PUT /api/listings/{id}` | Updates Listing fields (no PMS-specific fields) |
 | `POST /api/listings/{id}/enable` | Toggles `enabled` flag |
 | `POST /api/listings/{id}/sync` | Uses active provider (implementation change, not contract) |

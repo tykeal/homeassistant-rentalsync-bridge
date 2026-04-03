@@ -19,7 +19,10 @@ service boundary.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from src.models.oauth_credential import OAuthCredential
 
 
 @dataclass(frozen=True)
@@ -173,7 +176,7 @@ class PMSProvider(ABC):
 
     @abstractmethod
     async def refresh_token(
-        self, credential: Any  # OAuthCredential
+        self, credential: "OAuthCredential"
     ) -> TokenResult:
         """Refresh or acquire a new access token.
 
