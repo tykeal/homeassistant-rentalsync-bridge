@@ -22,7 +22,6 @@ from src.repositories.credential_repository import (
 logger = logging.getLogger(__name__)
 
 GUESTY_TOKEN_URL = "https://open-api.guesty.com/oauth2/token"
-TOKEN_VALIDITY = timedelta(hours=24)
 TOKEN_REQUEST_LIMIT = 5
 TOKEN_WARN_THRESHOLD = 3
 

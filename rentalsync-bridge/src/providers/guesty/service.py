@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-GUESTY_BASE_URL = "https://open-api.guesty.com/v1"
+GUESTY_BASE_URL = "https://open-api.guesty.com"
 DEFAULT_PAGE_LIMIT = 100
 MAX_RETRIES = 3
 INITIAL_BACKOFF = 1.0
@@ -192,7 +192,9 @@ class GuestyProvider(PMSProvider):
                     raise PMSRateLimitError(msg, retry_after=retry_after)
 
                 retry_after = _parse_retry_after(response)
-                wait = min(retry_after or backoff, MAX_BACKOFF)
+                wait = min(
+                    retry_after if retry_after is not None else backoff, MAX_BACKOFF
+                )
                 logger.warning(
                     "Guesty API rate limited (429), retrying in %.1fs (attempt %d/%d)",
                     wait,
@@ -486,7 +488,7 @@ class GuestyProvider(PMSProvider):
             raise PMSAuthenticationError(msg)
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
                 response = await client.post(
                     GUESTY_TOKEN_URL,
                     data={
