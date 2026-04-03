@@ -8,7 +8,6 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import get_settings
@@ -110,11 +109,6 @@ async def get_oauth_status(
 
     repo = CredentialRepository(db)
     credential = await repo.get_credential(pms_type)
-
-    if not credential:
-        # Fall back: check for any credential (backwards compat)
-        result = await db.execute(select(OAuthCredential).limit(1))
-        credential = result.scalar_one_or_none()
 
     if not credential:
         return {
@@ -249,8 +243,9 @@ async def refresh_oauth_token(
     Raises:
         HTTPException: 400 if no credentials configured or refresh fails.
     """
-    result = await db.execute(select(OAuthCredential).limit(1))
-    credential = result.scalar_one_or_none()
+    settings = get_settings()
+    repo = CredentialRepository(db)
+    credential = await repo.get_credential(settings.pms_type)
 
     if not credential:
         raise HTTPException(
@@ -298,7 +293,7 @@ _CREDENTIAL_FIELDS: dict[str, list[dict[str, str]]] = {
 providers_router = APIRouter(prefix="/api", tags=["Providers"])
 
 
-@providers_router.get("/providers")
+@providers_router.get("/providers", response_model=list[ProviderInfo])
 async def get_providers() -> list[dict[str, Any]]:
     """Return registered provider metadata with credential field defs.
 

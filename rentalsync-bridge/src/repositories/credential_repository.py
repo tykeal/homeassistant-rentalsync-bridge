@@ -2,15 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Provider-aware credential repository for OAuth credentials."""
 
-import logging
 from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.oauth_credential import OAuthCredential
-
-logger = logging.getLogger(__name__)
 
 
 class CredentialRepository:
@@ -41,7 +38,7 @@ class CredentialRepository:
         result = await self._session.execute(
             select(OAuthCredential).where(OAuthCredential.pms_type == pms_type)
         )
-        return result.scalar_one_or_none()
+        return result.scalars().first()
 
     async def save_credential(self, credential: OAuthCredential) -> OAuthCredential:
         """Add or merge a credential into the session.

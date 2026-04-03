@@ -28,7 +28,8 @@ class Settings(BaseSettings):
     pms_type: str = Field(
         default="",
         description="PMS provider type (cloudbeds, guesty). "
-        "Auto-detected from credentials if not set.",
+        "Auto-detected: explicit PMS_TYPE wins, then "
+        "GUESTY_CLIENT_ID implies guesty, else cloudbeds.",
     )
 
     # Cloudbeds API

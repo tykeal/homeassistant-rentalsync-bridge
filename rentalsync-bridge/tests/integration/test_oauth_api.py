@@ -136,8 +136,15 @@ class TestOAuthStatus:
         assert data["token_expired"] is True
 
     @pytest.mark.asyncio
-    async def test_status_guesty_credential(self, oauth_app, oauth_session):
+    async def test_status_guesty_credential(
+        self, oauth_app, oauth_session, monkeypatch
+    ):
         """Test status returns token_requests_remaining for guesty."""
+        monkeypatch.setenv("PMS_TYPE", "guesty")
+        from src.config import get_settings
+
+        get_settings.cache_clear()
+
         cred = OAuthCredential(client_id="gu_client", pms_type="guesty")
         cred.client_secret = "secret"
         cred.access_token = "access"
@@ -146,13 +153,16 @@ class TestOAuthStatus:
         oauth_session.add(cred)
         await oauth_session.commit()
 
-        async with AsyncClient(
-            transport=ASGITransport(app=oauth_app), base_url="http://test"
-        ) as client:
-            response = await client.get(
-                "/api/oauth/status",
-                headers={"Authorization": "Bearer test"},
-            )
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=oauth_app), base_url="http://test"
+            ) as client:
+                response = await client.get(
+                    "/api/oauth/status",
+                    headers={"Authorization": "Bearer test"},
+                )
+        finally:
+            get_settings.cache_clear()
 
         assert response.status_code == 200
         data = response.json()
