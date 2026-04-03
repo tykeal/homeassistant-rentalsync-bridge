@@ -191,7 +191,7 @@ class GuestyProvider(PMSProvider):
                     raise PMSRateLimitError(msg, retry_after=retry_after)
 
                 retry_after = _parse_retry_after(response)
-                wait = retry_after if retry_after else backoff
+                wait = min(retry_after or backoff, MAX_BACKOFF)
                 logger.warning(
                     "Guesty API rate limited (429), retrying in %.1fs (attempt %d/%d)",
                     wait,

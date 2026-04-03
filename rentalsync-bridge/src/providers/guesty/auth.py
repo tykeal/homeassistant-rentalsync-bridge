@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Guesty OAuth2 token manager with caching and rate limiting."""
 
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 
@@ -64,6 +65,10 @@ class GuestyTokenManager:
         self._cached_token: str | None = None
         self._cached_expires_at: datetime | None = None
 
+        # Serialise token refresh so concurrent callers don't all hit
+        # _request_token() and burn through the 5/day limit.
+        self._lock = asyncio.Lock()
+
     @property
     def cached_token(self) -> str | None:
         """Return the currently cached token, if any."""
@@ -101,6 +106,9 @@ class GuestyTokenManager:
             self._credential_id,
         )
 
+        # pms_type has a unique constraint (Phase 3 migration), so
+        # get_credential("guesty") always returns the same row as a
+        # lookup by self._credential_id.
         credential = await self._repo.get_credential("guesty")
         window_start = credential.token_request_window_start if credential else None
 
@@ -140,37 +148,48 @@ class GuestyTokenManager:
             PMSAuthenticationError: If token request fails (bad creds).
             PMSConnectionError: If unable to reach Guesty API.
         """
+        # Quick check without lock
         if self._is_cache_valid():
             return self._cached_token  # type: ignore[return-value]
 
-        # Try loading a still-valid token from the database
-        credential = await self._repo.get_credential("guesty")
-        if credential and credential.access_token and credential.token_expires_at:
-            expires_at = credential.token_expires_at
-            if expires_at.tzinfo is None:
-                expires_at = expires_at.replace(tzinfo=UTC)
-            if datetime.now(UTC) < expires_at:
-                self._cached_token = credential.access_token
-                self._cached_expires_at = expires_at
-                return self._cached_token
+        async with self._lock:
+            # Re-check inside lock (double-checked locking)
+            if self._is_cache_valid():
+                return self._cached_token  # type: ignore[return-value]
 
-        await self._check_rate_limit()
+            # Try loading a still-valid token from the database.
+            # pms_type has a unique constraint (Phase 3 migration), so
+            # get_credential("guesty") always returns the same row as a
+            # lookup by self._credential_id.
+            credential = await self._repo.get_credential("guesty")
+            if credential and credential.access_token and credential.token_expires_at:
+                expires_at = credential.token_expires_at
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=UTC)
+                if datetime.now(UTC) < expires_at:
+                    self._cached_token = credential.access_token
+                    self._cached_expires_at = expires_at
+                    return self._cached_token
 
-        result = await self._request_token()
+            await self._check_rate_limit()
 
-        # Persist to database
-        await self._repo.update_token(
-            self._credential_id,
-            result.access_token,
-            result.expires_at,
-        )
-        await self._repo.increment_token_request_count(self._credential_id)
+            result = await self._request_token()
 
-        # Update in-memory cache
-        self._cached_token = result.access_token
-        self._cached_expires_at = result.expires_at
+            # Persist to database
+            await self._repo.update_token(
+                self._credential_id,
+                result.access_token,
+                result.expires_at,
+            )
+            await self._repo.increment_token_request_count(
+                self._credential_id,
+            )
 
-        return result.access_token
+            # Update in-memory cache
+            self._cached_token = result.access_token
+            self._cached_expires_at = result.expires_at
+
+            return result.access_token
 
     async def _request_token(self) -> TokenResult:
         """Request a new token from the Guesty OAuth2 endpoint.
