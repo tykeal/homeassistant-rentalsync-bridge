@@ -13,12 +13,15 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
 
 # Resolve alembic.ini relative to rentalsync-bridge directory
-_ALEMBIC_INI = str(Path(__file__).parent.parent.parent / "alembic.ini")
+_RENTALSYNC_DIR = Path(__file__).parent.parent.parent
+_ALEMBIC_INI = str(_RENTALSYNC_DIR / "alembic.ini")
 
 
 def _run_migrations(engine, target_revision):
     """Run Alembic migrations up to target_revision on engine."""
     cfg = Config(_ALEMBIC_INI)
+    # Override script_location to absolute path so tests work from any cwd
+    cfg.set_main_option("script_location", str(_RENTALSYNC_DIR / "alembic"))
     script = ScriptDirectory.from_config(cfg)
 
     with engine.connect() as conn:
@@ -333,6 +336,7 @@ class TestPmsMigration:
         _run_migrations(pre_migration_db, "d3e4f5a6b7c8")
 
         cfg = Config(_ALEMBIC_INI)
+        cfg.set_main_option("script_location", str(_RENTALSYNC_DIR / "alembic"))
         script = ScriptDirectory.from_config(cfg)
         rev = script.get_revision("d3e4f5a6b7c8")
 
