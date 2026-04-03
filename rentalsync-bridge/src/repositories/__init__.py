@@ -8,6 +8,7 @@ from src.repositories.available_field_repository import (
     AvailableFieldRepository,
 )
 from src.repositories.booking_repository import BookingRepository
+from src.repositories.credential_repository import CredentialRepository
 from src.repositories.custom_field_repository import CustomFieldRepository
 from src.repositories.listing_repository import MAX_LISTINGS, ListingRepository
 
@@ -17,6 +18,7 @@ __all__ = [
     "MAX_LISTINGS",
     "AvailableFieldRepository",
     "BookingRepository",
+    "CredentialRepository",
     "CustomFieldRepository",
     "ListingRepository",
 ]
