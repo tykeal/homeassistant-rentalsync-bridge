@@ -227,6 +227,7 @@ class CloudbedsProvider(PMSProvider):
         # accounts.  Consider caching or a guest→property mapping table.
         last_error: Exception | None = None
         properties_failed = 0
+        properties_attempted = 0
         now = datetime.now(UTC)
 
         for prop in properties:
@@ -234,6 +235,7 @@ class CloudbedsProvider(PMSProvider):
             if not prop_id:
                 logger.warning("Skipping property with blank ID in get_guest")
                 continue
+            properties_attempted += 1
             try:
                 reservations = await self._service.get_reservations(
                     property_id=prop_id,
@@ -269,7 +271,11 @@ class CloudbedsProvider(PMSProvider):
                         email=res.get("guestEmail"),
                     )
 
-        if properties_failed == len(properties) and last_error is not None:
+        if (
+            properties_attempted > 0
+            and properties_failed == properties_attempted
+            and last_error is not None
+        ):
             if isinstance(last_error, CloudbedsServiceError):
                 raise self._translate_error(last_error) from last_error
             raise PMSProviderError(
@@ -312,12 +318,14 @@ class CloudbedsProvider(PMSProvider):
 
         last_error: Exception | None = None
         properties_failed = 0
+        properties_attempted = 0
 
         for prop in properties:
             prop_id = prop.get("propertyID", "")
             if not prop_id:
                 logger.warning("Skipping property with blank ID in get_custom_fields")
                 continue
+            properties_attempted += 1
             try:
                 reservations = await self._service.get_reservations(
                     property_id=prop_id,
@@ -348,7 +356,11 @@ class CloudbedsProvider(PMSProvider):
                 ) == reservation_id:
                     return dict(res.get("customFields") or {})
 
-        if properties_failed == len(properties) and last_error is not None:
+        if (
+            properties_attempted > 0
+            and properties_failed == properties_attempted
+            and last_error is not None
+        ):
             if isinstance(last_error, CloudbedsServiceError):
                 raise self._translate_error(last_error) from last_error
             raise PMSProviderError(
