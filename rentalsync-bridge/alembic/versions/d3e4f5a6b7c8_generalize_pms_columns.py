@@ -36,7 +36,7 @@ def upgrade() -> None:
                 "token_request_count",
                 sa.Integer(),
                 nullable=False,
-                server_default="0",
+                server_default=sa.text("0"),
             )
         )
         batch_op.add_column(
@@ -58,9 +58,9 @@ def upgrade() -> None:
 
     # Rename the unique index in a separate batch operation
     with op.batch_alter_table("listings", schema=None) as batch_op:
-        batch_op.drop_index("ix_listings_cloudbeds_id")
+        batch_op.drop_index(op.f("ix_listings_cloudbeds_id"))
         batch_op.create_index(
-            "ix_listings_pms_id", ["pms_id"], unique=True
+            op.f("ix_listings_pms_id"), ["pms_id"], unique=True
         )
 
     # --- bookings: rename cloudbeds_booking_id -> pms_booking_id ---

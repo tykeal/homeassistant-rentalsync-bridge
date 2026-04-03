@@ -172,7 +172,7 @@ async def _sync_rooms_for_listing(
     service: CloudbedsService,
     room_repo: RoomRepository,
     listing: Listing,
-    cloudbeds_id: str,
+    property_pms_id: str,
 ) -> tuple[int, int]:
     """Sync rooms for a single listing from Cloudbeds.
 
@@ -180,7 +180,7 @@ async def _sync_rooms_for_listing(
         service: CloudbedsService instance.
         room_repo: RoomRepository instance.
         listing: Listing to sync rooms for.
-        cloudbeds_id: Cloudbeds property ID.
+        property_pms_id: PMS property identifier.
 
     Returns:
         Tuple of (rooms_created, rooms_updated).
@@ -189,7 +189,7 @@ async def _sync_rooms_for_listing(
     rooms_updated = 0
 
     try:
-        rooms = await service.get_rooms(cloudbeds_id)
+        rooms = await service.get_rooms(property_pms_id)
         for room_data in rooms:
             room_id_raw = room_data.get("roomID")
             if room_id_raw is None:
@@ -218,7 +218,7 @@ async def _sync_rooms_for_listing(
                 rooms_created += 1
 
     except CloudbedsServiceError as e:
-        logger.warning("Failed to fetch rooms for property %s: %s", cloudbeds_id, e)
+        logger.warning("Failed to fetch rooms for property %s: %s", property_pms_id, e)
 
     return rooms_created, rooms_updated
 
@@ -286,9 +286,9 @@ async def sync_properties(
         property_id_raw = prop.get("propertyID")
         if property_id_raw is None:
             continue
-        cloudbeds_id = str(property_id_raw)
+        property_pms_id = str(property_id_raw)
 
-        existing = await repo.get_by_pms_id(cloudbeds_id)
+        existing = await repo.get_by_pms_id(property_pms_id)
         listing: Listing
 
         if existing:
@@ -299,10 +299,10 @@ async def sync_properties(
             updated += 1
         else:
             # Create new listing with generated slug
-            name = prop.get("propertyName", f"Property {cloudbeds_id}")
+            name = prop.get("propertyName", f"Property {property_pms_id}")
             slug = await repo.generate_unique_slug(name)
             listing = Listing(
-                pms_id=cloudbeds_id,
+                pms_id=property_pms_id,
                 name=name,
                 ical_url_slug=slug,
                 timezone=prop.get("propertyTimezone", "UTC"),
@@ -319,7 +319,7 @@ async def sync_properties(
 
         # Fetch and sync rooms for this property
         r_created, r_updated = await _sync_rooms_for_listing(
-            service, room_repo, listing, cloudbeds_id
+            service, room_repo, listing, property_pms_id
         )
         rooms_created += r_created
         rooms_updated += r_updated

@@ -10,6 +10,7 @@ from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
 
 # Resolve alembic.ini relative to rentalsync-bridge directory
 _ALEMBIC_INI = str(Path(__file__).parent.parent.parent / "alembic.ini")
@@ -257,7 +258,7 @@ class TestPmsMigration:
         # Duplicate pms_booking_id for same listing should fail
         with (
             pytest.raises(
-                Exception,
+                IntegrityError,
                 match="UNIQUE constraint failed",
             ),
             engine.connect() as conn,
@@ -309,7 +310,7 @@ class TestPmsMigration:
         # Duplicate pms_room_id for same listing should fail
         with (
             pytest.raises(
-                Exception,
+                IntegrityError,
                 match="UNIQUE constraint failed",
             ),
             engine.connect() as conn,
