@@ -4,7 +4,7 @@
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,6 +24,13 @@ class Settings(BaseSettings):
         description="SQLite database URL",
     )
 
+    # PMS provider selection
+    pms_type: str = Field(
+        default="",
+        description="PMS provider type (cloudbeds, guesty). "
+        "Auto-detected from credentials if not set.",
+    )
+
     # Cloudbeds API
     cloudbeds_client_id: str = Field(
         default="",
@@ -32,6 +39,16 @@ class Settings(BaseSettings):
     cloudbeds_client_secret: str = Field(
         default="",
         description="Cloudbeds OAuth client secret",
+    )
+
+    # Guesty API
+    guesty_client_id: str = Field(
+        default="",
+        description="Guesty OAuth client ID",
+    )
+    guesty_client_secret: str = Field(
+        default="",
+        description="Guesty OAuth client secret",
     )
 
     # Sync configuration
@@ -74,6 +91,22 @@ class Settings(BaseSettings):
         default="INFO",
         description="Logging level",
     )
+
+    @model_validator(mode="after")
+    def _detect_pms_type(self) -> "Settings":
+        """Auto-detect PMS type from credentials when not explicit.
+
+        Priority:
+            1. Explicit PMS_TYPE env var wins.
+            2. If GUESTY_CLIENT_ID is set → infer "guesty".
+            3. Default → "cloudbeds".
+        """
+        if not self.pms_type:
+            if self.guesty_client_id:
+                self.pms_type = "guesty"
+            else:
+                self.pms_type = "cloudbeds"
+        return self
 
 
 @lru_cache
