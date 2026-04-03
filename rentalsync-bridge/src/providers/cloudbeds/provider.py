@@ -235,7 +235,7 @@ class CloudbedsProvider(PMSProvider):
                 last_error = exc
                 logger.warning(
                     "Failed to fetch reservations for property %s: %s",
-                    prop["propertyID"],
+                    prop.get("propertyID", "unknown"),
                     exc,
                 )
                 continue
@@ -244,7 +244,7 @@ class CloudbedsProvider(PMSProvider):
                 last_error = exc
                 logger.warning(
                     "Unexpected error fetching reservations for property %s: %s",
-                    prop["propertyID"],
+                    prop.get("propertyID", "unknown"),
                     exc,
                 )
                 continue
@@ -312,7 +312,7 @@ class CloudbedsProvider(PMSProvider):
                 last_error = exc
                 logger.warning(
                     "Failed to fetch reservations for property %s: %s",
-                    prop["propertyID"],
+                    prop.get("propertyID", "unknown"),
                     exc,
                 )
                 continue
@@ -321,7 +321,7 @@ class CloudbedsProvider(PMSProvider):
                 last_error = exc
                 logger.warning(
                     "Unexpected error fetching reservations for property %s: %s",
-                    prop["propertyID"],
+                    prop.get("propertyID", "unknown"),
                     exc,
                 )
                 continue
