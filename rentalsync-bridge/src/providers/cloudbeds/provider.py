@@ -57,6 +57,9 @@ class CloudbedsProvider(PMSProvider):
         )
 
     # -- helpers ---------------------------------------------------------------
+    # TODO: factor repeated try/except CloudbedsServiceError + generic
+    # Exception wrapping into a small async context-manager or decorator
+    # to reduce boilerplate across provider methods.
 
     @staticmethod
     def _translate_error(exc: CloudbedsServiceError) -> PMSProviderError:
@@ -291,7 +294,8 @@ class CloudbedsProvider(PMSProvider):
         # TODO(optimization): Cloudbeds API does not support fetching a
         # single reservation by ID across properties.  This iterates all
         # properties which is expensive for multi-property accounts.
-        # Consider caching or a reservation→property mapping table.
+        # TODO: add bounded parallelism or reservation→property cache
+        # to reduce O(num_properties) sequential round-trips.
         try:
             properties = await self._service.get_properties()
         except CloudbedsServiceError as exc:
