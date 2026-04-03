@@ -178,7 +178,10 @@ class CloudbedsProvider(PMSProvider):
 
         rooms: list[PMSRoom] = []
         for room in raw:
+            # Cloudbeds uses both roomID and roomId keys
             raw_room_id = room.get("roomID")
+            if raw_room_id is None:
+                raw_room_id = room.get("roomId")
             room_id = str(raw_room_id) if raw_room_id is not None else ""
             if not room_id:
                 logger.warning(
@@ -413,6 +416,8 @@ class CloudbedsProvider(PMSProvider):
             rooms_data = raw.get(key)
             if isinstance(rooms_data, list):
                 for r in rooms_data:
+                    if not isinstance(r, dict):
+                        continue
                     rid = (
                         r.get("roomID")
                         if r.get("roomID") is not None
@@ -420,8 +425,13 @@ class CloudbedsProvider(PMSProvider):
                     )
                     if rid is not None:
                         room_ids.append(str(rid))
-        if not room_ids and raw.get("roomID") is not None:
-            room_ids.append(str(raw["roomID"]))
+        if not room_ids:
+            # Fallback: check top-level room key (both casing variants)
+            top_rid = raw.get("roomID")
+            if top_rid is None:
+                top_rid = raw.get("roomId")
+            if top_rid is not None:
+                room_ids.append(str(top_rid))
 
         check_in = raw.get("startDate") or raw.get("checkInDate", "")
         check_out = raw.get("endDate") or raw.get("checkOutDate", "")
@@ -440,7 +450,7 @@ class CloudbedsProvider(PMSProvider):
             guest_id=str(raw["guestID"]) if raw.get("guestID") is not None else None,
             check_in=_parse_date(check_in),
             check_out=_parse_date(check_out),
-            status=raw.get("status", "confirmed"),
+            status=(raw.get("status") or "confirmed").lower(),
             room_ids=tuple(room_ids),
             custom_data=dict(raw.get("customFields") or {}),
         )

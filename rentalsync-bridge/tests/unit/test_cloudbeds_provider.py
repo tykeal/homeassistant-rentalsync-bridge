@@ -418,7 +418,9 @@ class TestParseDate:
     def test_passes_through_aware_datetime(self):
         """Test that timezone-aware datetimes pass through unchanged."""
         dt = datetime(2026, 3, 1, tzinfo=UTC)
-        assert _parse_date(dt) is dt
+        result = _parse_date(dt)
+        assert result == dt
+        assert result.tzinfo is UTC
 
     def test_adds_utc_to_naive_datetime(self):
         """Test that naive datetimes get UTC timezone added."""
