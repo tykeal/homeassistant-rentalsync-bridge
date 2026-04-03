@@ -120,6 +120,7 @@ class GuestyProvider(PMSProvider):
         if self._http_client is None:
             self._http_client = httpx.AsyncClient(
                 base_url=GUESTY_BASE_URL,
+                timeout=httpx.Timeout(30.0),
             )
             self._owns_client = True
         return self._http_client
@@ -431,7 +432,9 @@ class GuestyProvider(PMSProvider):
         # Response is a list of {fieldId, value} objects
         if isinstance(data, list):
             return {
-                item["fieldId"]: item.get("value") for item in data if "fieldId" in item
+                item["fieldId"]: item.get("value")
+                for item in data
+                if isinstance(item, dict) and "fieldId" in item
             }
 
         # Fallback if response is a dict with "results" or similar
@@ -632,6 +635,9 @@ def _parse_date(value: str | datetime | None) -> datetime:
 
     if isinstance(value, datetime):
         return value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
+
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
 
     try:
         dt = datetime.fromisoformat(value)

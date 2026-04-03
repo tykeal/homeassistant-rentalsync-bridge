@@ -112,6 +112,13 @@ class GuestyTokenManager:
         credential = await self._repo.get_credential("guesty")
         window_start = credential.token_request_window_start if credential else None
 
+        # If the window has expired, the next increment will reset the count,
+        # so treat this as an allowed request regardless of the stored count.
+        if window_start is not None:
+            window_age = datetime.now(UTC) - window_start.replace(tzinfo=UTC)
+            if window_age >= TOKEN_REQUEST_WINDOW:
+                return
+
         if count >= TOKEN_REQUEST_LIMIT:
             reset_at = None
             if window_start is not None:
@@ -201,7 +208,9 @@ class GuestyTokenManager:
             PMSAuthenticationError: On 401/403 or invalid credentials.
             PMSConnectionError: On network-level failures.
         """
-        client = self._http_client or httpx.AsyncClient()
+        client = self._http_client or httpx.AsyncClient(
+            timeout=httpx.Timeout(30.0),
+        )
         owns_client = self._http_client is None
 
         try:

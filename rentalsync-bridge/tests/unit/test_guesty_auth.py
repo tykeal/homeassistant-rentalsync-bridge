@@ -18,6 +18,7 @@ from src.providers.guesty.auth import (
     TOKEN_WARN_THRESHOLD,
     GuestyTokenManager,
 )
+from src.repositories.credential_repository import TOKEN_REQUEST_WINDOW
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -278,6 +279,27 @@ class TestWindowReset:
             await token_manager.get_token()
 
         assert exc_info.value.reset_at is None
+
+    @pytest.mark.asyncio
+    async def test_expired_window_resets_rate_limit(self, token_manager, mock_repo):
+        """Token request allowed when window has expired even at limit."""
+        mock_repo.get_token_request_count.return_value = TOKEN_REQUEST_LIMIT
+
+        # Window started more than 24h ago → expired
+        window_start = datetime.now(UTC) - TOKEN_REQUEST_WINDOW - timedelta(hours=1)
+        mock_credential = MagicMock()
+        mock_credential.token_request_window_start = window_start
+        mock_credential.access_token = None
+        mock_credential.token_expires_at = None
+        mock_repo.get_credential.return_value = mock_credential
+
+        mock_http = AsyncMock(spec=httpx.AsyncClient)
+        mock_http.post = AsyncMock(return_value=_make_token_response())
+        token_manager._http_client = mock_http
+
+        # Should NOT raise TokenRateLimitError
+        token = await token_manager.get_token()
+        assert token == "test-access-token"
 
 
 # ---------------------------------------------------------------------------
