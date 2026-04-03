@@ -3,7 +3,7 @@
 """OAuth management API endpoints."""
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -15,7 +15,10 @@ from src.config import KNOWN_PMS_TYPES, get_settings
 from src.database import get_db
 from src.models.oauth_credential import OAuthCredential
 from src.providers.registry import get_provider_class
-from src.repositories.credential_repository import CredentialRepository
+from src.repositories.credential_repository import (
+    TOKEN_REQUEST_WINDOW,
+    CredentialRepository,
+)
 from src.services.oauth_service import OAuthService, OAuthServiceError
 
 logger = logging.getLogger(__name__)
@@ -24,7 +27,6 @@ router = APIRouter(prefix="/api/oauth", tags=["OAuth"])
 
 # Guesty token-request rate limit
 TOKEN_REQUEST_LIMIT = 5
-TOKEN_REQUEST_WINDOW = timedelta(hours=24)
 
 
 class OAuthStatusResponse(BaseModel):
@@ -194,26 +196,32 @@ async def configure_oauth(
             f"Must be one of: {sorted(KNOWN_PMS_TYPES)}",
         )
 
+    # Normalise optional string fields so whitespace-only values are
+    # treated as empty.
+    api_key = (request.api_key or "").strip()
+    refresh_token_val = (request.refresh_token or "").strip()
+    access_token_val = (request.access_token or "").strip()
+
     # Provider-specific validation
     if pms_type == "guesty":
-        if request.api_key:
+        if api_key:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Guesty does not support API key authentication",
             )
-        if request.refresh_token:
+        if refresh_token_val:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Guesty does not use refresh tokens",
             )
     # Cloudbeds: require either api_key or access_token
-    elif not request.api_key and not request.access_token:
+    elif not api_key and not access_token_val:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Either api_key or access_token must be provided",
         )
     # Cloudbeds: warn if access_token without refresh_token
-    if pms_type == "cloudbeds" and request.access_token and not request.refresh_token:
+    if pms_type == "cloudbeds" and access_token_val and not refresh_token_val:
         logger.warning(
             "Cloudbeds credential configured with access_token "
             "but no refresh_token; token refresh will fail"
@@ -326,34 +334,34 @@ providers_router = APIRouter(prefix="/api", tags=["Providers"])
 
 
 @providers_router.get("/providers", response_model=list[ProviderInfo])
-async def get_providers() -> list[dict[str, Any]]:
+async def get_providers() -> list[ProviderInfo]:
     """Return known provider metadata with credential field defs.
 
     Builds the list from :data:`KNOWN_PMS_TYPES` and checks the
     provider registry so the response reflects actual availability.
 
     Returns:
-        List of provider info dicts for dynamic form rendering.
+        List of ProviderInfo objects for dynamic form rendering.
     """
-    providers: list[dict[str, Any]] = []
+    providers: list[ProviderInfo] = []
     for pms_type in sorted(KNOWN_PMS_TYPES):
         try:
             cls = get_provider_class(pms_type)
             providers.append(
-                {
-                    "pms_type": pms_type,
-                    "provider_class": cls.__name__,
-                    "registered": True,
-                    "credential_fields": _CREDENTIAL_FIELDS.get(pms_type, []),
-                }
+                ProviderInfo(
+                    pms_type=pms_type,
+                    provider_class=cls.__name__,
+                    registered=True,
+                    credential_fields=_CREDENTIAL_FIELDS.get(pms_type, []),
+                )
             )
         except ValueError:
             providers.append(
-                {
-                    "pms_type": pms_type,
-                    "provider_class": None,
-                    "registered": False,
-                    "credential_fields": _CREDENTIAL_FIELDS.get(pms_type, []),
-                }
+                ProviderInfo(
+                    pms_type=pms_type,
+                    provider_class=None,
+                    registered=False,
+                    credential_fields=_CREDENTIAL_FIELDS.get(pms_type, []),
+                )
             )
     return providers

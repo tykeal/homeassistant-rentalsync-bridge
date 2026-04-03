@@ -9,6 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.oauth_credential import OAuthCredential
 
+# Canonical token-request window; imported by src.api.oauth too.
+TOKEN_REQUEST_WINDOW = timedelta(hours=24)
+
 
 class CredentialRepository:
     """Provider-aware CRUD operations for OAuth credentials.
@@ -112,7 +115,7 @@ class CredentialRepository:
         #  2. Window expired (older than 24 h) → reset window, count = 1
         #  3. Window still active → keep window, count += 1
         now = datetime.now(UTC)
-        window_cutoff = now - timedelta(hours=24)
+        window_cutoff = now - TOKEN_REQUEST_WINDOW
         result = await self._session.execute(
             update(OAuthCredential)
             .where(OAuthCredential.id == credential_id)
