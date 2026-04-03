@@ -243,14 +243,14 @@ Need to abstract the Cloudbeds-specific service into a pluggable interface that 
 ## R5: Database Migration Strategy
 
 ### Context
-Need to rename `cloudbeds_*` columns to `pms_*` across three tables and add new columns to `oauth_credentials`. SQLite requires table recreation for column renames.
+Need to rename `cloudbeds_*` columns to `pms_*` across three tables and add new columns to `oauth_credentials`. For consistency across SQLite versions and with existing migrations, use Alembic batch mode for the column renames.
 
 ### Findings
 
 #### SQLite Limitations
-- No `ALTER TABLE ... RENAME COLUMN` (added in SQLite 3.25.0, but Alembic batch mode is more reliable)
+- SQLite supports `ALTER TABLE ... RENAME COLUMN` starting in 3.25.0, but relying on it would be less compatible across SQLite versions
 - Alembic's batch mode recreates the table: creates temp table → copies data → drops original → renames temp
-- All existing migrations already use batch mode (e.g., `0eeb46d10f64_add_rooms_table`)
+- All existing migrations already use batch mode (e.g., `0eeb46d10f64_add_rooms_table`), so using it here is more consistent and reliable
 
 #### Migration Scope
 1. `oauth_credentials` table: Add 3 new columns (`pms_type`, `token_request_count`, `token_request_window_start`)

@@ -223,7 +223,7 @@ To test that existing Cloudbeds installations work after the migration:
 1. Create a test database with pre-migration schema:
 ```bash
 # Option A: Start fresh — remove existing DB and migrate to the pre-migration revision
-rm -f rentalsync_bridge.db
+rm -f data/rentalsync.db
 uv run alembic upgrade <pre-migration-revision>
 
 # Option B: If you have an existing DB, check out the pre-migration code and upgrade forward
@@ -252,7 +252,7 @@ All commits must pass pre-commit hooks:
 
 ```bash
 # Run manually
-uv run pre-commit run --all-files
+cd .. && uv run pre-commit run --all-files
 
 # Hooks include:
 # - reuse (SPDX headers)

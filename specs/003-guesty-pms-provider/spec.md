@@ -129,7 +129,7 @@ The system correctly assembles complete reservation records from Guesty's multi-
 
 #### Database and Data Model
 
-- **FR-013**: System MUST store a `pms_type` discriminator column on the OAuthCredential record (values: `"cloudbeds"`, `"guesty"`) to distinguish authentication flows. Guesty credentials use the client_credentials grant (clientId + clientSecret → bearer token). Cloudbeds credentials use the authorization_code grant (access_token + refresh_token) or API key authentication. All sensitive fields remain Fernet-encrypted.
+- **FR-013**: System MUST store a `pms_type` discriminator column on the OAuthCredential record (values: `"cloudbeds"`, `"guesty"`) to distinguish authentication flows. Guesty credentials use the client_credentials grant (client_id + client_secret → bearer token). Cloudbeds credentials use the authorization_code grant (access_token + refresh_token) or API key authentication. All sensitive fields remain Fernet-encrypted.
 - **FR-014**: System MUST use provider-agnostic field names with the `pms_` prefix for PMS-originated identifiers in all data records. Specifically: `cloudbeds_id` → `pms_id` (Listing), `cloudbeds_booking_id` → `pms_booking_id` (Booking), `cloudbeds_room_id` → `pms_room_id` (Room). All identifier columns use String type to accommodate both numeric (Cloudbeds) and MongoDB-style string (Guesty) identifiers.
 - **FR-015**: System MUST migrate existing data from provider-specific field names to generic `pms_*` field names via a one-way Alembic migration while preserving all values. Rollback to the pre-migration schema is not supported.
 - **FR-016**: System MUST support both short numeric IDs (Cloudbeds) and long string IDs (Guesty) in all PMS identifier fields.
