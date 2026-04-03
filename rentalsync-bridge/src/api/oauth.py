@@ -8,12 +8,12 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.config import get_settings
+from src.config import KNOWN_PMS_TYPES, get_settings
 from src.database import get_db
 from src.models.oauth_credential import OAuthCredential
-from src.providers.registry import list_providers as registry_list_providers
 from src.repositories.credential_repository import CredentialRepository
 from src.services.oauth_service import OAuthService, OAuthServiceError
 
@@ -177,6 +177,14 @@ async def configure_oauth(
     settings = get_settings()
     pms_type = request.pms_type or settings.pms_type
 
+    # Validate pms_type against known providers
+    if pms_type not in KNOWN_PMS_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown pms_type '{pms_type}'. "
+            f"Must be one of: {sorted(KNOWN_PMS_TYPES)}",
+        )
+
     # Provider-specific validation
     if pms_type == "guesty":
         if request.api_key:
@@ -219,7 +227,16 @@ async def configure_oauth(
         db.add(credential)
         logger.info("Created new %s credentials", pms_type)
 
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error("IntegrityError saving %s credentials: %s", pms_type, e)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Credential conflict for '{pms_type}': a duplicate or "
+            "constraint violation occurred",
+        ) from e
 
     auth_type = "API key" if request.api_key else "OAuth tokens"
     return {
@@ -290,17 +307,25 @@ _CREDENTIAL_FIELDS: dict[str, list[dict[str, str]]] = {
     ],
 }
 
+_KNOWN_PROVIDERS: list[dict[str, Any]] = [
+    {"pms_type": "cloudbeds", "provider_class": "CloudbedsProvider"},
+    {"pms_type": "guesty", "provider_class": "GuestyProvider"},
+]
+
 providers_router = APIRouter(prefix="/api", tags=["Providers"])
 
 
 @providers_router.get("/providers", response_model=list[ProviderInfo])
 async def get_providers() -> list[dict[str, Any]]:
-    """Return registered provider metadata with credential field defs.
+    """Return known provider metadata with credential field defs.
+
+    Includes all known providers even if they are not yet registered
+    in the provider registry (e.g. guesty before Phase 4).
 
     Returns:
         List of provider info dicts for dynamic form rendering.
     """
-    providers = registry_list_providers()
+    providers = [dict(p) for p in _KNOWN_PROVIDERS]
     for p in providers:
         p["credential_fields"] = _CREDENTIAL_FIELDS.get(p["pms_type"], [])
     return providers

@@ -72,6 +72,18 @@ class OAuthService:
 
         try:
             provider_cls = get_provider_class(pms_type)
+        except ValueError:
+            # Provider not yet registered (e.g. guesty before Phase 4)
+            logger.warning(
+                "Provider '%s' is not registered; cannot refresh token", pms_type
+            )
+            msg = (
+                f"Provider '{pms_type}' is not yet registered. "
+                "Token refresh is unavailable until the provider is implemented."
+            )
+            raise OAuthServiceError(msg) from None
+
+        try:
             provider_inst = provider_cls()
             result = await provider_inst.refresh_token(credential)
             return result.access_token, result.refresh_token, result.expires_at

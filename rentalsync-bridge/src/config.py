@@ -7,6 +7,8 @@ from functools import lru_cache
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+KNOWN_PMS_TYPES: frozenset[str] = frozenset({"cloudbeds", "guesty"})
+
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
@@ -101,12 +103,22 @@ class Settings(BaseSettings):
             1. Explicit PMS_TYPE env var wins.
             2. If GUESTY_CLIENT_ID is set → infer "guesty".
             3. Default → "cloudbeds".
+
+        Raises:
+            ValueError: If pms_type is not in the known set.
         """
+        self.pms_type = self.pms_type.strip().lower()
         if not self.pms_type:
             if self.guesty_client_id:
                 self.pms_type = "guesty"
             else:
                 self.pms_type = "cloudbeds"
+        if self.pms_type not in KNOWN_PMS_TYPES:
+            msg = (
+                f"Unknown pms_type '{self.pms_type}'. "
+                f"Must be one of: {sorted(KNOWN_PMS_TYPES)}"
+            )
+            raise ValueError(msg)
         return self
 
 
