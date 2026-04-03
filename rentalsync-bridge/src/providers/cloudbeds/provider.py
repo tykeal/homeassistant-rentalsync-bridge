@@ -105,14 +105,20 @@ class CloudbedsProvider(PMSProvider):
         except Exception as exc:
             raise PMSProviderError(f"Unexpected error from Cloudbeds: {exc}") from exc
 
-        return [
-            PMSListing(
-                pms_id=prop["propertyID"],
-                name=prop["propertyName"],
-                timezone=prop.get("propertyTimezone", "UTC"),
+        listings: list[PMSListing] = []
+        for prop in properties:
+            pms_id = str(prop.get("propertyID", ""))
+            if not pms_id:
+                logger.warning("Skipping Cloudbeds property with missing ID")
+                continue
+            listings.append(
+                PMSListing(
+                    pms_id=pms_id,
+                    name=prop["propertyName"],
+                    timezone=prop.get("propertyTimezone", "UTC"),
+                )
             )
-            for prop in properties
-        ]
+        return listings
 
     async def get_reservations(
         self,
@@ -166,14 +172,23 @@ class CloudbedsProvider(PMSProvider):
         except Exception as exc:
             raise PMSProviderError(f"Unexpected error from Cloudbeds: {exc}") from exc
 
-        return [
-            PMSRoom(
-                pms_room_id=str(room.get("roomID", "")),
-                name=room.get("roomName", ""),
-                room_type=room.get("roomTypeName"),
+        rooms: list[PMSRoom] = []
+        for room in raw:
+            room_id = str(room.get("roomID", ""))
+            if not room_id:
+                logger.warning(
+                    "Skipping Cloudbeds room with missing ID in listing %s",
+                    listing_pms_id,
+                )
+                continue
+            rooms.append(
+                PMSRoom(
+                    pms_room_id=room_id,
+                    name=room.get("roomName", ""),
+                    room_type=room.get("roomTypeName"),
+                )
             )
-            for room in raw
-        ]
+        return rooms
 
     async def get_guest(self, guest_id: str) -> PMSGuest | None:
         """Return guest data by searching live reservation data.
@@ -393,8 +408,14 @@ class CloudbedsProvider(PMSProvider):
         check_in = raw.get("startDate") or raw.get("checkInDate", "")
         check_out = raw.get("endDate") or raw.get("checkOutDate", "")
 
+        pms_booking_id = str(raw.get("reservationID", ""))
+        if not pms_booking_id:
+            raise PMSProviderError(
+                "Cloudbeds reservation missing required reservationID"
+            )
+
         return PMSReservation(
-            pms_booking_id=str(raw.get("reservationID", "")),
+            pms_booking_id=pms_booking_id,
             listing_pms_id=listing_pms_id,
             guest_name=raw.get("guestName"),
             guest_id=str(raw["guestID"]) if raw.get("guestID") is not None else None,

@@ -224,26 +224,20 @@ class PMSProvider(ABC):
 
     @abstractmethod
     async def refresh_token(self, credential: "OAuthCredential") -> TokenResult:
-        """Refresh or acquire a new access token.
+        """Refresh the OAuth token for providers that support direct refresh.
 
-        For client_credentials providers (Guesty): acquires new token.
-        For authorization_code providers (Cloudbeds): refreshes existing token.
-
-        Note: Not all providers support direct token refresh through this
-            method. Providers that manage tokens externally (e.g., via a
-            separate OAuth service) may raise NotImplementedError.
+        Providers that manage tokens through an external mechanism
+        (e.g., a separate OAuth service) should raise NotImplementedError.
 
         Args:
-            credential: Current credential record with client_id/secret.
+            credential: The current OAuth credential to refresh.
 
         Returns:
-            New token information.
+            TokenResult with new access token and expiry.
 
         Raises:
-            PMSProviderError: If token operation fails.
-            TokenRateLimitError: If provider-specific token rate limit exceeded.
-            NotImplementedError: If the provider does not support direct
-                token refresh.
+            NotImplementedError: If the provider does not support direct refresh.
+            PMSAuthenticationError: If refresh fails due to invalid credentials.
         """
         ...
 
