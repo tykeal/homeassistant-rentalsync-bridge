@@ -111,14 +111,15 @@ async def test_get_ical_success(test_app, test_session):
     await test_session.refresh(room)
 
     # Create test booking for the room
+    now = datetime.now(UTC)
     booking = Booking(
         listing_id=listing.id,
         room_id=room.id,
         cloudbeds_booking_id="BK12345",
         guest_name="Test Guest",
         guest_phone_last4="5678",
-        check_in_date=datetime.now(UTC) + timedelta(days=1),
-        check_out_date=datetime.now(UTC) + timedelta(days=5),
+        check_in_date=now + timedelta(days=1),
+        check_out_date=now + timedelta(days=5),
         status="confirmed",
     )
     test_session.add(booking)
