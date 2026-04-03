@@ -331,7 +331,7 @@ class TestPmsMigration:
         """Verify downgrade raises NotImplementedError."""
         _run_migrations(pre_migration_db, "d3e4f5a6b7c8")
 
-        cfg = Config("alembic.ini")
+        cfg = Config(_ALEMBIC_INI)
         script = ScriptDirectory.from_config(cfg)
         rev = script.get_revision("d3e4f5a6b7c8")
 
