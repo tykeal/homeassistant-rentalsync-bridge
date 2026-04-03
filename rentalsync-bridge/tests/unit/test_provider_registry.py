@@ -103,11 +103,23 @@ class TestRegisterProvider:
         register_provider("stub", _StubProvider)
         assert get_provider_class("stub") is _StubProvider
 
-    def test_duplicate_raises_value_error(self):
-        """Test that registering the same type twice raises ValueError."""
+    def test_duplicate_same_class_is_idempotent(self):
+        """Test that re-registering the same class is a no-op."""
+        register_provider("stub", _StubProvider)
+        register_provider("stub", _StubProvider)
+        assert get_provider_class("stub") is _StubProvider
+
+    def test_duplicate_different_class_raises_value_error(self):
+        """Test that registering a different class for the same type raises."""
+
+        class _OtherProvider(_StubProvider):
+            @property
+            def provider_type(self) -> str:
+                return "other"
+
         register_provider("stub", _StubProvider)
         with pytest.raises(ValueError, match="already registered"):
-            register_provider("stub", _StubProvider)
+            register_provider("stub", _OtherProvider)
 
     def test_unknown_type_raises_value_error(self):
         """Test that getting an unregistered type raises ValueError."""

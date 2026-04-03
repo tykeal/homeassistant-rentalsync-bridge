@@ -386,7 +386,7 @@ def _parse_date(value: str | datetime | None) -> datetime:
         raise PMSProviderError(msg)
 
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=UTC)
+        return value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
 
     try:
         dt = datetime.fromisoformat(value)
@@ -396,4 +396,4 @@ def _parse_date(value: str | datetime | None) -> datetime:
         except (ValueError, TypeError) as exc:
             msg = f"Cannot parse date value: {value!r}"
             raise PMSProviderError(msg) from exc
-    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC) if dt.tzinfo else dt.replace(tzinfo=UTC)

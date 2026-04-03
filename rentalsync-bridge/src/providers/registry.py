@@ -20,10 +20,13 @@ def register_provider(pms_type: str, provider_class: type[PMSProvider]) -> None:
         provider_class: Class implementing PMSProvider ABC.
 
     Raises:
-        ValueError: If *pms_type* is already registered.
+        ValueError: If *pms_type* is already registered with a different class.
     """
     with _lock:
-        if pms_type in _registry:
+        existing = _registry.get(pms_type)
+        if existing is not None:
+            if existing is provider_class:
+                return
             msg = f"Provider type '{pms_type}' is already registered"
             raise ValueError(msg)
         _registry[pms_type] = provider_class

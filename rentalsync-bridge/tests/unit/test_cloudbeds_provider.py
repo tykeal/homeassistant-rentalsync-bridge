@@ -3,9 +3,10 @@
 """Unit tests for the Cloudbeds provider implementation."""
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from src.models.oauth_credential import OAuthCredential
 from src.providers.base import (
     PMSConnectionError,
     PMSGuest,
@@ -332,7 +333,8 @@ class TestRefreshToken:
     @pytest.mark.asyncio
     async def test_delegates_to_service(self, provider, mock_service):
         """Test that refresh_token delegates to the underlying service."""
-        result = await provider.refresh_token(credential=None)
+        mock_credential = MagicMock(spec=OAuthCredential)
+        result = await provider.refresh_token(credential=mock_credential)
 
         assert result.access_token == "new_tok"
         assert result.refresh_token == "new_ref"
@@ -345,7 +347,8 @@ class TestRefreshToken:
             side_effect=CloudbedsServiceError("nope")
         )
         with pytest.raises(PMSProviderError):
-            await provider.refresh_token(credential=None)
+            mock_credential = MagicMock(spec=OAuthCredential)
+            await provider.refresh_token(credential=mock_credential)
 
 
 # ---------------------------------------------------------------------------
