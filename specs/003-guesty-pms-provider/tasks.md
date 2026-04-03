@@ -143,7 +143,7 @@ SPDX-License-Identifier: Apache-2.0
 - [ ] T044 [US3] Display active pms_type label and Guesty-specific token_requests_remaining counter in the connection status section of src/static/js/admin.js
 - [ ] T045 [US3] Update connection test button to include pms_type in POST /api/oauth/configure request and display provider-specific success/error messages in src/static/js/admin.js
 - [ ] T046 [US3] Add CSS styling for PMS provider selector dropdown, conditional form visibility toggles, and provider status badge in src/static/css/admin.css
-- [ ] T047 [US3]: Implement PMS type switch confirmation warning
+- [ ] T047 [US3] Implement PMS type switch confirmation warning
   - **Files**: `src/static/js/admin.js`
   - **Acceptance**: When user changes PMS type on an installation with existing synced data, a confirmation dialog warns that existing data won't be deleted but new syncs will use the new provider
   - **Depends on**: T042
@@ -165,7 +165,7 @@ SPDX-License-Identifier: Apache-2.0
 - [ ] T051 [P] Write iCal RFC 5545 contract test verifying Guesty-sourced calendar events produce valid iCalendar output with correct VEVENT properties in tests/contract/test_ical_rfc5545.py
 - [ ] T052 Update shared test fixtures with multi-provider factory helpers (Guesty + Cloudbeds credential factories, listing/booking/room factories with pms_* fields) in tests/conftest.py
 - [ ] T053 Validate quickstart.md developer setup steps by running full environment setup, migration, and end-to-end workflow on clean state
-- [ ] T054: Write benchmark/optional performance validation coverage
+- [ ] T054 Write benchmark/optional performance validation coverage
   - **Files**: `tests/integration/test_performance.py`
   - **Acceptance**: Default test suite asserts deterministic behavior
     (token request count ≤2 per simulated 24h cycle). Sync-cycle
