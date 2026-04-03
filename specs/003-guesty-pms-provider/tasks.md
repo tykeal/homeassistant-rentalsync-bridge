@@ -59,7 +59,7 @@ SPDX-License-Identifier: Apache-2.0
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T007 [P] Add pms_type (String(20), NOT NULL, default "cloudbeds"), token_request_count (Integer, default 0), and token_request_window_start (DateTime, nullable) columns to OAuthCredential model in src/models/oauth_credential.py
+- [ ] T007 [P] Add pms_type (String(20), NOT NULL, default "cloudbeds"), token_request_count (Integer, NOT NULL, default 0), and token_request_window_start (DateTime, nullable) columns to OAuthCredential model in src/models/oauth_credential.py
 - [ ] T008 [P] Rename cloudbeds_id to pms_id (String(100), UNIQUE, indexed) on Listing model and update ListingRepository queries in src/models/listing.py and src/repositories/listing_repository.py
 - [ ] T009 [P] Rename cloudbeds_booking_id to pms_booking_id (String(255)) on Booking model, update unique constraint to uq_booking_listing_pms, and update BookingRepository queries in src/models/booking.py and src/repositories/booking_repository.py
 - [ ] T010 [P] Rename cloudbeds_room_id to pms_room_id (String(100)) on Room model, update unique constraint to uq_room_listing_pms, and update RoomRepository queries in src/models/room.py and src/repositories/room_repository.py
