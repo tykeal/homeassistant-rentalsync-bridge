@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 
 **Feature Branch**: `003-guesty-pms-provider`
 **Created**: 2025-07-15
-**Status**: Draft
+**Status**: Ready for Implementation
 **Input**: User description: "Add Guesty as a second PMS provider to the rentalsync-bridge project"
 
 ## User Scenarios & Testing *(mandatory)*

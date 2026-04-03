@@ -165,9 +165,14 @@ SPDX-License-Identifier: Apache-2.0
 - [ ] T051 [P] Write iCal RFC 5545 contract test verifying Guesty-sourced calendar events produce valid iCalendar output with correct VEVENT properties in tests/contract/test_ical_rfc5545.py
 - [ ] T052 Update shared test fixtures with multi-provider factory helpers (Guesty + Cloudbeds credential factories, listing/booking/room factories with pms_* fields) in tests/conftest.py
 - [ ] T053 Validate quickstart.md developer setup steps by running full environment setup, migration, and end-to-end workflow on clean state
-- [ ] T054: Write performance validation tests
+- [ ] T054: Write benchmark/optional performance validation coverage
   - **Files**: `tests/integration/test_performance.py`
-  - **Acceptance**: Tests validate: (a) sync cycle completes within 60s for 50-listing test dataset, (b) iCal generation latency <500ms, (c) token request count ≤2 per simulated 24h cycle
+  - **Acceptance**: Default test suite asserts deterministic behavior
+    (token request count ≤2 per simulated 24h cycle). Sync-cycle
+    duration and iCal generation latency are measured and reported as
+    benchmarks under a dedicated `@pytest.mark.benchmark` marker (or
+    equivalent optional CI job with environment-controlled baselines),
+    rather than strict default-suite wall-clock gates.
   - **Depends on**: T048
   - **Traces to**: SC-001, SC-005, Constitution Principle IV
 
