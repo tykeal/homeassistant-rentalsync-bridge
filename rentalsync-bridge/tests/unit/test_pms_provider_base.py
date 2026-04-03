@@ -101,7 +101,7 @@ class TestDTOFrozenBehavior:
             check_in=datetime(2026, 1, 1, tzinfo=UTC),
             check_out=datetime(2026, 1, 5, tzinfo=UTC),
             status="confirmed",
-            room_ids=["r1"],
+            room_ids=("r1",),
             custom_data={},
         )
         with pytest.raises(AttributeError):
@@ -127,7 +127,7 @@ class TestDTOFrozenBehavior:
         """Test that PMSListing optional fields default correctly."""
         listing = PMSListing(pms_id="1", name="A", timezone="UTC")
         assert listing.address is None
-        assert listing.rooms == []
+        assert listing.rooms == ()
 
     def test_pms_room_defaults(self):
         """Test that PMSRoom optional fields default correctly."""

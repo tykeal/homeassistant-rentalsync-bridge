@@ -168,10 +168,11 @@ class CloudbedsProvider(PMSProvider):
         ]
 
     async def get_guest(self, guest_id: str) -> PMSGuest | None:
-        """Return guest data extracted from cached reservation data.
+        """Return guest data by searching live reservation data.
 
         Cloudbeds embeds guest info in reservations; this method
-        searches across recent reservations to find the matching guest.
+        makes live API calls across all properties to find the
+        matching guest.
 
         Args:
             guest_id: Cloudbeds guest ID.
@@ -180,12 +181,15 @@ class CloudbedsProvider(PMSProvider):
             PMSGuest if found, else None.
 
         Raises:
-            PMSProviderError: On API failure.
+            PMSProviderError: If API communication fails for all properties.
         """
         try:
             properties = await self._service.get_properties()
         except CloudbedsServiceError as exc:
             raise self._translate_error(exc) from exc
+
+        last_error: CloudbedsServiceError | None = None
+        properties_failed = 0
 
         for prop in properties:
             try:
@@ -194,7 +198,14 @@ class CloudbedsProvider(PMSProvider):
                     start_date=datetime.now(UTC) - timedelta(days=365),
                     end_date=datetime.now(UTC) + timedelta(days=365),
                 )
-            except CloudbedsServiceError:
+            except CloudbedsServiceError as exc:
+                properties_failed += 1
+                last_error = exc
+                logger.warning(
+                    "Failed to fetch reservations for property %s: %s",
+                    prop["propertyID"],
+                    exc,
+                )
                 continue
 
             for res in reservations:
@@ -205,6 +216,10 @@ class CloudbedsProvider(PMSProvider):
                         phone=res.get("guestPhone"),
                         email=res.get("guestEmail"),
                     )
+
+        if properties_failed == len(properties) and last_error is not None:
+            raise self._translate_error(last_error) from last_error
+
         return None
 
     async def get_custom_fields(self, reservation_id: str) -> dict[str, Any]:
@@ -220,40 +235,68 @@ class CloudbedsProvider(PMSProvider):
             Dictionary of custom field values.
 
         Raises:
-            PMSProviderError: On API failure.
+            PMSProviderError: If API communication fails for all properties.
         """
+        # TODO(optimization): Cloudbeds API does not support fetching a
+        # single reservation by ID across properties.  This iterates all
+        # properties which is expensive for multi-property accounts.
+        # Consider caching or a reservation→property mapping table.
         try:
             properties = await self._service.get_properties()
         except CloudbedsServiceError as exc:
             raise self._translate_error(exc) from exc
+
+        last_error: CloudbedsServiceError | None = None
+        properties_failed = 0
 
         for prop in properties:
             try:
                 reservations = await self._service.get_reservations(
                     property_id=prop["propertyID"],
                 )
-            except CloudbedsServiceError:
+            except CloudbedsServiceError as exc:
+                properties_failed += 1
+                last_error = exc
+                logger.warning(
+                    "Failed to fetch reservations for property %s: %s",
+                    prop["propertyID"],
+                    exc,
+                )
                 continue
 
             for res in reservations:
                 if str(res.get("reservationID", "")) == reservation_id:
                     return dict(res.get("customFields", {}))
+
+        if properties_failed == len(properties) and last_error is not None:
+            raise self._translate_error(last_error) from last_error
+
         return {}
 
     async def refresh_token(
         self,
         credential: "OAuthCredential",  # noqa: ARG002
     ) -> TokenResult:
-        """Refresh the OAuth token via OAuthService.
+        """Refresh the OAuth token via CloudbedsService.
+
+        Note:
+            Cloudbeds handles token refresh differently from other providers.
+            The underlying ``CloudbedsService.refresh_access_token()`` manages
+            the OAuth authorization-code flow internally.  Direct token refresh
+            via this method is not yet implemented — it currently delegates to
+            the service which may raise if the refresh flow has not been set up.
+            For production use, token refresh is handled by the existing
+            ``OAuthService`` outside the provider layer.
 
         Args:
-            credential: Current credential record.
+            credential: Current credential record (unused; kept for
+                interface compatibility).
 
         Returns:
             TokenResult with new token data.
 
         Raises:
-            PMSProviderError: If refresh fails.
+            PMSProviderError: If refresh fails or is not supported.
         """
         try:
             (
@@ -321,24 +364,36 @@ class CloudbedsProvider(PMSProvider):
             check_in=_parse_date(check_in),
             check_out=_parse_date(check_out),
             status=raw.get("status", "confirmed"),
-            room_ids=room_ids,
+            room_ids=tuple(room_ids),
             custom_data=dict(raw.get("customFields", {})),
         )
 
 
-def _parse_date(value: str | datetime) -> datetime:
+def _parse_date(value: str | datetime | None) -> datetime:
     """Parse a date string or pass through a datetime.
 
     Args:
-        value: ISO-format date string or datetime.
+        value: ISO-format date string, datetime, or None/empty.
 
     Returns:
         Timezone-aware datetime (UTC).
+
+    Raises:
+        PMSProviderError: If *value* is falsy or cannot be parsed.
     """
+    if not value:
+        msg = f"Cannot parse date from empty or None value: {value!r}"
+        raise PMSProviderError(msg)
+
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=UTC)
+
     try:
         dt = datetime.fromisoformat(value)
     except (ValueError, TypeError):
-        dt = datetime.strptime(value, "%Y-%m-%d")
+        try:
+            dt = datetime.strptime(value, "%Y-%m-%d")
+        except (ValueError, TypeError) as exc:
+            msg = f"Cannot parse date value: {value!r}"
+            raise PMSProviderError(msg) from exc
     return dt if dt.tzinfo else dt.replace(tzinfo=UTC)

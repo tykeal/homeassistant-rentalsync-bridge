@@ -2,11 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """PMS Provider registry — registration, lookup, and factory."""
 
+import threading
+from collections.abc import Callable
 from typing import Any
 
 from src.providers.base import PMSProvider
 
 _registry: dict[str, type[PMSProvider]] = {}
+_lock = threading.RLock()
 
 
 def register_provider(pms_type: str, provider_class: type[PMSProvider]) -> None:
@@ -19,10 +22,11 @@ def register_provider(pms_type: str, provider_class: type[PMSProvider]) -> None:
     Raises:
         ValueError: If *pms_type* is already registered.
     """
-    if pms_type in _registry:
-        msg = f"Provider type '{pms_type}' is already registered"
-        raise ValueError(msg)
-    _registry[pms_type] = provider_class
+    with _lock:
+        if pms_type in _registry:
+            msg = f"Provider type '{pms_type}' is already registered"
+            raise ValueError(msg)
+        _registry[pms_type] = provider_class
 
 
 def get_provider_class(pms_type: str) -> type[PMSProvider]:
@@ -37,10 +41,11 @@ def get_provider_class(pms_type: str) -> type[PMSProvider]:
     Raises:
         ValueError: If *pms_type* is not registered.
     """
-    if pms_type not in _registry:
-        msg = f"Unknown provider type: '{pms_type}'"
-        raise ValueError(msg)
-    return _registry[pms_type]
+    with _lock:
+        if pms_type not in _registry:
+            msg = f"Unknown provider type: '{pms_type}'"
+            raise ValueError(msg)
+        return _registry[pms_type]
 
 
 def create_provider(pms_type: str, **kwargs: Any) -> PMSProvider:
@@ -66,12 +71,39 @@ def list_providers() -> list[dict[str, Any]]:
     Returns:
         List of provider info dicts for the ``/api/providers`` endpoint.
     """
-    return [
-        {"pms_type": pms_type, "provider_class": cls.__name__}
-        for pms_type, cls in _registry.items()
-    ]
+    with _lock:
+        return [
+            {"pms_type": pms_type, "provider_class": cls.__name__}
+            for pms_type, cls in _registry.items()
+        ]
+
+
+def provider(
+    pms_type: str,
+) -> Callable[[type[PMSProvider]], type[PMSProvider]]:
+    """Class decorator for auto-registering a PMSProvider implementation.
+
+    Usage::
+
+        @provider("cloudbeds")
+        class CloudbedsProvider(PMSProvider):
+            ...
+
+    Args:
+        pms_type: Provider identifier string (e.g., "cloudbeds", "guesty").
+
+    Returns:
+        Decorator that registers the class and returns it unchanged.
+    """
+
+    def _decorator(cls: type[PMSProvider]) -> type[PMSProvider]:
+        register_provider(pms_type, cls)
+        return cls
+
+    return _decorator
 
 
 def _clear_registry() -> None:
     """Clear the registry (testing helper)."""
-    _registry.clear()
+    with _lock:
+        _registry.clear()

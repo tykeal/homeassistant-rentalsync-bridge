@@ -16,7 +16,7 @@ from src.providers.base import (
     PMSReservation,
     PMSRoom,
 )
-from src.providers.cloudbeds.provider import CloudbedsProvider
+from src.providers.cloudbeds.provider import CloudbedsProvider, _parse_date
 from src.services.cloudbeds_service import CloudbedsServiceError, RateLimitError
 
 # ---------------------------------------------------------------------------
@@ -121,7 +121,7 @@ class TestGetListings:
         assert listings[0].pms_id == "P1"
         assert listings[0].name == "Beach House"
         assert listings[0].timezone == "America/New_York"
-        assert listings[0].rooms == []
+        assert listings[0].rooms == ()
 
     @pytest.mark.asyncio
     async def test_service_error_raises_pms_error(self, provider, mock_service):
@@ -200,13 +200,13 @@ class TestGetReservations:
     async def test_single_room_id_from_top_level(self, provider, mock_service):
         """Test that a single top-level roomID is extracted correctly."""
         reservations = await provider.get_reservations("P1")
-        assert reservations[0].room_ids == ["R1"]
+        assert reservations[0].room_ids == ("R1",)
 
     @pytest.mark.asyncio
     async def test_multiple_room_ids_from_rooms_list(self, provider, mock_service):
         """Test that multiple room IDs are extracted from the rooms list."""
         reservations = await provider.get_reservations("P1")
-        assert reservations[1].room_ids == ["R1", "R2"]
+        assert reservations[1].room_ids == ("R1", "R2")
 
     @pytest.mark.asyncio
     async def test_passes_date_filters(self, provider, mock_service):
@@ -264,6 +264,32 @@ class TestGetGuest:
         with pytest.raises(PMSProviderError):
             await provider.get_guest("G1")
 
+    @pytest.mark.asyncio
+    async def test_all_properties_fail_raises(self, provider, mock_service):
+        """Test that PMSProviderError is raised when all properties fail."""
+        mock_service.get_reservations = AsyncMock(
+            side_effect=CloudbedsServiceError("down")
+        )
+        with pytest.raises(PMSProviderError, match="down"):
+            await provider.get_guest("G1")
+
+    @pytest.mark.asyncio
+    async def test_partial_property_failure_continues(self, provider, mock_service):
+        """Test that guest is found even if some properties fail."""
+        calls = [0]
+
+        async def _side_effect(**kwargs):
+            """Simulate first property failing, second succeeding."""
+            calls[0] += 1
+            if calls[0] == 1:
+                raise CloudbedsServiceError("property P1 down")
+            return SAMPLE_RESERVATIONS
+
+        mock_service.get_reservations = AsyncMock(side_effect=_side_effect)
+        guest = await provider.get_guest("G1")
+        assert guest is not None
+        assert guest.guest_id == "G1"
+
 
 # ---------------------------------------------------------------------------
 # get_custom_fields
@@ -284,6 +310,15 @@ class TestGetCustomFields:
         """Test that an empty dict is returned for an unknown reservation."""
         fields = await provider.get_custom_fields("MISSING")
         assert fields == {}
+
+    @pytest.mark.asyncio
+    async def test_all_properties_fail_raises(self, provider, mock_service):
+        """Test that PMSProviderError is raised when all properties fail."""
+        mock_service.get_reservations = AsyncMock(
+            side_effect=CloudbedsServiceError("down")
+        )
+        with pytest.raises(PMSProviderError, match="down"):
+            await provider.get_custom_fields("RES1")
 
 
 # ---------------------------------------------------------------------------
@@ -370,3 +405,48 @@ class TestErrorTranslation:
         err = CloudbedsServiceError("connection timeout")
         result = CloudbedsProvider._translate_error(err)
         assert isinstance(result, PMSConnectionError)
+
+
+# ---------------------------------------------------------------------------
+# _parse_date
+# ---------------------------------------------------------------------------
+
+
+class TestParseDate:
+    """Tests for the _parse_date helper function."""
+
+    def test_parses_iso_date_string(self):
+        """Test that ISO date strings are parsed correctly."""
+        result = _parse_date("2026-03-01")
+        assert result == datetime(2026, 3, 1, tzinfo=UTC)
+
+    def test_parses_iso_datetime_string(self):
+        """Test that ISO datetime strings are parsed correctly."""
+        result = _parse_date("2026-03-01T10:30:00")
+        assert result == datetime(2026, 3, 1, 10, 30, tzinfo=UTC)
+
+    def test_passes_through_aware_datetime(self):
+        """Test that timezone-aware datetimes pass through unchanged."""
+        dt = datetime(2026, 3, 1, tzinfo=UTC)
+        assert _parse_date(dt) is dt
+
+    def test_adds_utc_to_naive_datetime(self):
+        """Test that naive datetimes get UTC timezone added."""
+        dt = datetime(2026, 3, 1)
+        result = _parse_date(dt)
+        assert result.tzinfo is UTC
+
+    def test_none_raises_provider_error(self):
+        """Test that None raises PMSProviderError."""
+        with pytest.raises(PMSProviderError, match="empty or None"):
+            _parse_date(None)
+
+    def test_empty_string_raises_provider_error(self):
+        """Test that empty string raises PMSProviderError."""
+        with pytest.raises(PMSProviderError, match="empty or None"):
+            _parse_date("")
+
+    def test_invalid_string_raises_provider_error(self):
+        """Test that unparseable strings raise PMSProviderError."""
+        with pytest.raises(PMSProviderError, match="Cannot parse date"):
+            _parse_date("not-a-date")

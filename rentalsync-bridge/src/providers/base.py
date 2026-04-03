@@ -24,7 +24,7 @@ class PMSListing:
     name: str
     timezone: str
     address: str | None = None
-    rooms: list["PMSRoom"] = field(default_factory=list)
+    rooms: tuple["PMSRoom", ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -42,6 +42,11 @@ class PMSReservation:
 
     All provider-specific data formats are converted to Python native types
     before constructing this DTO.
+
+    Note:
+        ``custom_data`` is a plain ``dict`` and only attribute reassignment
+        is prevented by ``frozen=True``.  The dict contents are still mutable
+        (shallow freeze).  Treat ``custom_data`` as read-only after construction.
     """
 
     pms_booking_id: str
@@ -51,7 +56,7 @@ class PMSReservation:
     check_in: datetime
     check_out: datetime
     status: str  # "confirmed" | "checked_in" | "checked_out" | "cancelled"
-    room_ids: list[str]
+    room_ids: tuple[str, ...]
     custom_data: dict[str, Any]
 
 

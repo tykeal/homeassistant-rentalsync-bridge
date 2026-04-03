@@ -19,6 +19,7 @@ from src.providers.registry import (
     create_provider,
     get_provider_class,
     list_providers,
+    provider,
     register_provider,
 )
 
@@ -166,3 +167,27 @@ class TestListProviders:
         assert len(result) == 2
         types = {r["pms_type"] for r in result}
         assert types == {"stub", "another"}
+
+
+class TestProviderDecorator:
+    """Tests for the @provider decorator."""
+
+    def test_decorator_registers_and_returns_class(self):
+        """Test that @provider registers the class and returns it."""
+
+        @provider("decorated")
+        class DecoratedStub(_StubProvider):
+            @property
+            def provider_type(self) -> str:
+                return "decorated"
+
+        assert get_provider_class("decorated") is DecoratedStub
+
+    def test_decorator_duplicate_raises(self):
+        """Test that applying @provider with a duplicate type raises."""
+        register_provider("taken", _StubProvider)
+        with pytest.raises(ValueError, match="already registered"):
+
+            @provider("taken")
+            class DuplicateStub(_StubProvider):
+                pass
