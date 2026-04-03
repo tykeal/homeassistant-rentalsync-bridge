@@ -3,7 +3,7 @@
 """OAuth management API endpoints."""
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.config import KNOWN_PMS_TYPES, get_settings
 from src.database import get_db
 from src.models.oauth_credential import OAuthCredential
+from src.providers.registry import get_provider_class
 from src.repositories.credential_repository import CredentialRepository
 from src.services.oauth_service import OAuthService, OAuthServiceError
 
@@ -22,7 +23,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/oauth", tags=["OAuth"])
 
 # Guesty token-request rate limit
-GUESTY_MAX_TOKEN_REQUESTS = 5
+TOKEN_REQUEST_LIMIT = 5
+TOKEN_REQUEST_WINDOW = timedelta(hours=24)
 
 
 class OAuthStatusResponse(BaseModel):
@@ -89,7 +91,8 @@ class ProviderInfo(BaseModel):
     """Provider metadata for the /api/providers endpoint."""
 
     pms_type: str = Field(description="Provider identifier")
-    provider_class: str = Field(description="Provider class name")
+    provider_class: str | None = Field(description="Provider class name")
+    registered: bool = Field(description="Whether provider is registered")
     credential_fields: list[dict[str, str]] = Field(
         description="Required credential fields for dynamic form rendering"
     )
@@ -124,9 +127,15 @@ async def get_oauth_status(
     cred_pms = credential.pms_type or "cloudbeds"
     token_requests_remaining: int | None = None
     if cred_pms == "guesty":
-        token_requests_remaining = max(
-            0, GUESTY_MAX_TOKEN_REQUESTS - credential.token_request_count
-        )
+        remaining = TOKEN_REQUEST_LIMIT
+        if credential.token_request_window_start:
+            window_start = credential.token_request_window_start
+            if window_start.tzinfo is None:
+                window_start = window_start.replace(tzinfo=UTC)
+            window_expired = datetime.now(UTC) > window_start + TOKEN_REQUEST_WINDOW
+            if not window_expired:
+                remaining = max(0, TOKEN_REQUEST_LIMIT - credential.token_request_count)
+        token_requests_remaining = remaining
 
     # Determine auth type and connection status
     if credential.has_api_key():
@@ -313,11 +322,6 @@ _CREDENTIAL_FIELDS: dict[str, list[dict[str, str]]] = {
     ],
 }
 
-_KNOWN_PROVIDERS: list[dict[str, Any]] = [
-    {"pms_type": "cloudbeds", "provider_class": "CloudbedsProvider"},
-    {"pms_type": "guesty", "provider_class": "GuestyProvider (pending)"},
-]
-
 providers_router = APIRouter(prefix="/api", tags=["Providers"])
 
 
@@ -325,13 +329,31 @@ providers_router = APIRouter(prefix="/api", tags=["Providers"])
 async def get_providers() -> list[dict[str, Any]]:
     """Return known provider metadata with credential field defs.
 
-    Includes all known providers even if they are not yet registered
-    in the provider registry (e.g. guesty before Phase 4).
+    Builds the list from :data:`KNOWN_PMS_TYPES` and checks the
+    provider registry so the response reflects actual availability.
 
     Returns:
         List of provider info dicts for dynamic form rendering.
     """
-    providers = [dict(p) for p in _KNOWN_PROVIDERS]
-    for p in providers:
-        p["credential_fields"] = _CREDENTIAL_FIELDS.get(p["pms_type"], [])
+    providers: list[dict[str, Any]] = []
+    for pms_type in sorted(KNOWN_PMS_TYPES):
+        try:
+            cls = get_provider_class(pms_type)
+            providers.append(
+                {
+                    "pms_type": pms_type,
+                    "provider_class": cls.__name__,
+                    "registered": True,
+                    "credential_fields": _CREDENTIAL_FIELDS.get(pms_type, []),
+                }
+            )
+        except ValueError:
+            providers.append(
+                {
+                    "pms_type": pms_type,
+                    "provider_class": None,
+                    "registered": False,
+                    "credential_fields": _CREDENTIAL_FIELDS.get(pms_type, []),
+                }
+            )
     return providers

@@ -22,9 +22,17 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+naming_convention = {
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+}
+
+
 def upgrade() -> None:
     """Move unique constraint from client_id to pms_type."""
-    with op.batch_alter_table("oauth_credentials") as batch_op:
+    with op.batch_alter_table(
+        "oauth_credentials",
+        naming_convention=naming_convention,
+    ) as batch_op:
         batch_op.drop_constraint(
             "uq_oauth_credentials_client_id", type_="unique"
         )

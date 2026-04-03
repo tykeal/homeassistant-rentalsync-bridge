@@ -150,6 +150,7 @@ class TestOAuthStatus:
         cred.access_token = "access"
         cred.token_expires_at = datetime.now(UTC) + timedelta(hours=1)
         cred.token_request_count = 2
+        cred.token_request_window_start = datetime.now(UTC) - timedelta(hours=1)
         oauth_session.add(cred)
         await oauth_session.commit()
 
@@ -358,7 +359,7 @@ class TestProvidersEndpoint:
 
     @pytest.mark.asyncio
     async def test_providers_has_credential_fields(self, oauth_app):
-        """Each provider entry contains credential_fields."""
+        """Each provider entry contains credential_fields and registered."""
         async with AsyncClient(
             transport=ASGITransport(app=oauth_app), base_url="http://test"
         ) as client:
@@ -371,3 +372,5 @@ class TestProvidersEndpoint:
         for entry in data:
             assert "credential_fields" in entry
             assert isinstance(entry["credential_fields"], list)
+            assert "registered" in entry
+            assert isinstance(entry["registered"], bool)
