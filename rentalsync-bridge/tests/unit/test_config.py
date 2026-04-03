@@ -57,6 +57,66 @@ class TestSettings:
             assert settings.host == "127.0.0.1"
             assert settings.port == 9000
 
+    # -- T015 / T017: pms_type auto-detection --------------------------
+
+    def test_pms_type_explicit_wins(self):
+        """Explicit PMS_TYPE env var takes precedence over detection."""
+        from src.config import Settings
+
+        with patch.dict(
+            os.environ,
+            {"PMS_TYPE": "guesty", "GUESTY_CLIENT_ID": ""},
+            clear=False,
+        ):
+            settings = Settings()
+            assert settings.pms_type == "guesty"
+
+    def test_pms_type_inferred_guesty(self):
+        """GUESTY_CLIENT_ID triggers auto-detection of guesty."""
+        from src.config import Settings
+
+        with patch.dict(
+            os.environ,
+            {"GUESTY_CLIENT_ID": "some-id", "PMS_TYPE": ""},
+            clear=False,
+        ):
+            settings = Settings()
+            assert settings.pms_type == "guesty"
+
+    def test_pms_type_default_cloudbeds(self):
+        """Default pms_type is cloudbeds when nothing hints otherwise."""
+        from src.config import Settings
+
+        with patch.dict(
+            os.environ,
+            {"PMS_TYPE": "", "GUESTY_CLIENT_ID": ""},
+            clear=False,
+        ):
+            settings = Settings()
+            assert settings.pms_type == "cloudbeds"
+
+    def test_guesty_client_id_field(self):
+        """guesty_client_id is an optional string defaulting to ''."""
+        from src.config import Settings
+
+        settings = Settings()
+        assert settings.guesty_client_id == ""
+
+        with patch.dict(os.environ, {"GUESTY_CLIENT_ID": "gid"}):
+            settings = Settings()
+            assert settings.guesty_client_id == "gid"
+
+    def test_guesty_client_secret_field(self):
+        """guesty_client_secret is an optional string defaulting to ''."""
+        from src.config import Settings
+
+        settings = Settings()
+        assert settings.guesty_client_secret == ""
+
+        with patch.dict(os.environ, {"GUESTY_CLIENT_SECRET": "gsec"}):
+            settings = Settings()
+            assert settings.guesty_client_secret == "gsec"
+
 
 class TestGetSettings:
     """Tests for get_settings function."""

@@ -5,7 +5,7 @@
 from datetime import UTC, datetime
 
 from cryptography.fernet import Fernet
-from sqlalchemy import DateTime, Integer, String, Text
+from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.config import get_settings
@@ -67,13 +67,16 @@ class OAuthCredential(Base):
     """OAuth credentials for PMS API access.
 
     Stores encrypted OAuth tokens with automatic encryption/decryption.
-    Singleton pattern - only one record should exist.
+    One credential per PMS provider type.
     """
 
     __tablename__ = "oauth_credentials"
+    __table_args__ = (
+        UniqueConstraint("pms_type", name="uq_oauth_credentials_pms_type"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    client_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    client_id: Mapped[str] = mapped_column(String(255), nullable=False)
     _client_secret: Mapped[str] = mapped_column(
         "client_secret", String(255), nullable=False
     )

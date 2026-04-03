@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
-"""OAuth service for Cloudbeds token management."""
+"""OAuth service for PMS token management."""
 
 import logging
 from datetime import UTC, datetime, timedelta
@@ -9,12 +9,15 @@ from typing import Any
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# Ensure provider classes are registered in the registry
+import src.providers  # noqa: F401
 from src.config import get_settings
 from src.models.oauth_credential import OAuthCredential
+from src.providers.registry import get_provider_class
 
 logger = logging.getLogger(__name__)
 
-# Cloudbeds OAuth endpoints
+# Cloudbeds OAuth endpoints (kept for backwards-compat default path)
 CLOUDBEDS_TOKEN_URL = "https://hotels.cloudbeds.com/api/v1.2/oauth/token"
 
 # Token expiry buffer in seconds (refresh 5 minutes before expiry)
@@ -31,9 +34,12 @@ class OAuthServiceError(Exception):
 
 
 class OAuthService:
-    """Service for managing Cloudbeds OAuth tokens.
+    """Service for managing PMS OAuth tokens.
 
-    Handles token refresh and storage of OAuth credentials.
+    Routes token refresh through the provider registry so that each
+    provider implementation controls its own token exchange logic.
+    Falls back to the legacy Cloudbeds HTTP flow when the provider
+    raises ``NotImplementedError``.
     """
 
     def __init__(self, session: AsyncSession) -> None:
@@ -47,14 +53,60 @@ class OAuthService:
 
     async def refresh_token(
         self, credential: OAuthCredential
-    ) -> tuple[str, str, datetime]:
-        """Refresh OAuth access token.
+    ) -> tuple[str, str | None, datetime]:
+        """Refresh OAuth access token via the provider registry.
+
+        The method first tries the provider's ``refresh_token``
+        implementation.  If the provider raises
+        ``NotImplementedError`` (e.g. the Cloudbeds provider),
+        we fall back to the original Cloudbeds HTTP refresh.
 
         Args:
             credential: OAuth credential to refresh.
 
         Returns:
-            Tuple of (new_access_token, new_refresh_token, expires_at).
+            Tuple of (access_token, refresh_token | None, expires_at).
+
+        Raises:
+            OAuthServiceError: If token refresh fails.
+        """
+        pms_type = credential.pms_type or "cloudbeds"
+
+        try:
+            provider_cls = get_provider_class(pms_type)
+        except ValueError:
+            # Provider not yet registered (e.g. guesty before Phase 4)
+            logger.warning(
+                "Provider '%s' is not registered; cannot refresh token", pms_type
+            )
+            msg = (
+                f"Provider '{pms_type}' is not yet registered. "
+                "Token refresh is unavailable until the provider is implemented."
+            )
+            raise OAuthServiceError(msg) from None
+
+        try:
+            provider_inst = provider_cls()
+            result = await provider_inst.refresh_token(credential)
+            return result.access_token, result.refresh_token, result.expires_at
+        except NotImplementedError:
+            # Provider does not handle refresh itself — use legacy path
+            return await self._cloudbeds_refresh(credential)
+        except Exception as e:
+            logger.exception("Provider %s token refresh failed", pms_type)
+            msg = f"Token refresh failed for {pms_type}: {e}"
+            raise OAuthServiceError(msg) from e
+
+    async def _cloudbeds_refresh(
+        self, credential: OAuthCredential
+    ) -> tuple[str, str, datetime]:
+        """Legacy Cloudbeds HTTP token refresh.
+
+        Args:
+            credential: OAuth credential to refresh.
+
+        Returns:
+            Tuple of (access_token, refresh_token, expires_at).
 
         Raises:
             OAuthServiceError: If token refresh fails.
@@ -69,8 +121,8 @@ class OAuthService:
                     CLOUDBEDS_TOKEN_URL,
                     data={
                         "grant_type": "refresh_token",
-                        "client_id": self._settings.cloudbeds_client_id,
-                        "client_secret": self._settings.cloudbeds_client_secret,
+                        "client_id": credential.client_id,
+                        "client_secret": credential.client_secret,
                         "refresh_token": credential.refresh_token,
                     },
                     timeout=30.0,
@@ -108,7 +160,8 @@ class OAuthService:
         access_token, refresh_token, expires_at = await self.refresh_token(credential)
 
         credential.access_token = access_token
-        credential.refresh_token = refresh_token
+        if refresh_token is not None:
+            credential.refresh_token = refresh_token
         credential.token_expires_at = expires_at
 
         await self._session.commit()

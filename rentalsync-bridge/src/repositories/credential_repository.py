@@ -1,0 +1,167 @@
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+"""Provider-aware credential repository for OAuth credentials."""
+
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy import case, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.models.oauth_credential import OAuthCredential
+
+# Canonical token-request window; imported by src.api.oauth too.
+TOKEN_REQUEST_WINDOW = timedelta(hours=24)
+
+
+class CredentialRepository:
+    """Provider-aware CRUD operations for OAuth credentials.
+
+    Each PMS provider stores a separate credential row keyed by
+    ``pms_type``.  This repository centralises all credential
+    lookups so that callers never need to craft raw SQL.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        """Initialize the repository.
+
+        Args:
+            session: Async database session.
+        """
+        self._session = session
+
+    async def get_credential(self, pms_type: str) -> OAuthCredential | None:
+        """Fetch the credential for a given provider type.
+
+        Args:
+            pms_type: Provider identifier (e.g. "cloudbeds", "guesty").
+
+        Returns:
+            The matching credential, or ``None`` if not configured.
+        """
+        result = await self._session.execute(
+            select(OAuthCredential)
+            .where(OAuthCredential.pms_type == pms_type)
+            .order_by(OAuthCredential.id.desc())
+        )
+        return result.scalars().first()
+
+    async def save_credential(self, credential: OAuthCredential) -> OAuthCredential:
+        """Add or merge a credential into the session.
+
+        Args:
+            credential: Credential to persist.
+
+        Returns:
+            The managed credential instance.
+        """
+        merged = await self._session.merge(credential)
+        await self._session.flush()
+        return merged
+
+    async def update_token(
+        self,
+        credential_id: int,
+        access_token: str,
+        expires_at: datetime,
+    ) -> None:
+        """Update just the access token and expiry for a credential.
+
+        Args:
+            credential_id: Primary key of the credential row.
+            access_token: New access token value (will be encrypted).
+            expires_at: New expiry timestamp.
+        """
+        result = await self._session.execute(
+            select(OAuthCredential).where(OAuthCredential.id == credential_id)
+        )
+        credential = result.scalar_one_or_none()
+        if credential is None:
+            msg = f"Credential {credential_id} not found"
+            raise ValueError(msg)
+        credential.access_token = access_token
+        credential.token_expires_at = expires_at
+        await self._session.flush()
+
+    async def get_token_request_count(self, credential_id: int) -> int:
+        """Return the current token request count.
+
+        Args:
+            credential_id: Primary key of the credential row.
+
+        Returns:
+            Current token request count.
+        """
+        result = await self._session.execute(
+            select(OAuthCredential).where(OAuthCredential.id == credential_id)
+        )
+        credential = result.scalar_one_or_none()
+        if credential is None:
+            msg = f"Credential {credential_id} not found"
+            raise ValueError(msg)
+        return credential.token_request_count
+
+    async def increment_token_request_count(self, credential_id: int) -> None:
+        """Increment the token request counter by one.
+
+        If no window start has been recorded yet, it is initialised
+        to the current UTC time.
+
+        Args:
+            credential_id: Primary key of the credential row.
+        """
+        # Atomic increment to avoid lost updates under concurrency.
+        # Three branches:
+        #  1. No window yet (NULL) → start a new window, count = 1
+        #  2. Window expired (older than 24 h) → reset window, count = 1
+        #  3. Window still active → keep window, count += 1
+        now = datetime.now(UTC)
+        window_cutoff = now - TOKEN_REQUEST_WINDOW
+        result = await self._session.execute(
+            update(OAuthCredential)
+            .where(OAuthCredential.id == credential_id)
+            .values(
+                token_request_count=case(
+                    (
+                        OAuthCredential.token_request_window_start.is_(None),
+                        1,
+                    ),
+                    (
+                        OAuthCredential.token_request_window_start < window_cutoff,
+                        1,
+                    ),
+                    else_=OAuthCredential.token_request_count + 1,
+                ),
+                token_request_window_start=case(
+                    (
+                        OAuthCredential.token_request_window_start.is_(None),
+                        now,
+                    ),
+                    (
+                        OAuthCredential.token_request_window_start < window_cutoff,
+                        now,
+                    ),
+                    else_=OAuthCredential.token_request_window_start,
+                ),
+            )
+        )
+        if result.rowcount == 0:  # type: ignore[attr-defined]
+            msg = f"Credential {credential_id} not found"
+            raise ValueError(msg)
+        await self._session.flush()
+
+    async def reset_token_request_window(self, credential_id: int) -> None:
+        """Reset the token request counter and window start.
+
+        Args:
+            credential_id: Primary key of the credential row.
+        """
+        result = await self._session.execute(
+            select(OAuthCredential).where(OAuthCredential.id == credential_id)
+        )
+        credential = result.scalar_one_or_none()
+        if credential is None:
+            msg = f"Credential {credential_id} not found"
+            raise ValueError(msg)
+        credential.token_request_count = 0
+        credential.token_request_window_start = None
+        await self._session.flush()

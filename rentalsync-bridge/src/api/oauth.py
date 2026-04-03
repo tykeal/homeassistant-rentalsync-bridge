@@ -3,21 +3,30 @@
 """OAuth management API endpoints."""
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config import KNOWN_PMS_TYPES, get_settings
 from src.database import get_db
 from src.models.oauth_credential import OAuthCredential
+from src.providers.registry import get_provider_class
+from src.repositories.credential_repository import (
+    TOKEN_REQUEST_WINDOW,
+    CredentialRepository,
+)
 from src.services.oauth_service import OAuthService, OAuthServiceError
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/oauth", tags=["OAuth"])
+
+# Guesty token-request rate limit
+TOKEN_REQUEST_LIMIT = 5
 
 
 class OAuthStatusResponse(BaseModel):
@@ -28,21 +37,29 @@ class OAuthStatusResponse(BaseModel):
     auth_type: str | None = Field(
         default=None, description="Authentication type: 'api_key' or 'oauth'"
     )
+    pms_type: str | None = Field(default=None, description="PMS provider type")
     token_expires_at: datetime | None = Field(
         default=None, description="Token expiration time"
     )
     token_expired: bool = Field(default=False, description="Whether token has expired")
+    token_requests_remaining: int | None = Field(
+        default=None,
+        description="Remaining token requests in window (Guesty only)",
+    )
 
 
 class OAuthConfigureRequest(BaseModel):
     """Request model for configuring OAuth credentials."""
 
-    client_id: str = Field(min_length=1, description="Cloudbeds OAuth client ID")
-    client_secret: str = Field(
-        min_length=1, description="Cloudbeds OAuth client secret"
+    pms_type: str | None = Field(
+        default=None,
+        description="PMS provider type (cloudbeds or guesty). "
+        "Defaults to configured pms_type.",
     )
+    client_id: str = Field(min_length=1, description="OAuth client ID")
+    client_secret: str = Field(min_length=1, description="OAuth client secret")
     api_key: str | None = Field(
-        default=None, description="Cloudbeds API key (alternative to OAuth tokens)"
+        default=None, description="API key (alternative to OAuth tokens)"
     )
     access_token: str | None = Field(
         default=None, description="OAuth access token (optional if using API key)"
@@ -72,6 +89,17 @@ class OAuthRefreshResponse(BaseModel):
     message: str = Field(description="Status message")
 
 
+class ProviderInfo(BaseModel):
+    """Provider metadata for the /api/providers endpoint."""
+
+    pms_type: str = Field(description="Provider identifier")
+    provider_class: str | None = Field(description="Provider class name")
+    registered: bool = Field(description="Whether provider is registered")
+    credential_fields: list[dict[str, str]] = Field(
+        description="Required credential fields for dynamic form rendering"
+    )
+
+
 @router.get("/status", response_model=OAuthStatusResponse)
 async def get_oauth_status(
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -81,27 +109,46 @@ async def get_oauth_status(
     Returns:
         OAuth configuration and connection status.
     """
-    result = await db.execute(select(OAuthCredential).limit(1))
-    credential = result.scalar_one_or_none()
+    settings = get_settings()
+    pms_type = settings.pms_type
+
+    repo = CredentialRepository(db)
+    credential = await repo.get_credential(pms_type)
 
     if not credential:
         return {
             "configured": False,
             "connected": False,
             "auth_type": None,
+            "pms_type": pms_type,
             "token_expires_at": None,
             "token_expired": False,
+            "token_requests_remaining": None,
         }
+
+    cred_pms = credential.pms_type or "cloudbeds"
+    token_requests_remaining: int | None = None
+    if cred_pms == "guesty":
+        remaining = TOKEN_REQUEST_LIMIT
+        if credential.token_request_window_start:
+            window_start = credential.token_request_window_start
+            if window_start.tzinfo is None:
+                window_start = window_start.replace(tzinfo=UTC)
+            window_expired = datetime.now(UTC) > window_start + TOKEN_REQUEST_WINDOW
+            if not window_expired:
+                remaining = max(0, TOKEN_REQUEST_LIMIT - credential.token_request_count)
+        token_requests_remaining = remaining
 
     # Determine auth type and connection status
     if credential.has_api_key():
-        # API key auth - always connected if configured
         return {
             "configured": True,
             "connected": True,
             "auth_type": "api_key",
+            "pms_type": cred_pms,
             "token_expires_at": None,
             "token_expired": False,
+            "token_requests_remaining": token_requests_remaining,
         }
 
     # OAuth token auth
@@ -110,8 +157,10 @@ async def get_oauth_status(
         "configured": True,
         "connected": not token_expired,
         "auth_type": "oauth",
+        "pms_type": cred_pms,
         "token_expires_at": credential.token_expires_at,
         "token_expired": token_expired,
+        "token_requests_remaining": token_requests_remaining,
     }
 
 
@@ -126,6 +175,9 @@ async def configure_oauth(
     1. API Key: Provide client_id, client_secret, and api_key
     2. OAuth: Provide client_id, client_secret, access_token, and refresh_token
 
+    Guesty only supports OAuth (client_credentials); api_key and
+    refresh_token are rejected.
+
     Args:
         request: OAuth credential configuration.
         db: Database session.
@@ -133,38 +185,83 @@ async def configure_oauth(
     Returns:
         Configuration status.
     """
-    # Validate that either api_key or tokens are provided
-    if not request.api_key and not request.access_token:
+    settings = get_settings()
+    pms_type = (request.pms_type or settings.pms_type).strip().lower()
+
+    # Validate pms_type against known providers
+    if pms_type not in KNOWN_PMS_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown pms_type '{pms_type}'. "
+            f"Must be one of: {sorted(KNOWN_PMS_TYPES)}",
+        )
+
+    # Normalise optional string fields so whitespace-only values are
+    # treated as empty.
+    api_key = (request.api_key or "").strip()
+    refresh_token_val = (request.refresh_token or "").strip()
+    access_token_val = (request.access_token or "").strip()
+
+    # Provider-specific validation
+    if pms_type == "guesty":
+        if api_key:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Guesty does not support API key authentication",
+            )
+        if refresh_token_val:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Guesty does not use refresh tokens",
+            )
+    # Cloudbeds: require either api_key or access_token
+    elif not api_key and not access_token_val:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Either api_key or access_token must be provided",
         )
+    # Cloudbeds: warn if access_token without refresh_token
+    if pms_type == "cloudbeds" and access_token_val and not refresh_token_val:
+        logger.warning(
+            "Cloudbeds credential configured with access_token "
+            "but no refresh_token; token refresh will fail"
+        )
 
-    # Check for existing credential
-    result = await db.execute(select(OAuthCredential).limit(1))
-    credential = result.scalar_one_or_none()
+    repo = CredentialRepository(db)
+    credential = await repo.get_credential(pms_type)
 
     if credential:
         # Update existing
-        credential.client_id = request.client_id
-        credential.client_secret = request.client_secret
-        credential.api_key = request.api_key
-        credential.access_token = request.access_token
-        credential.refresh_token = request.refresh_token
+        credential.client_id = request.client_id.strip()
+        credential.client_secret = request.client_secret.strip()
+        credential.api_key = api_key or None
+        credential.access_token = access_token_val or None
+        credential.refresh_token = refresh_token_val or None
         credential.token_expires_at = request.token_expires_at
-        logger.info("Updated existing OAuth credentials")
+        logger.info("Updated existing %s credentials", pms_type)
     else:
         # Create new
-        credential = OAuthCredential(client_id=request.client_id)
-        credential.client_secret = request.client_secret
-        credential.api_key = request.api_key
-        credential.access_token = request.access_token
-        credential.refresh_token = request.refresh_token
+        credential = OAuthCredential(
+            client_id=request.client_id.strip(), pms_type=pms_type
+        )
+        credential.client_secret = request.client_secret.strip()
+        credential.api_key = api_key or None
+        credential.access_token = access_token_val or None
+        credential.refresh_token = refresh_token_val or None
         credential.token_expires_at = request.token_expires_at
         db.add(credential)
-        logger.info("Created new OAuth credentials")
+        logger.info("Created new %s credentials", pms_type)
 
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error("IntegrityError saving %s credentials: %s", pms_type, e)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Credential conflict for '{pms_type}': a duplicate or "
+            "constraint violation occurred",
+        ) from e
 
     auth_type = "API key" if request.api_key else "OAuth tokens"
     return {
@@ -188,8 +285,9 @@ async def refresh_oauth_token(
     Raises:
         HTTPException: 400 if no credentials configured or refresh fails.
     """
-    result = await db.execute(select(OAuthCredential).limit(1))
-    credential = result.scalar_one_or_none()
+    settings = get_settings()
+    repo = CredentialRepository(db)
+    credential = await repo.get_credential(settings.pms_type)
 
     if not credential:
         raise HTTPException(
@@ -215,3 +313,57 @@ async def refresh_oauth_token(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Token refresh failed: {e}",
         ) from e
+
+
+# ------------------------------------------------------------------
+# Provider metadata endpoint
+# ------------------------------------------------------------------
+_CREDENTIAL_FIELDS: dict[str, list[dict[str, str]]] = {
+    "cloudbeds": [
+        {"name": "client_id", "label": "Client ID", "type": "text"},
+        {"name": "client_secret", "label": "Client Secret", "type": "password"},
+        {"name": "api_key", "label": "API Key (optional)", "type": "password"},
+        {"name": "access_token", "label": "Access Token", "type": "password"},
+        {"name": "refresh_token", "label": "Refresh Token", "type": "password"},
+    ],
+    "guesty": [
+        {"name": "client_id", "label": "Client ID", "type": "text"},
+        {"name": "client_secret", "label": "Client Secret", "type": "password"},
+    ],
+}
+
+providers_router = APIRouter(prefix="/api", tags=["Providers"])
+
+
+@providers_router.get("/providers", response_model=list[ProviderInfo])
+async def get_providers() -> list[ProviderInfo]:
+    """Return known provider metadata with credential field defs.
+
+    Builds the list from :data:`KNOWN_PMS_TYPES` and checks the
+    provider registry so the response reflects actual availability.
+
+    Returns:
+        List of ProviderInfo objects for dynamic form rendering.
+    """
+    providers: list[ProviderInfo] = []
+    for pms_type in sorted(KNOWN_PMS_TYPES):
+        try:
+            cls = get_provider_class(pms_type)
+            providers.append(
+                ProviderInfo(
+                    pms_type=pms_type,
+                    provider_class=cls.__name__,
+                    registered=True,
+                    credential_fields=_CREDENTIAL_FIELDS.get(pms_type, []),
+                )
+            )
+        except ValueError:
+            providers.append(
+                ProviderInfo(
+                    pms_type=pms_type,
+                    provider_class=None,
+                    registered=False,
+                    credential_fields=_CREDENTIAL_FIELDS.get(pms_type, []),
+                )
+            )
+    return providers
