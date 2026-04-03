@@ -71,7 +71,7 @@ class TestGetCustomFields:
     async def test_get_empty_fields(self, fields_app, fields_session):
         """Test getting custom fields when none exist."""
         listing = Listing(
-            cloudbeds_id="PROP1",
+            pms_id="PROP1",
             name="Test Property",
             ical_url_slug="test-property",
             enabled=True,
@@ -98,7 +98,7 @@ class TestGetCustomFields:
     async def test_get_existing_fields(self, fields_app, fields_session):
         """Test getting existing custom fields."""
         listing = Listing(
-            cloudbeds_id="PROP1",
+            pms_id="PROP1",
             name="Test Property",
             ical_url_slug="test-property",
             enabled=True,
@@ -153,7 +153,7 @@ class TestUpdateCustomFields:
     async def test_create_new_fields_builtin(self, fields_app, fields_session):
         """Test creating new built-in custom fields."""
         listing = Listing(
-            cloudbeds_id="PROP1",
+            pms_id="PROP1",
             name="Test Property",
             ical_url_slug="test-property",
             enabled=True,
@@ -196,7 +196,7 @@ class TestUpdateCustomFields:
         from src.models.available_field import AvailableField
 
         listing = Listing(
-            cloudbeds_id="PROP2",
+            pms_id="PROP2",
             name="Test Property 2",
             ical_url_slug="test-property-2",
             enabled=True,
@@ -263,7 +263,7 @@ class TestUpdateCustomFields:
     async def test_update_existing_fields(self, fields_app, fields_session):
         """Test updating existing custom fields."""
         listing = Listing(
-            cloudbeds_id="PROP1",
+            pms_id="PROP1",
             name="Test Property",
             ical_url_slug="test-property",
             enabled=True,
@@ -313,7 +313,7 @@ class TestUpdateCustomFields:
     ):
         """Test that invalid field names are rejected."""
         listing = Listing(
-            cloudbeds_id="PROP1",
+            pms_id="PROP1",
             name="Test Property",
             ical_url_slug="test-property",
             enabled=True,
@@ -367,7 +367,7 @@ class TestUpdateCustomFields:
     async def test_delete_field_by_omission(self, fields_app, fields_session):
         """Test that fields not in update request are deleted."""
         listing = Listing(
-            cloudbeds_id="PROP1",
+            pms_id="PROP1",
             name="Test Property",
             ical_url_slug="test-property",
             enabled=True,

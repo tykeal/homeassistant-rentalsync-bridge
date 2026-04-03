@@ -59,7 +59,7 @@ class TestGenerateUniqueSlug:
         """Test that collision detection adds random suffix."""
         # Create existing listing with slug
         existing = Listing(
-            cloudbeds_id="PROP1",
+            pms_id="PROP1",
             name="Beach House",
             ical_url_slug="beach-house",
             enabled=True,
@@ -80,7 +80,7 @@ class TestGenerateUniqueSlug:
     async def test_unique_slug_is_different_from_existing(self, repo_session):
         """Test generated slug is unique."""
         existing = Listing(
-            cloudbeds_id="PROP1",
+            pms_id="PROP1",
             name="Mountain Cabin",
             ical_url_slug="mountain-cabin",
             enabled=True,
@@ -114,21 +114,21 @@ class TestCountEnabled:
         """Test count with mixed enabled/disabled listings."""
         listings = [
             Listing(
-                cloudbeds_id="PROP1",
+                pms_id="PROP1",
                 name="Enabled 1",
                 ical_url_slug="enabled-1",
                 enabled=True,
                 sync_enabled=True,
             ),
             Listing(
-                cloudbeds_id="PROP2",
+                pms_id="PROP2",
                 name="Enabled 2",
                 ical_url_slug="enabled-2",
                 enabled=True,
                 sync_enabled=True,
             ),
             Listing(
-                cloudbeds_id="PROP3",
+                pms_id="PROP3",
                 name="Disabled",
                 ical_url_slug="disabled",
                 enabled=False,
@@ -152,21 +152,21 @@ class TestGetByIds:
         """Test bulk lookup returns requested listings."""
         listings = [
             Listing(
-                cloudbeds_id="BULK1",
+                pms_id="BULK1",
                 name="Bulk 1",
                 ical_url_slug="bulk-1",
                 enabled=True,
                 sync_enabled=True,
             ),
             Listing(
-                cloudbeds_id="BULK2",
+                pms_id="BULK2",
                 name="Bulk 2",
                 ical_url_slug="bulk-2",
                 enabled=False,
                 sync_enabled=False,
             ),
             Listing(
-                cloudbeds_id="BULK3",
+                pms_id="BULK3",
                 name="Bulk 3",
                 ical_url_slug="bulk-3",
                 enabled=True,

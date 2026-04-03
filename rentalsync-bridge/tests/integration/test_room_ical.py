@@ -80,7 +80,7 @@ async def ical_app(ical_engine) -> AsyncGenerator:
 async def listing_with_rooms(ical_session: AsyncSession) -> Listing:
     """Create a listing with multiple rooms for testing."""
     listing = Listing(
-        cloudbeds_id="test-property-123",
+        pms_id="test-property-123",
         name="Test Multi-Room Property",
         ical_url_slug="test-property",
         timezone="America/Los_Angeles",
@@ -97,7 +97,7 @@ async def room1(ical_session: AsyncSession, listing_with_rooms: Listing) -> Room
     """Create first test room."""
     room = Room(
         listing_id=listing_with_rooms.id,
-        cloudbeds_room_id="room-001",
+        pms_room_id="room-001",
         room_name="Ocean View Suite",
         room_type_name="Suite",
         ical_url_slug="ocean-view-suite",
@@ -114,7 +114,7 @@ async def room2(ical_session: AsyncSession, listing_with_rooms: Listing) -> Room
     """Create second test room."""
     room = Room(
         listing_id=listing_with_rooms.id,
-        cloudbeds_room_id="room-002",
+        pms_room_id="room-002",
         room_name="Mountain View Deluxe",
         room_type_name="Deluxe",
         ical_url_slug="mountain-view-deluxe",
@@ -137,7 +137,7 @@ async def bookings_for_rooms(
         Booking(
             listing_id=listing_with_rooms.id,
             room_id=room1.id,
-            cloudbeds_booking_id="booking-room1-1",
+            pms_booking_id="booking-room1-1",
             guest_name="Alice Johnson",
             guest_phone_last4="1234",
             check_in_date=now + timedelta(days=1),
@@ -147,7 +147,7 @@ async def bookings_for_rooms(
         Booking(
             listing_id=listing_with_rooms.id,
             room_id=room1.id,
-            cloudbeds_booking_id="booking-room1-2",
+            pms_booking_id="booking-room1-2",
             guest_name="Bob Smith",
             guest_phone_last4="5678",
             check_in_date=now + timedelta(days=10),
@@ -158,7 +158,7 @@ async def bookings_for_rooms(
         Booking(
             listing_id=listing_with_rooms.id,
             room_id=room2.id,
-            cloudbeds_booking_id="booking-room2-1",
+            pms_booking_id="booking-room2-1",
             guest_name="Charlie Brown",
             guest_phone_last4="9012",
             check_in_date=now + timedelta(days=3),
@@ -255,7 +255,7 @@ class TestRoomICalEndpoint:
         # Create a room with no bookings
         empty_room = Room(
             listing_id=listing_with_rooms.id,
-            cloudbeds_room_id="room-empty",
+            pms_room_id="room-empty",
             room_name="Empty Room",
             ical_url_slug="empty-room",
             enabled=True,
@@ -321,7 +321,7 @@ class TestRoomICalEndpoint:
         # Create a disabled room
         disabled_room = Room(
             listing_id=listing_with_rooms.id,
-            cloudbeds_room_id="room-disabled",
+            pms_room_id="room-disabled",
             room_name="Disabled Room",
             ical_url_slug="disabled-room",
             enabled=False,
@@ -349,7 +349,7 @@ class TestRoomICalEndpoint:
         """Test 404 error for room in disabled listing."""
         # Create a disabled listing with a room
         disabled_listing = Listing(
-            cloudbeds_id="disabled-property",
+            pms_id="disabled-property",
             name="Disabled Property",
             ical_url_slug="disabled-property",
             timezone="America/Los_Angeles",
@@ -361,7 +361,7 @@ class TestRoomICalEndpoint:
 
         room = Room(
             listing_id=disabled_listing.id,
-            cloudbeds_room_id="room-in-disabled",
+            pms_room_id="room-in-disabled",
             room_name="Room in Disabled Listing",
             ical_url_slug="room-in-disabled",
             enabled=True,

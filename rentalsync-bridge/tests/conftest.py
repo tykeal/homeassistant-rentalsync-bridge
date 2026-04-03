@@ -110,7 +110,7 @@ async def client(app: FastAPI) -> AsyncGenerator[AsyncClient]:
 def sample_listing_data() -> dict[str, Any]:
     """Sample listing data for tests."""
     return {
-        "cloudbeds_id": "test_property_123",
+        "pms_id": "test_property_123",
         "name": "Test Property",
         "enabled": True,
         "ical_url_slug": "test-property-123",
@@ -123,7 +123,7 @@ def sample_listing_data() -> dict[str, Any]:
 def sample_booking_data() -> dict[str, Any]:
     """Sample booking data for tests."""
     return {
-        "cloudbeds_booking_id": "booking_456",
+        "pms_booking_id": "booking_456",
         "guest_name": "John Smith",
         "check_in_date": "2026-02-01",
         "check_out_date": "2026-02-05",

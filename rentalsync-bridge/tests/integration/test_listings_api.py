@@ -86,14 +86,14 @@ class TestListListings:
     async def test_list_with_listings(self, listings_app, listings_session):
         """Test listing with properties."""
         listing1 = Listing(
-            cloudbeds_id="PROP1",
+            pms_id="PROP1",
             name="Beach House",
             ical_url_slug="beach-house",
             enabled=True,
             sync_enabled=True,
         )
         listing2 = Listing(
-            cloudbeds_id="PROP2",
+            pms_id="PROP2",
             name="Mountain Cabin",
             ical_url_slug="mountain-cabin",
             enabled=False,
@@ -123,7 +123,7 @@ class TestGetListing:
     async def test_get_existing(self, listings_app, listings_session):
         """Test getting existing listing."""
         listing = Listing(
-            cloudbeds_id="PROP1",
+            pms_id="PROP1",
             name="Test Property",
             ical_url_slug="test-property",
             enabled=True,
@@ -144,7 +144,7 @@ class TestGetListing:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["cloudbeds_id"] == "PROP1"
+        assert data["pms_id"] == "PROP1"
         assert data["name"] == "Test Property"
         assert data["timezone"] == "America/New_York"
 
@@ -157,7 +157,7 @@ class TestGetListing:
 
         sync_time = datetime(2024, 1, 15, 10, 30, 0)
         listing = Listing(
-            cloudbeds_id="SYNC_STATUS",
+            pms_id="SYNC_STATUS",
             name="Sync Status Test",
             ical_url_slug="sync-status-test",
             enabled=True,
@@ -203,7 +203,7 @@ class TestEnableListing:
     async def test_enable_listing(self, listings_app, listings_session):
         """Test enabling a listing."""
         listing = Listing(
-            cloudbeds_id="PROP1",
+            pms_id="PROP1",
             name="Test Property",
             ical_url_slug="test-property-slug",
             enabled=False,
@@ -246,7 +246,7 @@ class TestEnableListing:
         # Create 50 enabled listings (the maximum)
         for i in range(50):
             listing = Listing(
-                cloudbeds_id=f"PROP{i}",
+                pms_id=f"PROP{i}",
                 name=f"Property {i}",
                 ical_url_slug=f"property-{i}",
                 enabled=True,
@@ -257,7 +257,7 @@ class TestEnableListing:
 
         # Create one more disabled listing
         new_listing = Listing(
-            cloudbeds_id="PROP_NEW",
+            pms_id="PROP_NEW",
             name="New Property",
             ical_url_slug="new-property",
             enabled=False,
@@ -287,7 +287,7 @@ class TestUpdateListing:
     async def test_update_listing(self, listings_app, listings_session):
         """Test updating a listing."""
         listing = Listing(
-            cloudbeds_id="PROP1",
+            pms_id="PROP1",
             name="Old Name",
             ical_url_slug="old-slug",
             enabled=False,
@@ -334,14 +334,14 @@ class TestUpdateListing:
     async def test_update_duplicate_slug(self, listings_app, listings_session):
         """Test updating with duplicate slug fails."""
         listing1 = Listing(
-            cloudbeds_id="PROP1",
+            pms_id="PROP1",
             name="Property 1",
             ical_url_slug="slug-one",
             enabled=True,
             sync_enabled=True,
         )
         listing2 = Listing(
-            cloudbeds_id="PROP2",
+            pms_id="PROP2",
             name="Property 2",
             ical_url_slug="slug-two",
             enabled=True,
@@ -377,7 +377,7 @@ class TestListingsDisplayForAdminUI:
         """
         # Create mix of enabled and disabled listings
         listing1 = Listing(
-            cloudbeds_id="PROP_A",
+            pms_id="PROP_A",
             name="Enabled Property A",
             ical_url_slug="enabled-a",
             enabled=True,
@@ -385,14 +385,14 @@ class TestListingsDisplayForAdminUI:
             timezone="America/New_York",
         )
         listing2 = Listing(
-            cloudbeds_id="PROP_B",
+            pms_id="PROP_B",
             name="Disabled Property B",
             ical_url_slug="disabled-b",  # Required even when disabled
             enabled=False,
             sync_enabled=False,
         )
         listing3 = Listing(
-            cloudbeds_id="PROP_C",
+            pms_id="PROP_C",
             name="Enabled Property C",
             ical_url_slug="enabled-c",
             enabled=True,
@@ -418,17 +418,13 @@ class TestListingsDisplayForAdminUI:
         assert len(data["listings"]) == 3
 
         # Verify each listing has enabled state for toggle display
-        enabled_states = {
-            item["cloudbeds_id"]: item["enabled"] for item in data["listings"]
-        }
+        enabled_states = {item["pms_id"]: item["enabled"] for item in data["listings"]}
         assert enabled_states["PROP_A"] is True
         assert enabled_states["PROP_B"] is False
         assert enabled_states["PROP_C"] is True
 
         # Verify iCal URLs are present for enabled listings
-        urls = {
-            item["cloudbeds_id"]: item.get("ical_url_slug") for item in data["listings"]
-        }
+        urls = {item["pms_id"]: item.get("ical_url_slug") for item in data["listings"]}
         assert urls["PROP_A"] == "enabled-a"
         assert urls["PROP_B"] == "disabled-b"  # Has slug but not enabled
         assert urls["PROP_C"] == "enabled-c"
@@ -442,14 +438,14 @@ class TestBulkListingOperations:
         """Test bulk enabling multiple listings."""
         # Create disabled listings
         listing1 = Listing(
-            cloudbeds_id="BULK1",
+            pms_id="BULK1",
             name="Bulk Property 1",
             ical_url_slug="bulk-1",
             enabled=False,
             sync_enabled=False,
         )
         listing2 = Listing(
-            cloudbeds_id="BULK2",
+            pms_id="BULK2",
             name="Bulk Property 2",
             ical_url_slug="bulk-2",
             enabled=False,
@@ -482,14 +478,14 @@ class TestBulkListingOperations:
         """Test bulk disabling multiple listings."""
         # Create enabled listings
         listing1 = Listing(
-            cloudbeds_id="BULKD1",
+            pms_id="BULKD1",
             name="Bulk Disable 1",
             ical_url_slug="bulk-dis-1",
             enabled=True,
             sync_enabled=True,
         )
         listing2 = Listing(
-            cloudbeds_id="BULKD2",
+            pms_id="BULKD2",
             name="Bulk Disable 2",
             ical_url_slug="bulk-dis-2",
             enabled=True,
@@ -521,7 +517,7 @@ class TestBulkListingOperations:
     async def test_bulk_with_nonexistent_listings(self, listings_app, listings_session):
         """Test bulk operation with some nonexistent listings."""
         listing = Listing(
-            cloudbeds_id="BULKEX",
+            pms_id="BULKEX",
             name="Existing Property",
             ical_url_slug="bulk-exist",
             enabled=False,
@@ -556,7 +552,7 @@ class TestBulkListingOperations:
         # Create MAX_LISTINGS enabled listings
         for i in range(MAX_LISTINGS):
             listing = Listing(
-                cloudbeds_id=f"MAX{i}",
+                pms_id=f"MAX{i}",
                 name=f"Max Property {i}",
                 ical_url_slug=f"max-{i}",
                 enabled=True,
@@ -567,7 +563,7 @@ class TestBulkListingOperations:
 
         # Create one more disabled listing
         new_listing = Listing(
-            cloudbeds_id="OVER_MAX",
+            pms_id="OVER_MAX",
             name="Over Max Property",
             ical_url_slug="over-max",
             enabled=False,
@@ -615,7 +611,7 @@ class TestManualSync:
     async def test_sync_listing_no_credentials(self, listings_app, listings_session):
         """Test sync returns 503 when Cloudbeds credentials not configured."""
         listing = Listing(
-            cloudbeds_id="SYNC1",
+            pms_id="SYNC1",
             name="Sync Test Property",
             ical_url_slug="sync-test",
             enabled=True,
@@ -658,7 +654,7 @@ class TestGetListingBookings:
     async def test_get_bookings_empty(self, listings_app, listings_session):
         """Test returns empty list when no bookings exist."""
         listing = Listing(
-            cloudbeds_id="NOBOOKINGS",
+            pms_id="NOBOOKINGS",
             name="No Bookings Property",
             ical_url_slug="no-bookings",
             enabled=True,
@@ -687,7 +683,7 @@ class TestGetListingBookings:
         from datetime import datetime
 
         listing = Listing(
-            cloudbeds_id="WITHBOOKINGS",
+            pms_id="WITHBOOKINGS",
             name="With Bookings Property",
             ical_url_slug="with-bookings",
             enabled=True,
@@ -699,7 +695,7 @@ class TestGetListingBookings:
 
         booking1 = Booking(
             listing_id=listing.id,
-            cloudbeds_booking_id="RES001",
+            pms_booking_id="RES001",
             guest_name="John Doe",
             guest_phone_last4="1234",
             check_in_date=datetime(2024, 3, 1),
@@ -708,7 +704,7 @@ class TestGetListingBookings:
         )
         booking2 = Booking(
             listing_id=listing.id,
-            cloudbeds_booking_id="RES002",
+            pms_booking_id="RES002",
             guest_name="Jane Smith",
             guest_phone_last4="5678",
             check_in_date=datetime(2024, 3, 10),
@@ -731,8 +727,8 @@ class TestGetListingBookings:
         assert data["total"] == 2
         assert len(data["bookings"]) == 2
         # Verify ordering by check_in_date
-        assert data["bookings"][0]["cloudbeds_booking_id"] == "RES001"
-        assert data["bookings"][1]["cloudbeds_booking_id"] == "RES002"
+        assert data["bookings"][0]["pms_booking_id"] == "RES001"
+        assert data["bookings"][1]["pms_booking_id"] == "RES002"
         # Verify fields
         assert data["bookings"][0]["guest_name"] == "John Doe"
         assert data["bookings"][0]["guest_phone_last4"] == "1234"

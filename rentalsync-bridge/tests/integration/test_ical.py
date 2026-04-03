@@ -87,7 +87,7 @@ async def test_get_ical_success(test_app, test_session):
     """Test successful iCal feed retrieval for room."""
     # Create test listing
     listing = Listing(
-        cloudbeds_id="test_prop",
+        pms_id="test_prop",
         name="Test Property",
         ical_url_slug="test-property-ical",
         enabled=True,
@@ -101,7 +101,7 @@ async def test_get_ical_success(test_app, test_session):
     # Create test room
     room = Room(
         listing_id=listing.id,
-        cloudbeds_room_id="room-001",
+        pms_room_id="room-001",
         room_name="Test Room",
         ical_url_slug="test-room",
         enabled=True,
@@ -115,7 +115,7 @@ async def test_get_ical_success(test_app, test_session):
     booking = Booking(
         listing_id=listing.id,
         room_id=room.id,
-        cloudbeds_booking_id="BK12345",
+        pms_booking_id="BK12345",
         guest_name="Test Guest",
         guest_phone_last4="5678",
         check_in_date=now + timedelta(days=1),
@@ -144,7 +144,7 @@ async def test_get_ical_not_found(test_app, test_session):
     """Test 404 for unknown room slug."""
     # Create listing but no room
     listing = Listing(
-        cloudbeds_id="test_prop_404",
+        pms_id="test_prop_404",
         name="Test Property 404",
         ical_url_slug="test-property-404",
         enabled=True,
@@ -170,7 +170,7 @@ async def test_get_ical_disabled_listing(test_app, test_session):
     """Test 404 for room in disabled listing."""
     # Create disabled listing
     listing = Listing(
-        cloudbeds_id="disabled_prop",
+        pms_id="disabled_prop",
         name="Disabled Property",
         ical_url_slug="disabled-property",
         enabled=False,
@@ -183,7 +183,7 @@ async def test_get_ical_disabled_listing(test_app, test_session):
     # Create room in disabled listing
     room = Room(
         listing_id=listing.id,
-        cloudbeds_room_id="room-disabled-listing",
+        pms_room_id="room-disabled-listing",
         room_name="Room in Disabled Listing",
         ical_url_slug="room-disabled-listing",
         enabled=True,
@@ -207,7 +207,7 @@ async def test_get_ical_with_custom_fields(test_app, test_session):
     """Test iCal with custom fields."""
     # Create listing
     listing = Listing(
-        cloudbeds_id="custom_prop",
+        pms_id="custom_prop",
         name="Custom Property",
         ical_url_slug="custom-property-test",
         enabled=True,
@@ -220,7 +220,7 @@ async def test_get_ical_with_custom_fields(test_app, test_session):
     # Create room
     room = Room(
         listing_id=listing.id,
-        cloudbeds_room_id="room-custom",
+        pms_room_id="room-custom",
         room_name="Custom Room",
         ical_url_slug="custom-room",
         enabled=True,
@@ -244,7 +244,7 @@ async def test_get_ical_with_custom_fields(test_app, test_session):
     booking = Booking(
         listing_id=listing.id,
         room_id=room.id,
-        cloudbeds_booking_id="BK99999",
+        pms_booking_id="BK99999",
         guest_name="VIP Guest",
         check_in_date=now + timedelta(days=10),
         check_out_date=now + timedelta(days=12),
@@ -271,7 +271,7 @@ async def test_get_ical_with_custom_fields(test_app, test_session):
 async def test_get_ical_content_disposition_header(test_app, test_session):
     """Test Content-Disposition header is set correctly."""
     listing = Listing(
-        cloudbeds_id="header_prop",
+        pms_id="header_prop",
         name="Header Test Property",
         ical_url_slug="header-test",
         enabled=True,
@@ -283,7 +283,7 @@ async def test_get_ical_content_disposition_header(test_app, test_session):
 
     room = Room(
         listing_id=listing.id,
-        cloudbeds_room_id="room-header",
+        pms_room_id="room-header",
         room_name="Header Room",
         ical_url_slug="header-room",
         enabled=True,
@@ -309,7 +309,7 @@ async def test_get_ical_content_disposition_header(test_app, test_session):
 async def test_get_ical_empty_bookings(test_app, test_session):
     """Test iCal with no bookings."""
     listing = Listing(
-        cloudbeds_id="empty_prop",
+        pms_id="empty_prop",
         name="Empty Property",
         ical_url_slug="empty-property",
         enabled=True,
@@ -321,7 +321,7 @@ async def test_get_ical_empty_bookings(test_app, test_session):
 
     room = Room(
         listing_id=listing.id,
-        cloudbeds_room_id="room-empty",
+        pms_room_id="room-empty",
         room_name="Empty Room",
         ical_url_slug="empty-room",
         enabled=True,
@@ -348,7 +348,7 @@ async def test_per_room_ical_uses_independent_custom_fields(test_app, test_sessi
     """Test that each listing's rooms use their own custom field configuration."""
     # Create two listings
     listing1 = Listing(
-        cloudbeds_id="prop_001",
+        pms_id="prop_001",
         name="Beach House",
         ical_url_slug="beach-house-ical",
         enabled=True,
@@ -356,7 +356,7 @@ async def test_per_room_ical_uses_independent_custom_fields(test_app, test_sessi
         timezone="America/Los_Angeles",
     )
     listing2 = Listing(
-        cloudbeds_id="prop_002",
+        pms_id="prop_002",
         name="Mountain Cabin",
         ical_url_slug="mountain-cabin-ical",
         enabled=True,
@@ -371,14 +371,14 @@ async def test_per_room_ical_uses_independent_custom_fields(test_app, test_sessi
     # Create rooms for each listing
     room1 = Room(
         listing_id=listing1.id,
-        cloudbeds_room_id="beach-room-1",
+        pms_room_id="beach-room-1",
         room_name="Beach Room 1",
         ical_url_slug="beach-room-1",
         enabled=True,
     )
     room2 = Room(
         listing_id=listing2.id,
-        cloudbeds_room_id="mountain-room-1",
+        pms_room_id="mountain-room-1",
         room_name="Mountain Room 1",
         ical_url_slug="mountain-room-1",
         enabled=True,
@@ -410,7 +410,7 @@ async def test_per_room_ical_uses_independent_custom_fields(test_app, test_sessi
     booking1 = Booking(
         listing_id=listing1.id,
         room_id=room1.id,
-        cloudbeds_booking_id="CB001",
+        pms_booking_id="CB001",
         guest_name="Beach Guest",
         check_in_date=now + timedelta(days=30),
         check_out_date=now + timedelta(days=34),
@@ -420,7 +420,7 @@ async def test_per_room_ical_uses_independent_custom_fields(test_app, test_sessi
     booking2 = Booking(
         listing_id=listing2.id,
         room_id=room2.id,
-        cloudbeds_booking_id="CB002",
+        pms_booking_id="CB002",
         guest_name="Mountain Guest",
         check_in_date=now + timedelta(days=60),
         check_out_date=now + timedelta(days=64),

@@ -33,7 +33,7 @@ def mock_listing() -> Listing:
     """Create a mock listing."""
     return Listing(
         id=1,
-        cloudbeds_id="PROP123",
+        pms_id="PROP123",
         name="Test Property",
         ical_url_slug="test-property",
         enabled=True,
@@ -200,7 +200,7 @@ class TestUpdateCustomFieldsCacheInvalidation:
         # Create listing with ical_url_slug
         listing = Listing(
             id=1,
-            cloudbeds_id="PROP123",
+            pms_id="PROP123",
             name="Test Property",
             ical_url_slug="test-property",
             enabled=True,
@@ -271,7 +271,7 @@ class TestUpdateCustomFieldsCacheInvalidation:
         # Create listing without ical_url_slug
         listing = Listing(
             id=1,
-            cloudbeds_id="PROP123",
+            pms_id="PROP123",
             name="Test Property",
             ical_url_slug=None,  # No slug
             enabled=True,

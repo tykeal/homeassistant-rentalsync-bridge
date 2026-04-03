@@ -150,7 +150,7 @@ class TestSyncPropertiesWithRooms:
         """Test that sync updates existing room data."""
         # Create existing listing and room
         listing = Listing(
-            cloudbeds_id="PROP123",
+            pms_id="PROP123",
             name="Beach House",
             ical_url_slug="beach-house",
             enabled=True,
@@ -162,7 +162,7 @@ class TestSyncPropertiesWithRooms:
 
         existing_room = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="ROOM001",
+            pms_room_id="ROOM001",
             room_name="Old Name",
             room_type_name="Old Type",
             ical_url_slug="old-name",
@@ -269,7 +269,7 @@ class TestSyncPropertiesWithRooms:
         """Test that sync preserves user's enabled/disabled setting."""
         # Create existing listing and disabled room
         listing = Listing(
-            cloudbeds_id="PROP123",
+            pms_id="PROP123",
             name="Beach House",
             ical_url_slug="beach-house",
             enabled=True,
@@ -281,7 +281,7 @@ class TestSyncPropertiesWithRooms:
 
         disabled_room = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="ROOM001",
+            pms_room_id="ROOM001",
             room_name="Room 1",
             ical_url_slug="room-1",
             enabled=False,  # User disabled this room

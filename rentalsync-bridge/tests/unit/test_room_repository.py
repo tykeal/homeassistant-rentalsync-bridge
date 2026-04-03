@@ -15,7 +15,7 @@ class TestRoomRepositoryGetByListingId:
         from src.repositories.room_repository import RoomRepository
 
         listing = Listing(
-            cloudbeds_id="rooms_listing_test",
+            pms_id="rooms_listing_test",
             name="Rooms Listing Test",
             ical_url_slug="rooms-listing-test",
             enabled=True,
@@ -27,14 +27,14 @@ class TestRoomRepositoryGetByListingId:
 
         room1 = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="room_1",
+            pms_room_id="room_1",
             room_name="Room 1",
             ical_url_slug="room-1",
             enabled=True,
         )
         room2 = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="room_2",
+            pms_room_id="room_2",
             room_name="Room 2",
             ical_url_slug="room-2",
             enabled=True,
@@ -56,7 +56,7 @@ class TestRoomRepositoryGetByListingId:
         from src.repositories.room_repository import RoomRepository
 
         listing = Listing(
-            cloudbeds_id="empty_rooms_test",
+            pms_id="empty_rooms_test",
             name="Empty Rooms Test",
             ical_url_slug="empty-rooms-test",
             enabled=True,
@@ -81,7 +81,7 @@ class TestRoomRepositoryGetById:
         from src.repositories.room_repository import RoomRepository
 
         listing = Listing(
-            cloudbeds_id="room_by_id_test",
+            pms_id="room_by_id_test",
             name="Room By ID Test",
             ical_url_slug="room-by-id-test",
             enabled=True,
@@ -93,7 +93,7 @@ class TestRoomRepositoryGetById:
 
         room = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="room_by_id",
+            pms_room_id="room_by_id",
             room_name="Room By ID",
             ical_url_slug="room-by-id",
             enabled=True,
@@ -128,7 +128,7 @@ class TestRoomRepositoryGetBySlug:
         from src.repositories.room_repository import RoomRepository
 
         listing = Listing(
-            cloudbeds_id="room_slug_test",
+            pms_id="room_slug_test",
             name="Room Slug Test",
             ical_url_slug="room-slug-test",
             enabled=True,
@@ -140,7 +140,7 @@ class TestRoomRepositoryGetBySlug:
 
         room = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="room_slug",
+            pms_room_id="room_slug",
             room_name="Room Slug",
             ical_url_slug="the-room-slug",
             enabled=True,
@@ -161,7 +161,7 @@ class TestRoomRepositoryGetBySlug:
         from src.repositories.room_repository import RoomRepository
 
         listing = Listing(
-            cloudbeds_id="no_room_slug_test",
+            pms_id="no_room_slug_test",
             name="No Room Slug Test",
             ical_url_slug="no-room-slug-test",
             enabled=True,
@@ -182,7 +182,7 @@ class TestRoomRepositoryGetBySlug:
         from src.repositories.room_repository import RoomRepository
 
         listing = Listing(
-            cloudbeds_id="wrong_listing_test",
+            pms_id="wrong_listing_test",
             name="Wrong Listing Test",
             ical_url_slug="wrong-listing-test",
             enabled=True,
@@ -194,7 +194,7 @@ class TestRoomRepositoryGetBySlug:
 
         room = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="room_wrong",
+            pms_room_id="room_wrong",
             room_name="Room Wrong",
             ical_url_slug="room-wrong",
             enabled=True,
@@ -217,7 +217,7 @@ class TestRoomRepositoryUpsert:
         from src.repositories.room_repository import RoomRepository
 
         listing = Listing(
-            cloudbeds_id="upsert_create_test",
+            pms_id="upsert_create_test",
             name="Upsert Create Test",
             ical_url_slug="upsert-create-test",
             enabled=True,
@@ -230,13 +230,13 @@ class TestRoomRepositoryUpsert:
         repo = RoomRepository(async_session)
         room = await repo.upsert_room(
             listing_id=listing.id,
-            cloudbeds_room_id="new_room",
+            pms_room_id="new_room",
             room_name="New Room",
             room_type_name="Standard",
         )
 
         assert room.id is not None
-        assert room.cloudbeds_room_id == "new_room"
+        assert room.pms_room_id == "new_room"
         assert room.room_name == "New Room"
         assert room.room_type_name == "Standard"
         assert room.enabled is True
@@ -248,7 +248,7 @@ class TestRoomRepositoryUpsert:
         from src.repositories.room_repository import RoomRepository
 
         listing = Listing(
-            cloudbeds_id="upsert_update_test",
+            pms_id="upsert_update_test",
             name="Upsert Update Test",
             ical_url_slug="upsert-update-test",
             enabled=True,
@@ -260,7 +260,7 @@ class TestRoomRepositoryUpsert:
 
         existing_room = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="existing_room",
+            pms_room_id="existing_room",
             room_name="Old Name",
             room_type_name="Old Type",
             ical_url_slug="old-slug",
@@ -272,7 +272,7 @@ class TestRoomRepositoryUpsert:
         repo = RoomRepository(async_session)
         room = await repo.upsert_room(
             listing_id=listing.id,
-            cloudbeds_room_id="existing_room",
+            pms_room_id="existing_room",
             room_name="New Name",
             room_type_name="New Type",
         )
@@ -293,7 +293,7 @@ class TestRoomRepositoryToggleEnabled:
         from src.repositories.room_repository import RoomRepository
 
         listing = Listing(
-            cloudbeds_id="toggle_test",
+            pms_id="toggle_test",
             name="Toggle Test",
             ical_url_slug="toggle-test",
             enabled=True,
@@ -305,7 +305,7 @@ class TestRoomRepositoryToggleEnabled:
 
         room = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="toggle_room",
+            pms_room_id="toggle_room",
             room_name="Toggle Room",
             ical_url_slug="toggle-room",
             enabled=True,
@@ -345,7 +345,7 @@ class TestRoomRepositoryUpdateSlug:
         from src.repositories.room_repository import RoomRepository
 
         listing = Listing(
-            cloudbeds_id="slug_update_test",
+            pms_id="slug_update_test",
             name="Slug Update Test",
             ical_url_slug="slug-update-test",
             enabled=True,
@@ -357,7 +357,7 @@ class TestRoomRepositoryUpdateSlug:
 
         room = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="slug_room",
+            pms_room_id="slug_room",
             room_name="Slug Room",
             ical_url_slug="old-room-slug",
             enabled=True,
@@ -436,7 +436,7 @@ class TestRoomRepositoryGetEnabledByListingId:
         from src.repositories.room_repository import RoomRepository
 
         listing = Listing(
-            cloudbeds_id="enabled_rooms_test",
+            pms_id="enabled_rooms_test",
             name="Enabled Rooms Test",
             ical_url_slug="enabled-rooms-test",
             enabled=True,
@@ -448,14 +448,14 @@ class TestRoomRepositoryGetEnabledByListingId:
 
         enabled_room = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="enabled_room",
+            pms_room_id="enabled_room",
             room_name="Enabled Room",
             ical_url_slug="enabled-room",
             enabled=True,
         )
         disabled_room = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="disabled_room",
+            pms_room_id="disabled_room",
             room_name="Disabled Room",
             ical_url_slug="disabled-room",
             enabled=False,
