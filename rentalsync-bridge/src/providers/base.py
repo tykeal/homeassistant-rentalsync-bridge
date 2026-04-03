@@ -203,7 +203,7 @@ class PMSProvider(ABC):
             Normalized guest data, or None if guest not found.
 
         Raises:
-            PMSProviderError: If API communication fails (except 404).
+            PMSProviderError: If all underlying lookups fail.
         """
         ...
 
@@ -218,7 +218,7 @@ class PMSProvider(ABC):
             Dictionary of field_id → value mappings.
 
         Raises:
-            PMSProviderError: If API communication fails.
+            PMSProviderError: If all underlying lookups fail.
         """
         ...
 

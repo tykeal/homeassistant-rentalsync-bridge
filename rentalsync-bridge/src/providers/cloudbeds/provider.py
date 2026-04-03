@@ -227,9 +227,13 @@ class CloudbedsProvider(PMSProvider):
         now = datetime.now(UTC)
 
         for prop in properties:
+            prop_id = prop.get("propertyID", "")
+            if not prop_id:
+                logger.warning("Skipping property with blank ID in get_guest")
+                continue
             try:
                 reservations = await self._service.get_reservations(
-                    property_id=prop["propertyID"],
+                    property_id=prop_id,
                     start_date=now - timedelta(days=365),
                     end_date=now + timedelta(days=365),
                 )
@@ -238,7 +242,7 @@ class CloudbedsProvider(PMSProvider):
                 last_error = exc
                 logger.warning(
                     "Failed to fetch reservations for property %s: %s",
-                    prop.get("propertyID", "unknown"),
+                    prop_id,
                     exc,
                 )
                 continue
@@ -247,7 +251,7 @@ class CloudbedsProvider(PMSProvider):
                 last_error = exc
                 logger.warning(
                     "Unexpected error fetching reservations for property %s: %s",
-                    prop.get("propertyID", "unknown"),
+                    prop_id,
                     exc,
                 )
                 continue
@@ -307,16 +311,20 @@ class CloudbedsProvider(PMSProvider):
         properties_failed = 0
 
         for prop in properties:
+            prop_id = prop.get("propertyID", "")
+            if not prop_id:
+                logger.warning("Skipping property with blank ID in get_custom_fields")
+                continue
             try:
                 reservations = await self._service.get_reservations(
-                    property_id=prop["propertyID"],
+                    property_id=prop_id,
                 )
             except CloudbedsServiceError as exc:
                 properties_failed += 1
                 last_error = exc
                 logger.warning(
                     "Failed to fetch reservations for property %s: %s",
-                    prop.get("propertyID", "unknown"),
+                    prop_id,
                     exc,
                 )
                 continue
@@ -325,7 +333,7 @@ class CloudbedsProvider(PMSProvider):
                 last_error = exc
                 logger.warning(
                     "Unexpected error fetching reservations for property %s: %s",
-                    prop.get("propertyID", "unknown"),
+                    prop_id,
                     exc,
                 )
                 continue
