@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from src.models.oauth_credential import OAuthCredential
 from src.providers.base import (
+    PMSAuthenticationError,
     PMSConnectionError,
     PMSGuest,
     PMSListing,
@@ -331,23 +332,10 @@ class TestRefreshToken:
     """Tests for CloudbedsProvider.refresh_token."""
 
     @pytest.mark.asyncio
-    async def test_delegates_to_service(self, provider, mock_service):
-        """Test that refresh_token delegates to the underlying service."""
+    async def test_raises_auth_error(self, provider, mock_service):
+        """Test that refresh_token raises PMSAuthenticationError directly."""
         mock_credential = MagicMock(spec=OAuthCredential)
-        result = await provider.refresh_token(credential=mock_credential)
-
-        assert result.access_token == "new_tok"
-        assert result.refresh_token == "new_ref"
-        assert result.expires_at == datetime(2026, 12, 31, tzinfo=UTC)
-
-    @pytest.mark.asyncio
-    async def test_service_error_raises_pms_error(self, provider, mock_service):
-        """Test that service errors in refresh_token raise PMSProviderError."""
-        mock_service.refresh_access_token = AsyncMock(
-            side_effect=CloudbedsServiceError("nope")
-        )
-        with pytest.raises(PMSProviderError):
-            mock_credential = MagicMock(spec=OAuthCredential)
+        with pytest.raises(PMSAuthenticationError, match="OAuthService"):
             await provider.refresh_token(credential=mock_credential)
 
 

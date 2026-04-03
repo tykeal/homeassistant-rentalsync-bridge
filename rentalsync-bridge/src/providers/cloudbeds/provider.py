@@ -277,40 +277,23 @@ class CloudbedsProvider(PMSProvider):
         self,
         credential: "OAuthCredential",  # noqa: ARG002
     ) -> TokenResult:
-        """Refresh the OAuth token via CloudbedsService.
+        """Refresh the OAuth token.
 
-        Note:
-            Cloudbeds handles token refresh differently from other providers.
-            The underlying ``CloudbedsService.refresh_access_token()`` manages
-            the OAuth authorization-code flow internally.  Direct token refresh
-            via this method is not yet implemented — it currently delegates to
-            the service which may raise if the refresh flow has not been set up.
-            For production use, token refresh is handled by the existing
-            ``OAuthService`` outside the provider layer.
+        Cloudbeds uses a separate OAuth service flow for token
+        management.  This method is a no-op placeholder in the
+        provider layer; direct token refresh is handled by
+        ``OAuthService`` outside the provider abstraction.
 
         Args:
-            credential: Current credential record (unused; kept for
-                interface compatibility).
-
-        Returns:
-            TokenResult with new token data.
+            credential: Current credential record (unused; kept
+                for interface compatibility).
 
         Raises:
-            PMSProviderError: If refresh fails or is not supported.
+            PMSAuthenticationError: Always — direct refresh is
+                not supported for Cloudbeds providers.
         """
-        try:
-            (
-                access_token,
-                new_refresh,
-                expires_at,
-            ) = await self._service.refresh_access_token()
-        except CloudbedsServiceError as exc:
-            raise self._translate_error(exc) from exc
-
-        return TokenResult(
-            access_token=access_token,
-            refresh_token=new_refresh,
-            expires_at=expires_at,
+        raise PMSAuthenticationError(
+            "Cloudbeds token refresh is managed by OAuthService, not the provider layer"
         )
 
     async def test_connection(self) -> bool:
