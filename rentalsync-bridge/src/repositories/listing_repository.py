@@ -58,17 +58,17 @@ class ListingRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_by_cloudbeds_id(self, cloudbeds_id: str) -> Listing | None:
-        """Get listing by Cloudbeds property ID.
+    async def get_by_pms_id(self, pms_id: str) -> Listing | None:
+        """Get listing by PMS property ID.
 
         Args:
-            cloudbeds_id: Cloudbeds property identifier.
+            pms_id: PMS property identifier.
 
         Returns:
             Listing if found, None otherwise.
         """
         result = await self._session.execute(
-            select(Listing).where(Listing.cloudbeds_id == cloudbeds_id)
+            select(Listing).where(Listing.pms_id == pms_id)
         )
         return result.scalar_one_or_none()
 

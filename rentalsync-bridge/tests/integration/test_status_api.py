@@ -101,7 +101,7 @@ class TestSystemStatus:
 
         # Add enabled listing
         listing = Listing(
-            cloudbeds_id="PROP1",
+            pms_id="PROP1",
             name="Test Property",
             ical_url_slug="test-property",
             enabled=True,
@@ -114,7 +114,7 @@ class TestSystemStatus:
         # Add booking
         booking = Booking(
             listing_id=listing.id,
-            cloudbeds_booking_id="BK001",
+            pms_booking_id="BK001",
             guest_name="Test Guest",
             check_in_date=datetime.now(UTC),
             check_out_date=datetime.now(UTC) + timedelta(days=2),

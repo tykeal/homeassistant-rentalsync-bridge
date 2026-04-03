@@ -58,7 +58,7 @@ def sync_session_factory(sync_engine):
 def test_listing(sync_session):
     """Create test listing."""
     listing = Listing(
-        cloudbeds_id="PROP123",
+        pms_id="PROP123",
         name="Test Property",
         ical_url_slug="test-property",
         enabled=True,
@@ -84,7 +84,7 @@ class TestSyncService:
     async def test_sync_disabled_listing(self, sync_session, test_credential):
         """Test sync skips disabled listings."""
         listing = Listing(
-            cloudbeds_id="DISABLED",
+            pms_id="DISABLED",
             name="Disabled Listing",
             ical_url_slug="disabled",
             enabled=True,
@@ -153,7 +153,7 @@ class TestSyncService:
         # Create existing booking
         booking = Booking(
             listing_id=test_listing.id,
-            cloudbeds_booking_id="RES002",
+            pms_booking_id="RES002",
             guest_name="Old Name",
             check_in_date=datetime(2026, 3, 1, tzinfo=UTC),
             check_out_date=datetime(2026, 3, 5, tzinfo=UTC),
@@ -202,7 +202,7 @@ class TestSyncService:
         # Create existing booking that won't be in the sync
         booking = Booking(
             listing_id=test_listing.id,
-            cloudbeds_booking_id="RES_GONE",
+            pms_booking_id="RES_GONE",
             guest_name="Cancelled Guest",
             check_in_date=datetime(2026, 3, 1, tzinfo=UTC),
             check_out_date=datetime(2026, 3, 5, tzinfo=UTC),
@@ -416,7 +416,7 @@ class TestListingIsolation:
         """Test that syncing one listing doesn't affect bookings from other listings."""
         # Create two listings
         listing1 = Listing(
-            cloudbeds_id="PROP_A",
+            pms_id="PROP_A",
             name="Property A",
             ical_url_slug="property-a",
             enabled=True,
@@ -424,7 +424,7 @@ class TestListingIsolation:
             timezone="America/New_York",
         )
         listing2 = Listing(
-            cloudbeds_id="PROP_B",
+            pms_id="PROP_B",
             name="Property B",
             ical_url_slug="property-b",
             enabled=True,
@@ -439,7 +439,7 @@ class TestListingIsolation:
         # Create existing booking for listing2
         booking2 = Booking(
             listing_id=listing2.id,
-            cloudbeds_booking_id="RES_B001",
+            pms_booking_id="RES_B001",
             guest_name="Guest B",
             check_in_date=datetime(2026, 4, 1, tzinfo=UTC),
             check_out_date=datetime(2026, 4, 5, tzinfo=UTC),
@@ -478,14 +478,14 @@ class TestListingIsolation:
         """Test that sync only cancels bookings belonging to that listing."""
         # Create two listings
         listing1 = Listing(
-            cloudbeds_id="PROP_X",
+            pms_id="PROP_X",
             name="Property X",
             ical_url_slug="property-x",
             enabled=True,
             sync_enabled=True,
         )
         listing2 = Listing(
-            cloudbeds_id="PROP_Y",
+            pms_id="PROP_Y",
             name="Property Y",
             ical_url_slug="property-y",
             enabled=True,
@@ -499,7 +499,7 @@ class TestListingIsolation:
         # Create bookings for both listings
         booking1 = Booking(
             listing_id=listing1.id,
-            cloudbeds_booking_id="RES_X001",
+            pms_booking_id="RES_X001",
             guest_name="Guest X",
             check_in_date=datetime(2026, 5, 1, tzinfo=UTC),
             check_out_date=datetime(2026, 5, 5, tzinfo=UTC),
@@ -507,7 +507,7 @@ class TestListingIsolation:
         )
         booking2 = Booking(
             listing_id=listing2.id,
-            cloudbeds_booking_id="RES_Y001",
+            pms_booking_id="RES_Y001",
             guest_name="Guest Y",
             check_in_date=datetime(2026, 5, 10, tzinfo=UTC),
             check_out_date=datetime(2026, 5, 15, tzinfo=UTC),
@@ -548,7 +548,7 @@ class TestSyncStatusTracking:
     ):
         """Test that last_sync_at is updated on successful sync."""
         listing = Listing(
-            cloudbeds_id="SYNC_STATUS",
+            pms_id="SYNC_STATUS",
             name="Sync Status Test",
             ical_url_slug="sync-status",
             enabled=True,
@@ -586,7 +586,7 @@ class TestSyncStatusTracking:
     ):
         """Test that last_sync_error is cleared on successful sync."""
         listing = Listing(
-            cloudbeds_id="SYNC_ERROR_CLEAR",
+            pms_id="SYNC_ERROR_CLEAR",
             name="Sync Error Clear Test",
             ical_url_slug="sync-error-clear",
             enabled=True,
@@ -626,7 +626,7 @@ class TestSyncStatusTracking:
         from src.services.cloudbeds_service import CloudbedsServiceError
 
         listing = Listing(
-            cloudbeds_id="SYNC_ERROR",
+            pms_id="SYNC_ERROR",
             name="Sync Error Test",
             ical_url_slug="sync-error",
             enabled=True,
@@ -673,7 +673,7 @@ class TestBookingChangeDetection:
     ):
         """Test that sync returns accurate counts for all change types."""
         listing = Listing(
-            cloudbeds_id="CHANGE_DETECT",
+            pms_id="CHANGE_DETECT",
             name="Change Detection Test",
             ical_url_slug="change-detect",
             enabled=True,
@@ -686,7 +686,7 @@ class TestBookingChangeDetection:
         # Create existing booking that will be cancelled
         existing_booking = Booking(
             listing_id=listing.id,
-            cloudbeds_booking_id="EXISTING_001",
+            pms_booking_id="EXISTING_001",
             guest_name="Existing Guest",
             check_in_date=datetime(2026, 1, 1, tzinfo=UTC),
             check_out_date=datetime(2026, 1, 5, tzinfo=UTC),
@@ -735,7 +735,7 @@ class TestInvalidDateHandling:
     ):
         """Test that reservations with missing start date are skipped."""
         listing = Listing(
-            cloudbeds_id="INVALID_DATE",
+            pms_id="INVALID_DATE",
             name="Invalid Date Test",
             ical_url_slug="invalid-date",
             enabled=True,
@@ -784,7 +784,7 @@ class TestInvalidDateHandling:
     ):
         """Test that reservations with unparseable dates are skipped."""
         listing = Listing(
-            cloudbeds_id="UNPARSEABLE",
+            pms_id="UNPARSEABLE",
             name="Unparseable Date Test",
             ical_url_slug="unparseable-date",
             enabled=True,
@@ -833,7 +833,7 @@ class TestRoomAssociation:
 
         # Create listing with a room
         listing = Listing(
-            cloudbeds_id="ROOM_TEST",
+            pms_id="ROOM_TEST",
             name="Room Test Property",
             ical_url_slug="room-test",
             enabled=True,
@@ -845,7 +845,7 @@ class TestRoomAssociation:
 
         room = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="ROOM_123",
+            pms_room_id="ROOM_123",
             room_name="Suite 101",
             ical_url_slug="suite-101",
             enabled=True,
@@ -884,7 +884,7 @@ class TestRoomAssociation:
         from sqlalchemy import select
 
         stmt = select(Booking).where(
-            Booking.cloudbeds_booking_id == "RES_WITH_ROOM::ROOM_123"
+            Booking.pms_booking_id == "RES_WITH_ROOM::ROOM_123"
         )
         db_result = await sync_session.execute(stmt)
         booking = db_result.scalar_one()
@@ -895,7 +895,7 @@ class TestRoomAssociation:
     async def test_sync_booking_without_room_id(self, sync_session, test_credential):
         """Test that sync handles bookings without roomID."""
         listing = Listing(
-            cloudbeds_id="NO_ROOM_TEST",
+            pms_id="NO_ROOM_TEST",
             name="No Room Test",
             ical_url_slug="no-room-test",
             enabled=True,
@@ -934,7 +934,7 @@ class TestRoomAssociation:
         # Verify booking has no room_id
         from sqlalchemy import select
 
-        stmt = select(Booking).where(Booking.cloudbeds_booking_id == "RES_NO_ROOM")
+        stmt = select(Booking).where(Booking.pms_booking_id == "RES_NO_ROOM")
         db_result = await sync_session.execute(stmt)
         booking = db_result.scalar_one()
 
@@ -946,7 +946,7 @@ class TestRoomAssociation:
     ):
         """Test that sync handles bookings with unknown roomID."""
         listing = Listing(
-            cloudbeds_id="UNKNOWN_ROOM",
+            pms_id="UNKNOWN_ROOM",
             name="Unknown Room Test",
             ical_url_slug="unknown-room",
             enabled=True,
@@ -986,7 +986,7 @@ class TestRoomAssociation:
         from sqlalchemy import select
 
         stmt = select(Booking).where(
-            Booking.cloudbeds_booking_id == "RES_UNKNOWN_ROOM::NONEXISTENT_ROOM"
+            Booking.pms_booking_id == "RES_UNKNOWN_ROOM::NONEXISTENT_ROOM"
         )
         db_result = await sync_session.execute(stmt)
         booking = db_result.scalar_one()
@@ -1006,7 +1006,7 @@ class TestRoomAssociation:
 
         # Create listing with two rooms
         listing = Listing(
-            cloudbeds_id="ROOM_CHANGE_TEST",
+            pms_id="ROOM_CHANGE_TEST",
             name="Room Change Test",
             ical_url_slug="room-change-test",
             enabled=True,
@@ -1018,14 +1018,14 @@ class TestRoomAssociation:
 
         room1 = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="ROOM_A",
+            pms_room_id="ROOM_A",
             room_name="Room A",
             ical_url_slug="room-a",
             enabled=True,
         )
         room2 = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="ROOM_B",
+            pms_room_id="ROOM_B",
             room_name="Room B",
             ical_url_slug="room-b",
             enabled=True,
@@ -1039,7 +1039,7 @@ class TestRoomAssociation:
         existing_booking = Booking(
             listing_id=listing.id,
             room_id=room1.id,
-            cloudbeds_booking_id="RES_ROOM_CHANGE::ROOM_A",
+            pms_booking_id="RES_ROOM_CHANGE::ROOM_A",
             guest_name="Moving Guest",
             check_in_date=datetime(2026, 3, 1, tzinfo=UTC),
             check_out_date=datetime(2026, 3, 5, tzinfo=UTC),
@@ -1085,7 +1085,7 @@ class TestRoomAssociation:
         from sqlalchemy import select
 
         stmt = select(Booking).where(
-            Booking.cloudbeds_booking_id == "RES_ROOM_CHANGE::ROOM_B"
+            Booking.pms_booking_id == "RES_ROOM_CHANGE::ROOM_B"
         )
         db_result = await sync_session.execute(stmt)
         new_booking = db_result.scalar_one()
@@ -1100,7 +1100,7 @@ class TestRoomAssociation:
 
         # Create listing with a room
         listing = Listing(
-            cloudbeds_id="NESTED_ROOM_TEST",
+            pms_id="NESTED_ROOM_TEST",
             name="Nested Room Test Property",
             ical_url_slug="nested-room-test",
             enabled=True,
@@ -1112,7 +1112,7 @@ class TestRoomAssociation:
 
         room = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="662541-0",
+            pms_room_id="662541-0",
             room_name="Suite 01",
             ical_url_slug="suite-01",
             enabled=True,
@@ -1160,7 +1160,7 @@ class TestRoomAssociation:
         from sqlalchemy import select
 
         stmt = select(Booking).where(
-            Booking.cloudbeds_booking_id == "RES_NESTED_ROOM::662541-0"
+            Booking.pms_booking_id == "RES_NESTED_ROOM::662541-0"
         )
         db_result = await sync_session.execute(stmt)
         booking = db_result.scalar_one()
@@ -1175,7 +1175,7 @@ class TestRoomAssociation:
         from src.models.room import Room
 
         listing = Listing(
-            cloudbeds_id="PROP_MULTI_ROOM",
+            pms_id="PROP_MULTI_ROOM",
             name="Multi Room Property",
             ical_url_slug="multi-room-prop",
             timezone="UTC",
@@ -1189,14 +1189,14 @@ class TestRoomAssociation:
         # Create two rooms
         room1 = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="100-0",
+            pms_room_id="100-0",
             room_name="Room A",
             ical_url_slug="room-a",
             enabled=True,
         )
         room2 = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="100-1",
+            pms_room_id="100-1",
             room_name="Room B",
             ical_url_slug="room-b",
             enabled=True,
@@ -1247,7 +1247,7 @@ class TestRoomAssociation:
         assert len(bookings) == 2
 
         # Check booking IDs are composite for multi-room (uses :: delimiter)
-        booking_ids = {b.cloudbeds_booking_id for b in bookings}
+        booking_ids = {b.pms_booking_id for b in bookings}
         assert booking_ids == {"RES_MULTI_ROOM::100-0", "RES_MULTI_ROOM::100-1"}
 
         # Check room associations
@@ -1262,7 +1262,7 @@ class TestRoomAssociation:
         from src.models.room import Room
 
         listing = Listing(
-            cloudbeds_id="PROP_TRANSITION",
+            pms_id="PROP_TRANSITION",
             name="Transition Property",
             ical_url_slug="transition-prop",
             timezone="UTC",
@@ -1276,14 +1276,14 @@ class TestRoomAssociation:
         # Create two rooms
         room1 = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="200-0",
+            pms_room_id="200-0",
             room_name="Room X",
             ical_url_slug="room-x",
             enabled=True,
         )
         room2 = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="200-1",
+            pms_room_id="200-1",
             room_name="Room Y",
             ical_url_slug="room-y",
             enabled=True,
@@ -1371,7 +1371,7 @@ class TestRoomAssociation:
         assert len(active_bookings) == 2
 
         # Both should use composite IDs
-        booking_ids = {b.cloudbeds_booking_id for b in bookings}
+        booking_ids = {b.pms_booking_id for b in bookings}
         assert booking_ids == {"RES_TRANSITION::200-0", "RES_TRANSITION::200-1"}
 
 

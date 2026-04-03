@@ -26,7 +26,7 @@ class TestListingRepository:
         """Test creating a listing."""
         repo = ListingRepository(async_session)
         listing = Listing(
-            cloudbeds_id="test_prop_1",
+            pms_id="test_prop_1",
             name="Test Property",
             enabled=True,
             sync_enabled=True,
@@ -43,7 +43,7 @@ class TestListingRepository:
         """Test getting listing by slug."""
         repo = ListingRepository(async_session)
         listing = Listing(
-            cloudbeds_id="slug_test",
+            pms_id="slug_test",
             name="Slug Test",
             ical_url_slug="my-custom-slug",
             enabled=True,
@@ -58,11 +58,11 @@ class TestListingRepository:
         assert found.name == "Slug Test"
 
     @pytest.mark.asyncio
-    async def test_get_by_cloudbeds_id(self, async_session):
-        """Test getting listing by Cloudbeds ID."""
+    async def test_get_by_pms_id(self, async_session):
+        """Test getting listing by PMS ID."""
         repo = ListingRepository(async_session)
         listing = Listing(
-            cloudbeds_id="cb_12345",
+            pms_id="cb_12345",
             name="CB Test",
             enabled=True,
             sync_enabled=True,
@@ -70,7 +70,7 @@ class TestListingRepository:
         )
         await repo.create(listing)
 
-        found = await repo.get_by_cloudbeds_id("cb_12345")
+        found = await repo.get_by_pms_id("cb_12345")
 
         assert found is not None
         assert found.name == "CB Test"
@@ -81,7 +81,7 @@ class TestListingRepository:
         repo = ListingRepository(async_session)
         await repo.create(
             Listing(
-                cloudbeds_id="enabled_1",
+                pms_id="enabled_1",
                 name="Enabled 1",
                 enabled=True,
                 sync_enabled=True,
@@ -90,7 +90,7 @@ class TestListingRepository:
         )
         await repo.create(
             Listing(
-                cloudbeds_id="disabled_1",
+                pms_id="disabled_1",
                 name="Disabled 1",
                 enabled=False,
                 sync_enabled=True,
@@ -119,7 +119,7 @@ class TestListingRepository:
         repo = ListingRepository(async_session)
 
         listing1 = Listing(
-            cloudbeds_id="prop_1",
+            pms_id="prop_1",
             name="Beach House",
             enabled=True,
             sync_enabled=True,
@@ -128,7 +128,7 @@ class TestListingRepository:
         await repo.create(listing1)
 
         listing2 = Listing(
-            cloudbeds_id="prop_2",
+            pms_id="prop_2",
             name="Beach House",
             enabled=True,
             sync_enabled=True,
@@ -151,7 +151,7 @@ class TestBookingRepository:
         listing_repo = ListingRepository(async_session)
         listing = await listing_repo.create(
             Listing(
-                cloudbeds_id="booking_test",
+                pms_id="booking_test",
                 name="Booking Test",
                 enabled=True,
                 sync_enabled=True,
@@ -162,7 +162,7 @@ class TestBookingRepository:
         repo = BookingRepository(async_session)
         booking = Booking(
             listing_id=listing.id,
-            cloudbeds_booking_id="BK001",
+            pms_booking_id="BK001",
             guest_name="John Doe",
             check_in_date=datetime(2026, 3, 1, tzinfo=UTC),
             check_out_date=datetime(2026, 3, 5, tzinfo=UTC),
@@ -180,7 +180,7 @@ class TestBookingRepository:
         listing_repo = ListingRepository(async_session)
         listing = await listing_repo.create(
             Listing(
-                cloudbeds_id="confirmed_test",
+                pms_id="confirmed_test",
                 name="Confirmed Test",
                 enabled=True,
                 sync_enabled=True,
@@ -193,7 +193,7 @@ class TestBookingRepository:
         await repo.create(
             Booking(
                 listing_id=listing.id,
-                cloudbeds_booking_id="BK_CONF",
+                pms_booking_id="BK_CONF",
                 guest_name="Confirmed Guest",
                 check_in_date=datetime.now(UTC) + timedelta(days=1),
                 check_out_date=datetime.now(UTC) + timedelta(days=5),
@@ -204,7 +204,7 @@ class TestBookingRepository:
         await repo.create(
             Booking(
                 listing_id=listing.id,
-                cloudbeds_booking_id="BK_CHECKIN",
+                pms_booking_id="BK_CHECKIN",
                 guest_name="Checked In Guest",
                 check_in_date=datetime.now(UTC) - timedelta(days=1),
                 check_out_date=datetime.now(UTC) + timedelta(days=3),
@@ -215,7 +215,7 @@ class TestBookingRepository:
         await repo.create(
             Booking(
                 listing_id=listing.id,
-                cloudbeds_booking_id="BK_CHECKOUT",
+                pms_booking_id="BK_CHECKOUT",
                 guest_name="Checked Out Guest",
                 check_in_date=datetime.now(UTC) - timedelta(days=5),
                 check_out_date=datetime.now(UTC) - timedelta(days=1),
@@ -226,7 +226,7 @@ class TestBookingRepository:
         await repo.create(
             Booking(
                 listing_id=listing.id,
-                cloudbeds_booking_id="BK_CANCEL",
+                pms_booking_id="BK_CANCEL",
                 guest_name="Cancelled Guest",
                 check_in_date=datetime.now(UTC) + timedelta(days=1),
                 check_out_date=datetime.now(UTC) + timedelta(days=5),
@@ -249,7 +249,7 @@ class TestBookingRepository:
         listing_repo = ListingRepository(async_session)
         listing = await listing_repo.create(
             Listing(
-                cloudbeds_id="upsert_test",
+                pms_id="upsert_test",
                 name="Upsert Test",
                 enabled=True,
                 sync_enabled=True,
@@ -260,7 +260,7 @@ class TestBookingRepository:
         repo = BookingRepository(async_session)
         booking = Booking(
             listing_id=listing.id,
-            cloudbeds_booking_id="BK_NEW",
+            pms_booking_id="BK_NEW",
             guest_name="New Guest",
             check_in_date=datetime.now(UTC) + timedelta(days=1),
             check_out_date=datetime.now(UTC) + timedelta(days=5),
@@ -278,7 +278,7 @@ class TestBookingRepository:
         listing_repo = ListingRepository(async_session)
         listing = await listing_repo.create(
             Listing(
-                cloudbeds_id="upsert_update",
+                pms_id="upsert_update",
                 name="Upsert Update",
                 enabled=True,
                 sync_enabled=True,
@@ -290,7 +290,7 @@ class TestBookingRepository:
         original = await repo.create(
             Booking(
                 listing_id=listing.id,
-                cloudbeds_booking_id="BK_UPDATE",
+                pms_booking_id="BK_UPDATE",
                 guest_name="Original Name",
                 check_in_date=datetime.now(UTC) + timedelta(days=1),
                 check_out_date=datetime.now(UTC) + timedelta(days=5),
@@ -300,7 +300,7 @@ class TestBookingRepository:
 
         updated_booking = Booking(
             listing_id=listing.id,
-            cloudbeds_booking_id="BK_UPDATE",
+            pms_booking_id="BK_UPDATE",
             guest_name="Updated Name",
             check_in_date=datetime.now(UTC) + timedelta(days=1),
             check_out_date=datetime.now(UTC) + timedelta(days=5),
@@ -319,7 +319,7 @@ class TestBookingRepository:
         listing_repo = ListingRepository(async_session)
         listing = await listing_repo.create(
             Listing(
-                cloudbeds_id="cancel_test",
+                pms_id="cancel_test",
                 name="Cancel Test",
                 enabled=True,
                 sync_enabled=True,
@@ -331,7 +331,7 @@ class TestBookingRepository:
         booking = await repo.create(
             Booking(
                 listing_id=listing.id,
-                cloudbeds_booking_id="BK_TO_CANCEL",
+                pms_booking_id="BK_TO_CANCEL",
                 guest_name="To Cancel",
                 check_in_date=datetime.now(UTC) + timedelta(days=1),
                 check_out_date=datetime.now(UTC) + timedelta(days=5),
@@ -353,7 +353,7 @@ class TestCustomFieldRepository:
         listing_repo = ListingRepository(async_session)
         listing = await listing_repo.create(
             Listing(
-                cloudbeds_id="cf_test",
+                pms_id="cf_test",
                 name="CF Test",
                 enabled=True,
                 sync_enabled=True,
@@ -385,7 +385,7 @@ class TestCustomFieldRepository:
         listing_repo = ListingRepository(async_session)
         listing = await listing_repo.create(
             Listing(
-                cloudbeds_id="cf_discovered_test",
+                pms_id="cf_discovered_test",
                 name="CF Discovered Test",
                 enabled=True,
                 sync_enabled=True,
@@ -429,7 +429,7 @@ class TestCustomFieldRepository:
         listing_repo = ListingRepository(async_session)
         listing = await listing_repo.create(
             Listing(
-                cloudbeds_id="invalid_cf",
+                pms_id="invalid_cf",
                 name="Invalid CF",
                 enabled=True,
                 sync_enabled=True,
@@ -455,7 +455,7 @@ class TestCustomFieldRepository:
         listing_repo = ListingRepository(async_session)
         listing = await listing_repo.create(
             Listing(
-                cloudbeds_id="enabled_cf",
+                pms_id="enabled_cf",
                 name="Enabled CF",
                 enabled=True,
                 sync_enabled=True,
@@ -486,7 +486,7 @@ class TestCustomFieldRepository:
         listing_repo = ListingRepository(async_session)
         listing = await listing_repo.create(
             Listing(
-                cloudbeds_id="defaults_cf",
+                pms_id="defaults_cf",
                 name="Defaults CF",
                 enabled=True,
                 sync_enabled=True,
@@ -522,7 +522,7 @@ class TestCustomFieldRepository:
         listing_repo = ListingRepository(async_session)
         listing = await listing_repo.create(
             Listing(
-                cloudbeds_id="phone_test",
+                pms_id="phone_test",
                 name="Phone Test",
                 enabled=True,
                 sync_enabled=True,
@@ -563,7 +563,7 @@ class TestCustomFieldRepository:
         listing_repo = ListingRepository(async_session)
         listing = await listing_repo.create(
             Listing(
-                cloudbeds_id="default_field_test",
+                pms_id="default_field_test",
                 name="Default Field Test",
                 enabled=True,
                 sync_enabled=True,
@@ -596,7 +596,7 @@ class TestAvailableFieldRepository:
         listing_repo = ListingRepository(async_session)
         listing = await listing_repo.create(
             Listing(
-                cloudbeds_id="falsy_test",
+                pms_id="falsy_test",
                 name="Falsy Test",
                 enabled=True,
                 sync_enabled=True,
@@ -616,7 +616,7 @@ class TestAvailableFieldRepository:
         listing_repo = ListingRepository(async_session)
         listing = await listing_repo.create(
             Listing(
-                cloudbeds_id="falsy_false",
+                pms_id="falsy_false",
                 name="Falsy False Test",
                 enabled=True,
                 sync_enabled=True,
@@ -636,7 +636,7 @@ class TestAvailableFieldRepository:
         listing_repo = ListingRepository(async_session)
         listing = await listing_repo.create(
             Listing(
-                cloudbeds_id="empty_sample",
+                pms_id="empty_sample",
                 name="Empty Sample",
                 enabled=True,
                 sync_enabled=True,
@@ -694,7 +694,7 @@ class TestDiscoverFieldsFromReservation:
         listing_repo = ListingRepository(async_session)
         listing = await listing_repo.create(
             Listing(
-                cloudbeds_id="discover_top",
+                pms_id="discover_top",
                 name="Discover Top Level",
                 enabled=True,
                 sync_enabled=True,
@@ -724,7 +724,7 @@ class TestDiscoverFieldsFromReservation:
         listing_repo = ListingRepository(async_session)
         listing = await listing_repo.create(
             Listing(
-                cloudbeds_id="discover_room",
+                pms_id="discover_room",
                 name="Discover Room Fields",
                 enabled=True,
                 sync_enabled=True,
@@ -756,7 +756,7 @@ class TestDiscoverFieldsFromReservation:
         listing_repo = ListingRepository(async_session)
         listing = await listing_repo.create(
             Listing(
-                cloudbeds_id="discover_dedupe",
+                pms_id="discover_dedupe",
                 name="Discover Dedupe",
                 enabled=True,
                 sync_enabled=True,
@@ -790,7 +790,7 @@ class TestDiscoverFieldsFromReservation:
         listing_repo = ListingRepository(async_session)
         listing = await listing_repo.create(
             Listing(
-                cloudbeds_id="discover_exclude_id",
+                pms_id="discover_exclude_id",
                 name="Discover Exclude ID",
                 enabled=True,
                 sync_enabled=True,
@@ -824,7 +824,7 @@ class TestDiscoverFieldsFromReservation:
         listing_repo = ListingRepository(async_session)
         listing = await listing_repo.create(
             Listing(
-                cloudbeds_id="discover_skip_complex",
+                pms_id="discover_skip_complex",
                 name="Discover Skip Complex",
                 enabled=True,
                 sync_enabled=True,

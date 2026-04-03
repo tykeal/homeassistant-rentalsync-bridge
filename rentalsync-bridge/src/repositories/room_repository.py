@@ -89,14 +89,12 @@ class RoomRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_by_cloudbeds_id(
-        self, listing_id: int, cloudbeds_room_id: str
-    ) -> Room | None:
-        """Get room by Cloudbeds room ID within a listing.
+    async def get_by_pms_id(self, listing_id: int, pms_room_id: str) -> Room | None:
+        """Get room by PMS room ID within a listing.
 
         Args:
             listing_id: Listing primary key.
-            cloudbeds_room_id: Cloudbeds room identifier.
+            pms_room_id: PMS room identifier.
 
         Returns:
             Room if found, None otherwise.
@@ -104,7 +102,7 @@ class RoomRepository:
         result = await self._session.execute(
             select(Room).where(
                 Room.listing_id == listing_id,
-                Room.cloudbeds_room_id == cloudbeds_room_id,
+                Room.pms_room_id == pms_room_id,
             )
         )
         return result.scalar_one_or_none()
@@ -112,25 +110,25 @@ class RoomRepository:
     async def upsert_room(
         self,
         listing_id: int,
-        cloudbeds_room_id: str,
+        pms_room_id: str,
         room_name: str,
         room_type_name: str | None = None,
     ) -> Room:
         """Create or update a room.
 
-        If a room with the given cloudbeds_room_id exists for the listing,
+        If a room with the given pms_room_id exists for the listing,
         it will be updated. Otherwise, a new room will be created.
 
         Args:
             listing_id: Listing primary key.
-            cloudbeds_room_id: Cloudbeds room identifier.
+            pms_room_id: PMS room identifier.
             room_name: Room display name.
             room_type_name: Optional room type name.
 
         Returns:
             Created or updated room.
         """
-        existing = await self.get_by_cloudbeds_id(listing_id, cloudbeds_room_id)
+        existing = await self.get_by_pms_id(listing_id, pms_room_id)
 
         if existing:
             # Update existing room
@@ -142,13 +140,13 @@ class RoomRepository:
 
         # Create new room
         return await self.create_room(
-            listing_id, cloudbeds_room_id, room_name, room_type_name
+            listing_id, pms_room_id, room_name, room_type_name
         )
 
     async def create_room(
         self,
         listing_id: int,
-        cloudbeds_room_id: str,
+        pms_room_id: str,
         room_name: str,
         room_type_name: str | None = None,
     ) -> Room:
@@ -156,7 +154,7 @@ class RoomRepository:
 
         Args:
             listing_id: Listing primary key.
-            cloudbeds_room_id: Cloudbeds room identifier.
+            pms_room_id: PMS room identifier.
             room_name: Room display name.
             room_type_name: Optional room type name.
 
@@ -166,7 +164,7 @@ class RoomRepository:
         slug = await self.generate_unique_slug(listing_id, room_name)
         room = Room(
             listing_id=listing_id,
-            cloudbeds_room_id=cloudbeds_room_id,
+            pms_room_id=pms_room_id,
             room_name=room_name,
             room_type_name=room_type_name,
             ical_url_slug=slug,

@@ -76,7 +76,7 @@ class SyncService:
             SyncServiceError: If sync fails.
         """
         if not listing.sync_enabled:
-            logger.debug("Skipping disabled sync for listing %s", listing.cloudbeds_id)
+            logger.debug("Skipping disabled sync for listing %s", listing.pms_id)
             return {"inserted": 0, "updated": 0, "cancelled": 0}
 
         try:
@@ -88,7 +88,7 @@ class SyncService:
             )
 
             # Fetch reservations from Cloudbeds
-            reservations = await cloudbeds.get_reservations(listing.cloudbeds_id)
+            reservations = await cloudbeds.get_reservations(listing.pms_id)
 
             counts = await self._process_reservations(listing, reservations)
 
@@ -105,7 +105,7 @@ class SyncService:
             await self._persist_sync_error(listing.id, error_msg)
             logger.error(
                 "Sync failed for listing %s: %s",
-                listing.cloudbeds_id,
+                listing.pms_id,
                 error_msg,
             )
             raise SyncServiceError(error_msg) from e
@@ -190,7 +190,7 @@ class SyncService:
             if existing_booking.status == "cancelled":
                 continue
 
-            booking_id = existing_booking.cloudbeds_booking_id
+            booking_id = existing_booking.pms_booking_id
             # Extract base reservation ID (before any ::roomID suffix)
             base_reservation_id = self._extract_base_reservation_id(booking_id)
 
@@ -216,7 +216,7 @@ class SyncService:
 
         logger.info(
             "Synced listing %s: %d inserted, %d updated, %d cancelled",
-            listing.cloudbeds_id,
+            listing.pms_id,
             counts["inserted"],
             counts["updated"],
             counts["cancelled"],
@@ -288,7 +288,7 @@ class SyncService:
                 booking_id = f"{cloudbeds_booking_id}::{cloudbeds_room_id}"
                 booking_ids.add(booking_id)
 
-                room = await self._room_repo.get_by_cloudbeds_id(
+                room = await self._room_repo.get_by_pms_id(
                     listing.id, cloudbeds_room_id
                 )
                 db_room_id: int | None = room.id if room else None
@@ -389,7 +389,7 @@ class SyncService:
         booking = Booking(
             listing_id=listing.id,
             room_id=room_id,
-            cloudbeds_booking_id=booking_id,
+            pms_booking_id=booking_id,
             guest_name=booking_data["guest_name"],
             guest_phone_last4=booking_data["guest_phone_last4"],
             check_in_date=booking_data["check_in_date"],

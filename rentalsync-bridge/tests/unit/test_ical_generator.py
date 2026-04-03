@@ -18,7 +18,7 @@ def listing() -> Listing:
     """Create a test listing."""
     return Listing(
         id=1,
-        cloudbeds_id="prop123",
+        pms_id="prop123",
         name="Test Property",
         ical_url_slug="test-property",
         timezone="America/Los_Angeles",
@@ -32,7 +32,7 @@ def room() -> Room:
     return Room(
         id=1,
         listing_id=1,
-        cloudbeds_room_id="room123",
+        pms_room_id="room123",
         room_name="Ocean View Suite",
         room_type_name="Suite",
         ical_url_slug="ocean-view-suite",
@@ -48,7 +48,7 @@ def bookings_with_rooms() -> list[Booking]:
             id=1,
             listing_id=1,
             room_id=1,
-            cloudbeds_booking_id="booking1",
+            pms_booking_id="booking1",
             guest_name="Alice Johnson",
             guest_phone_last4="1234",
             check_in_date=datetime(2026, 3, 1, 15, 0, tzinfo=UTC),
@@ -59,7 +59,7 @@ def bookings_with_rooms() -> list[Booking]:
             id=2,
             listing_id=1,
             room_id=2,  # Different room
-            cloudbeds_booking_id="booking2",
+            pms_booking_id="booking2",
             guest_name="Bob Smith",
             guest_phone_last4="5678",
             check_in_date=datetime(2026, 3, 3, 15, 0, tzinfo=UTC),
@@ -70,7 +70,7 @@ def bookings_with_rooms() -> list[Booking]:
             id=3,
             listing_id=1,
             room_id=1,  # Same as first booking
-            cloudbeds_booking_id="booking3",
+            pms_booking_id="booking3",
             guest_name="Charlie Brown",
             guest_phone_last4="9012",
             check_in_date=datetime(2026, 3, 10, 15, 0, tzinfo=UTC),
@@ -179,7 +179,7 @@ class TestRoomLevelICalGeneration:
         # For room-level caching, the listing slug would be updated to include room
         listing_copy = Listing(
             id=listing.id,
-            cloudbeds_id=listing.cloudbeds_id,
+            pms_id=listing.pms_id,
             name=listing.name,
             ical_url_slug=f"{listing.ical_url_slug}/{room.ical_url_slug}",
             timezone=listing.timezone,

@@ -30,7 +30,7 @@ class TestRFC5545Compliance:
         """Create a sample listing."""
         listing = Listing(
             id=1,
-            cloudbeds_id="TEST123",
+            pms_id="TEST123",
             name="Test Property",
             ical_url_slug="test-property",
             enabled=True,
@@ -45,7 +45,7 @@ class TestRFC5545Compliance:
         return Booking(
             id=1,
             listing_id=1,
-            cloudbeds_booking_id="BK12345",
+            pms_booking_id="BK12345",
             guest_name="John Doe",
             guest_phone_last4="1234",
             check_in_date=datetime.now(UTC) + timedelta(days=7),
@@ -185,7 +185,7 @@ class TestRFC5545Compliance:
             Booking(
                 id=i,
                 listing_id=1,
-                cloudbeds_booking_id=f"BK{i:05d}",
+                pms_booking_id=f"BK{i:05d}",
                 guest_name=f"Guest {i}",
                 check_in_date=datetime.now(UTC) + timedelta(days=i * 7),
                 check_out_date=datetime.now(UTC) + timedelta(days=i * 7 + 3),
@@ -237,7 +237,7 @@ class TestRFC5545Compliance:
         booking = Booking(
             id=1,
             listing_id=1,
-            cloudbeds_booking_id="BK12345",
+            pms_booking_id="BK12345",
             guest_name="A" * 200,  # Very long name
             check_in_date=datetime.now(UTC) + timedelta(days=7),
             check_out_date=datetime.now(UTC) + timedelta(days=10),
@@ -267,7 +267,7 @@ class TestRFC5545Compliance:
         booking = Booking(
             id=1,
             listing_id=1,
-            cloudbeds_booking_id="BK12345",
+            pms_booking_id="BK12345",
             guest_name="John; Doe, Jr.",  # Contains semicolon and comma
             check_in_date=datetime.now(UTC) + timedelta(days=7),
             check_out_date=datetime.now(UTC) + timedelta(days=10),
@@ -353,7 +353,7 @@ class TestDateTimeCompliance:
         """Create a sample listing."""
         return Listing(
             id=1,
-            cloudbeds_id="TEST123",
+            pms_id="TEST123",
             name="Test Property",
             ical_url_slug="test-property",
             enabled=True,
@@ -366,7 +366,7 @@ class TestDateTimeCompliance:
         booking = Booking(
             id=1,
             listing_id=1,
-            cloudbeds_booking_id="BK12345",
+            pms_booking_id="BK12345",
             guest_name="Test Guest",
             check_in_date=datetime(2026, 6, 15, 14, 0, 0, tzinfo=UTC),
             check_out_date=datetime(2026, 6, 18, 11, 0, 0, tzinfo=UTC),
@@ -388,7 +388,7 @@ class TestDateTimeCompliance:
         booking = Booking(
             id=1,
             listing_id=1,
-            cloudbeds_booking_id="BK12345",
+            pms_booking_id="BK12345",
             guest_name="Test Guest",
             check_in_date=datetime.now(UTC) + timedelta(days=7),
             check_out_date=datetime.now(UTC) + timedelta(days=10),
@@ -418,7 +418,7 @@ class TestDateTimeCompliance:
         booking = Booking(
             id=1,
             listing_id=1,
-            cloudbeds_booking_id="BK12345",
+            pms_booking_id="BK12345",
             guest_name="Test Guest",
             check_in_date=check_in,
             check_out_date=check_out,

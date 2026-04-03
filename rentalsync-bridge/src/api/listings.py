@@ -31,7 +31,7 @@ class ListingResponse(BaseModel):
     """Response model for a listing."""
 
     id: int = Field(description="Listing ID")
-    cloudbeds_id: str = Field(description="Cloudbeds property ID")
+    pms_id: str = Field(description="PMS property ID")
     name: str = Field(description="Property name")
     enabled: bool = Field(description="Whether iCal export is enabled")
     sync_enabled: bool = Field(description="Whether sync is enabled")
@@ -73,7 +73,7 @@ class BookingResponse(BaseModel):
     """Response model for a booking."""
 
     id: int = Field(description="Booking ID")
-    cloudbeds_booking_id: str = Field(description="Cloudbeds booking ID")
+    pms_booking_id: str = Field(description="PMS booking ID")
     guest_name: str | None = Field(default=None, description="Guest name")
     guest_phone_last4: str | None = Field(
         default=None, description="Last 4 phone digits"
@@ -107,7 +107,7 @@ class RoomResponse(BaseModel):
     """Response model for a room in listings context."""
 
     id: int = Field(description="Room ID")
-    cloudbeds_room_id: str = Field(description="Cloudbeds room ID")
+    pms_room_id: str = Field(description="PMS room ID")
     room_name: str = Field(description="Room name")
     room_type_name: str | None = Field(default=None, description="Room type name")
     ical_url_slug: str = Field(description="iCal URL slug")
@@ -138,7 +138,7 @@ def _listing_to_response(listing: Any) -> dict[str, Any]:
     """Convert listing model to response dict."""
     return {
         "id": listing.id,
-        "cloudbeds_id": listing.cloudbeds_id,
+        "pms_id": listing.pms_id,
         "name": listing.name,
         "enabled": listing.enabled,
         "sync_enabled": listing.sync_enabled,
@@ -172,7 +172,7 @@ async def _sync_rooms_for_listing(
     service: CloudbedsService,
     room_repo: RoomRepository,
     listing: Listing,
-    cloudbeds_id: str,
+    property_pms_id: str,
 ) -> tuple[int, int]:
     """Sync rooms for a single listing from Cloudbeds.
 
@@ -180,7 +180,7 @@ async def _sync_rooms_for_listing(
         service: CloudbedsService instance.
         room_repo: RoomRepository instance.
         listing: Listing to sync rooms for.
-        cloudbeds_id: Cloudbeds property ID.
+        property_pms_id: PMS property identifier.
 
     Returns:
         Tuple of (rooms_created, rooms_updated).
@@ -189,7 +189,7 @@ async def _sync_rooms_for_listing(
     rooms_updated = 0
 
     try:
-        rooms = await service.get_rooms(cloudbeds_id)
+        rooms = await service.get_rooms(property_pms_id)
         for room_data in rooms:
             room_id_raw = room_data.get("roomID")
             if room_id_raw is None:
@@ -200,7 +200,7 @@ async def _sync_rooms_for_listing(
             room_type = room_data.get("roomTypeName")
 
             # Check if room exists
-            existing_room = await room_repo.get_by_cloudbeds_id(listing.id, room_id)
+            existing_room = await room_repo.get_by_pms_id(listing.id, room_id)
 
             if existing_room:
                 # Update existing room (preserve enabled state and slug)
@@ -211,14 +211,14 @@ async def _sync_rooms_for_listing(
                 # Create new room (use create_room to avoid redundant query)
                 await room_repo.create_room(
                     listing_id=listing.id,
-                    cloudbeds_room_id=room_id,
+                    pms_room_id=room_id,
                     room_name=room_name,
                     room_type_name=room_type,
                 )
                 rooms_created += 1
 
     except CloudbedsServiceError as e:
-        logger.warning("Failed to fetch rooms for property %s: %s", cloudbeds_id, e)
+        logger.warning("Failed to fetch rooms for property %s: %s", property_pms_id, e)
 
     return rooms_created, rooms_updated
 
@@ -286,9 +286,9 @@ async def sync_properties(
         property_id_raw = prop.get("propertyID")
         if property_id_raw is None:
             continue
-        cloudbeds_id = str(property_id_raw)
+        property_pms_id = str(property_id_raw)
 
-        existing = await repo.get_by_cloudbeds_id(cloudbeds_id)
+        existing = await repo.get_by_pms_id(property_pms_id)
         listing: Listing
 
         if existing:
@@ -299,10 +299,10 @@ async def sync_properties(
             updated += 1
         else:
             # Create new listing with generated slug
-            name = prop.get("propertyName", f"Property {cloudbeds_id}")
+            name = prop.get("propertyName", f"Property {property_pms_id}")
             slug = await repo.generate_unique_slug(name)
             listing = Listing(
-                cloudbeds_id=cloudbeds_id,
+                pms_id=property_pms_id,
                 name=name,
                 ical_url_slug=slug,
                 timezone=prop.get("propertyTimezone", "UTC"),
@@ -319,7 +319,7 @@ async def sync_properties(
 
         # Fetch and sync rooms for this property
         r_created, r_updated = await _sync_rooms_for_listing(
-            service, room_repo, listing, cloudbeds_id
+            service, room_repo, listing, property_pms_id
         )
         rooms_created += r_created
         rooms_updated += r_updated
@@ -439,7 +439,7 @@ async def enable_listing(
             ) from e
 
         await db.refresh(listing)
-        logger.info("Enabled listing %s", listing.cloudbeds_id)
+        logger.info("Enabled listing %s", listing.pms_id)
 
     return {
         "success": True,
@@ -497,7 +497,7 @@ async def update_listing(
 
     await db.commit()
     await db.refresh(listing)
-    logger.info("Updated listing %s", listing.cloudbeds_id)
+    logger.info("Updated listing %s", listing.pms_id)
 
     return _listing_to_response(listing)
 
@@ -777,7 +777,7 @@ async def get_listing_bookings(
         "bookings": [
             {
                 "id": b.id,
-                "cloudbeds_booking_id": b.cloudbeds_booking_id,
+                "pms_booking_id": b.pms_booking_id,
                 "guest_name": b.guest_name,
                 "guest_phone_last4": b.guest_phone_last4,
                 "check_in_date": b.check_in_date.isoformat(),
@@ -823,7 +823,7 @@ async def get_listing_rooms(
         "rooms": [
             {
                 "id": r.id,
-                "cloudbeds_room_id": r.cloudbeds_room_id,
+                "pms_room_id": r.pms_room_id,
                 "room_name": r.room_name,
                 "room_type_name": r.room_type_name,
                 "ical_url_slug": r.ical_url_slug,

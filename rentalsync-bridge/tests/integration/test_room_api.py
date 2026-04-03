@@ -79,7 +79,7 @@ class TestGetListingRooms:
     async def test_get_listing_rooms(self, rooms_app, rooms_session):
         """Test getting rooms for a listing."""
         listing = Listing(
-            cloudbeds_id="PROP_ROOMS",
+            pms_id="PROP_ROOMS",
             name="Property With Rooms",
             ical_url_slug="property-with-rooms",
             enabled=True,
@@ -91,7 +91,7 @@ class TestGetListingRooms:
 
         room1 = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="ROOM1",
+            pms_room_id="ROOM1",
             room_name="Room 101",
             room_type_name="Standard",
             ical_url_slug="room-101",
@@ -99,7 +99,7 @@ class TestGetListingRooms:
         )
         room2 = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="ROOM2",
+            pms_room_id="ROOM2",
             room_name="Room 102",
             room_type_name="Deluxe",
             ical_url_slug="room-102",
@@ -126,7 +126,7 @@ class TestGetListingRooms:
     async def test_get_listing_rooms_empty(self, rooms_app, rooms_session):
         """Test getting rooms for a listing with no rooms."""
         listing = Listing(
-            cloudbeds_id="PROP_NO_ROOMS",
+            pms_id="PROP_NO_ROOMS",
             name="Property No Rooms",
             ical_url_slug="property-no-rooms",
             enabled=True,
@@ -162,7 +162,7 @@ class TestGetRoom:
     async def test_get_room(self, rooms_app, rooms_session):
         """Test getting a single room."""
         listing = Listing(
-            cloudbeds_id="PROP_GET_ROOM",
+            pms_id="PROP_GET_ROOM",
             name="Get Room Property",
             ical_url_slug="get-room-property",
             enabled=True,
@@ -174,7 +174,7 @@ class TestGetRoom:
 
         room = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="GET_ROOM",
+            pms_room_id="GET_ROOM",
             room_name="Get Room",
             room_type_name="Suite",
             ical_url_slug="get-room",
@@ -212,7 +212,7 @@ class TestPatchRoom:
     async def test_patch_room_enabled(self, rooms_app, rooms_session):
         """Test updating room enabled status."""
         listing = Listing(
-            cloudbeds_id="PROP_PATCH",
+            pms_id="PROP_PATCH",
             name="Patch Property",
             ical_url_slug="patch-property",
             enabled=True,
@@ -224,7 +224,7 @@ class TestPatchRoom:
 
         room = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="PATCH_ROOM",
+            pms_room_id="PATCH_ROOM",
             room_name="Patch Room",
             ical_url_slug="patch-room",
             enabled=True,
@@ -247,7 +247,7 @@ class TestPatchRoom:
     async def test_patch_room_slug(self, rooms_app, rooms_session):
         """Test updating room slug."""
         listing = Listing(
-            cloudbeds_id="PROP_SLUG_PATCH",
+            pms_id="PROP_SLUG_PATCH",
             name="Slug Patch Property",
             ical_url_slug="slug-patch-property",
             enabled=True,
@@ -259,7 +259,7 @@ class TestPatchRoom:
 
         room = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="SLUG_PATCH_ROOM",
+            pms_room_id="SLUG_PATCH_ROOM",
             room_name="Slug Patch Room",
             ical_url_slug="old-slug",
             enabled=True,
@@ -294,7 +294,7 @@ class TestPatchRoom:
     async def test_patch_room_slug_conflict(self, rooms_app, rooms_session):
         """Test updating room slug to one that already exists."""
         listing = Listing(
-            cloudbeds_id="PROP_SLUG_CONFLICT",
+            pms_id="PROP_SLUG_CONFLICT",
             name="Slug Conflict Property",
             ical_url_slug="slug-conflict-property",
             enabled=True,
@@ -306,14 +306,14 @@ class TestPatchRoom:
 
         room1 = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="CONFLICT_ROOM1",
+            pms_room_id="CONFLICT_ROOM1",
             room_name="Conflict Room 1",
             ical_url_slug="taken-slug",
             enabled=True,
         )
         room2 = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="CONFLICT_ROOM2",
+            pms_room_id="CONFLICT_ROOM2",
             room_name="Conflict Room 2",
             ical_url_slug="my-slug",
             enabled=True,
@@ -336,7 +336,7 @@ class TestPatchRoom:
     async def test_patch_room_slug_invalid_format(self, rooms_app, rooms_session):
         """Test updating room slug with invalid characters."""
         listing = Listing(
-            cloudbeds_id="PROP_INVALID_SLUG",
+            pms_id="PROP_INVALID_SLUG",
             name="Invalid Slug Property",
             ical_url_slug="invalid-slug-property",
             enabled=True,
@@ -348,7 +348,7 @@ class TestPatchRoom:
 
         room = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="INVALID_SLUG_ROOM",
+            pms_room_id="INVALID_SLUG_ROOM",
             room_name="Invalid Slug Room",
             ical_url_slug="valid-slug",
             enabled=True,

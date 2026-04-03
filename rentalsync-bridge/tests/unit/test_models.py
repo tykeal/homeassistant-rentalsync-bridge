@@ -76,7 +76,7 @@ class TestListing:
     def test_create_listing(self):
         """Test creating a listing."""
         listing = Listing(
-            cloudbeds_id="property_123",
+            pms_id="property_123",
             name="Test Property",
             ical_url_slug="test-property",
             enabled=False,
@@ -84,7 +84,7 @@ class TestListing:
             timezone="UTC",
         )
 
-        assert listing.cloudbeds_id == "property_123"
+        assert listing.pms_id == "property_123"
         assert listing.name == "Test Property"
         assert listing.enabled is False
         assert listing.timezone == "UTC"
@@ -93,7 +93,7 @@ class TestListing:
     def test_listing_fields(self):
         """Test listing field values."""
         listing = Listing(
-            cloudbeds_id="prop",
+            pms_id="prop",
             name="Test",
             ical_url_slug="test",
             enabled=False,
@@ -110,7 +110,7 @@ class TestListing:
     def test_repr(self):
         """Test string representation."""
         listing = Listing(
-            cloudbeds_id="prop",
+            pms_id="prop",
             name="My Property",
             ical_url_slug="my-prop",
         )
@@ -128,7 +128,7 @@ class TestCustomField:
         """Test creating a custom field requires listing."""
         # First create a listing (required FK)
         listing = Listing(
-            cloudbeds_id="cf_listing",
+            pms_id="cf_listing",
             name="CF Test Listing",
             ical_url_slug="cf-listing",
             enabled=True,
@@ -155,7 +155,7 @@ class TestCustomField:
     async def test_repr(self, async_session):
         """Test string representation."""
         listing = Listing(
-            cloudbeds_id="repr_listing",
+            pms_id="repr_listing",
             name="Repr Listing",
             ical_url_slug="repr-listing",
             enabled=True,
@@ -187,7 +187,7 @@ class TestBooking:
         """Test creating a booking."""
         # Create listing first (required FK)
         listing = Listing(
-            cloudbeds_id="booking_test",
+            pms_id="booking_test",
             name="Booking Test",
             ical_url_slug="booking-test",
             enabled=True,
@@ -199,14 +199,14 @@ class TestBooking:
 
         booking = Booking(
             listing_id=listing.id,
-            cloudbeds_booking_id="booking_123",
+            pms_booking_id="booking_123",
             guest_name="John Doe",
             check_in_date=datetime(2026, 2, 1),
             check_out_date=datetime(2026, 2, 5),
             status="confirmed",
         )
 
-        assert booking.cloudbeds_booking_id == "booking_123"
+        assert booking.pms_booking_id == "booking_123"
         assert booking.guest_name == "John Doe"
         assert booking.status == "confirmed"
 
@@ -214,7 +214,7 @@ class TestBooking:
     async def test_booking_optional_fields(self, async_session):
         """Test booking optional fields default to None."""
         listing = Listing(
-            cloudbeds_id="opt_test",
+            pms_id="opt_test",
             name="Optional Test",
             ical_url_slug="opt-test",
             enabled=True,
@@ -226,7 +226,7 @@ class TestBooking:
 
         booking = Booking(
             listing_id=listing.id,
-            cloudbeds_booking_id="b1",
+            pms_booking_id="b1",
             guest_name="Test",
             check_in_date=datetime(2026, 1, 1),
             check_out_date=datetime(2026, 1, 2),
@@ -240,7 +240,7 @@ class TestBooking:
     async def test_event_title_property(self, async_session):
         """Test event_title property returns guest name or booking ID."""
         listing = Listing(
-            cloudbeds_id="title_test",
+            pms_id="title_test",
             name="Title Test",
             ical_url_slug="title-test",
             enabled=True,
@@ -253,7 +253,7 @@ class TestBooking:
         # With guest name
         booking = Booking(
             listing_id=listing.id,
-            cloudbeds_booking_id="BK123",
+            pms_booking_id="BK123",
             guest_name="Jane Doe",
             check_in_date=datetime(2026, 1, 1),
             check_out_date=datetime(2026, 1, 2),
@@ -264,7 +264,7 @@ class TestBooking:
         # Without guest name
         booking2 = Booking(
             listing_id=listing.id,
-            cloudbeds_booking_id="BK456",
+            pms_booking_id="BK456",
             guest_name=None,
             check_in_date=datetime(2026, 1, 3),
             check_out_date=datetime(2026, 1, 4),
@@ -276,7 +276,7 @@ class TestBooking:
     async def test_repr(self, async_session):
         """Test string representation."""
         listing = Listing(
-            cloudbeds_id="repr_book",
+            pms_id="repr_book",
             name="Repr Book",
             ical_url_slug="repr-book",
             enabled=True,
@@ -288,7 +288,7 @@ class TestBooking:
 
         booking = Booking(
             listing_id=listing.id,
-            cloudbeds_booking_id="BOOK456",
+            pms_booking_id="BOOK456",
             guest_name="Jane",
             check_in_date=datetime(2026, 1, 1),
             check_out_date=datetime(2026, 1, 2),
@@ -308,7 +308,7 @@ class TestModelPersistence:
     async def test_listing_crud(self, async_session):
         """Test listing CRUD operations."""
         listing = Listing(
-            cloudbeds_id="persist_test",
+            pms_id="persist_test",
             name="Persistence Test",
             ical_url_slug="persist-test",
         )
@@ -322,7 +322,7 @@ class TestModelPersistence:
     async def test_booking_with_listing_fk(self, async_session):
         """Test booking with listing foreign key."""
         listing = Listing(
-            cloudbeds_id="fk_test",
+            pms_id="fk_test",
             name="FK Test",
             ical_url_slug="fk-test",
         )
@@ -331,7 +331,7 @@ class TestModelPersistence:
 
         booking = Booking(
             listing_id=listing.id,
-            cloudbeds_booking_id="fk_booking",
+            pms_booking_id="fk_booking",
             guest_name="FK Guest",
             check_in_date=datetime(2026, 3, 1),
             check_out_date=datetime(2026, 3, 5),
@@ -347,7 +347,7 @@ class TestModelPersistence:
     async def test_custom_field_with_listing(self, async_session):
         """Test custom field with listing relationship."""
         listing = Listing(
-            cloudbeds_id="cf_test",
+            pms_id="cf_test",
             name="Custom Field Test",
             ical_url_slug="cf-test",
             enabled=True,

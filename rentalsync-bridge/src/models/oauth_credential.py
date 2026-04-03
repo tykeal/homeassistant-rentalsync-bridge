@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
-"""OAuthCredential model for Cloudbeds API authentication."""
+"""OAuthCredential model for PMS API authentication."""
 
 from datetime import UTC, datetime
 
@@ -64,7 +64,7 @@ def decrypt_value(value: str | None) -> str | None:
 
 
 class OAuthCredential(Base):
-    """OAuth credentials for Cloudbeds API access.
+    """OAuth credentials for PMS API access.
 
     Stores encrypted OAuth tokens with automatic encryption/decryption.
     Singleton pattern - only one record should exist.
@@ -85,6 +85,13 @@ class OAuthCredential(Base):
         "refresh_token", Text, nullable=True
     )
     token_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    pms_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="cloudbeds"
+    )
+    token_request_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    token_request_window_start: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=_utc_now
     )

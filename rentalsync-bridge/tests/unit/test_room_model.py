@@ -20,7 +20,7 @@ class TestRoom:
 
         room = Room(
             listing_id=1,
-            cloudbeds_room_id="room_123",
+            pms_room_id="room_123",
             room_name="Room 201",
             room_type_name="Deluxe Suite",
             ical_url_slug="room-201",
@@ -28,7 +28,7 @@ class TestRoom:
         )
 
         assert room.listing_id == 1
-        assert room.cloudbeds_room_id == "room_123"
+        assert room.pms_room_id == "room_123"
         assert room.room_name == "Room 201"
         assert room.room_type_name == "Deluxe Suite"
         assert room.ical_url_slug == "room-201"
@@ -40,7 +40,7 @@ class TestRoom:
         from src.models import Room
 
         listing = Listing(
-            cloudbeds_id="default_enabled_test",
+            pms_id="default_enabled_test",
             name="Default Enabled Test",
             ical_url_slug="default-enabled-test",
             enabled=True,
@@ -52,7 +52,7 @@ class TestRoom:
 
         room = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="room_456",
+            pms_room_id="room_456",
             room_name="Room 102",
             room_type_name="Standard",
             ical_url_slug="room-102",
@@ -69,7 +69,7 @@ class TestRoom:
 
         room = Room(
             listing_id=1,
-            cloudbeds_room_id="room_789",
+            pms_room_id="room_789",
             room_name="Room 303",
             ical_url_slug="room-303",
         )
@@ -82,7 +82,7 @@ class TestRoom:
 
         room = Room(
             listing_id=1,
-            cloudbeds_room_id="room_123",
+            pms_room_id="room_123",
             room_name="Room 201",
             room_type_name="Suite",
             ical_url_slug="room-201",
@@ -103,7 +103,7 @@ class TestRoomListingRelationship:
 
         # Create listing first
         listing = Listing(
-            cloudbeds_id="room_rel_test",
+            pms_id="room_rel_test",
             name="Room Relationship Test",
             ical_url_slug="room-rel-test",
             enabled=True,
@@ -116,7 +116,7 @@ class TestRoomListingRelationship:
         # Create room linked to listing
         room = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="room_rel_123",
+            pms_room_id="room_rel_123",
             room_name="Room 101",
             room_type_name="Standard",
             ical_url_slug="room-101",
@@ -136,7 +136,7 @@ class TestRoomListingRelationship:
 
         # Create listing
         listing = Listing(
-            cloudbeds_id="listing_rooms_test",
+            pms_id="listing_rooms_test",
             name="Listing Rooms Test",
             ical_url_slug="listing-rooms-test",
             enabled=True,
@@ -149,14 +149,14 @@ class TestRoomListingRelationship:
         # Create multiple rooms
         room1 = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="room_1",
+            pms_room_id="room_1",
             room_name="Room 1",
             ical_url_slug="room-1",
             enabled=True,
         )
         room2 = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="room_2",
+            pms_room_id="room_2",
             room_name="Room 2",
             ical_url_slug="room-2",
             enabled=True,
@@ -179,7 +179,7 @@ class TestRoomListingRelationship:
 
         # Create listing with room
         listing = Listing(
-            cloudbeds_id="cascade_test",
+            pms_id="cascade_test",
             name="Cascade Test",
             ical_url_slug="cascade-test",
             enabled=True,
@@ -191,7 +191,7 @@ class TestRoomListingRelationship:
 
         room = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="cascade_room",
+            pms_room_id="cascade_room",
             room_name="Cascade Room",
             ical_url_slug="cascade-room",
             enabled=True,
@@ -218,7 +218,7 @@ class TestRoomListingRelationship:
         from src.models import Room
 
         listing = Listing(
-            cloudbeds_id="unique_slug_test",
+            pms_id="unique_slug_test",
             name="Unique Slug Test",
             ical_url_slug="unique-slug-test",
             enabled=True,
@@ -230,7 +230,7 @@ class TestRoomListingRelationship:
 
         room1 = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="room_a",
+            pms_room_id="room_a",
             room_name="Room A",
             ical_url_slug="same-slug",
             enabled=True,
@@ -240,7 +240,7 @@ class TestRoomListingRelationship:
 
         room2 = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="room_b",
+            pms_room_id="room_b",
             room_name="Room B",
             ical_url_slug="same-slug",  # Same slug - should fail
             enabled=True,
@@ -261,7 +261,7 @@ class TestRoomBookingRelationship:
 
         # Create listing
         listing = Listing(
-            cloudbeds_id="booking_room_test",
+            pms_id="booking_room_test",
             name="Booking Room Test",
             ical_url_slug="booking-room-test",
             enabled=True,
@@ -274,7 +274,7 @@ class TestRoomBookingRelationship:
         # Create room
         room = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="booking_room",
+            pms_room_id="booking_room",
             room_name="Booking Room",
             ical_url_slug="booking-room",
             enabled=True,
@@ -286,7 +286,7 @@ class TestRoomBookingRelationship:
         booking = Booking(
             listing_id=listing.id,
             room_id=room.id,
-            cloudbeds_booking_id="BK_ROOM_123",
+            pms_booking_id="BK_ROOM_123",
             guest_name="Room Guest",
             check_in_date=datetime(2026, 3, 1),
             check_out_date=datetime(2026, 3, 5),
@@ -304,7 +304,7 @@ class TestRoomBookingRelationship:
         from src.models import Booking
 
         listing = Listing(
-            cloudbeds_id="no_room_test",
+            pms_id="no_room_test",
             name="No Room Test",
             ical_url_slug="no-room-test",
             enabled=True,
@@ -318,7 +318,7 @@ class TestRoomBookingRelationship:
         booking = Booking(
             listing_id=listing.id,
             room_id=None,
-            cloudbeds_booking_id="BK_NO_ROOM",
+            pms_booking_id="BK_NO_ROOM",
             guest_name="No Room Guest",
             check_in_date=datetime(2026, 4, 1),
             check_out_date=datetime(2026, 4, 3),
@@ -337,7 +337,7 @@ class TestRoomBookingRelationship:
         from src.models import Booking, Room
 
         listing = Listing(
-            cloudbeds_id="room_bookings_test",
+            pms_id="room_bookings_test",
             name="Room Bookings Test",
             ical_url_slug="room-bookings-test",
             enabled=True,
@@ -349,7 +349,7 @@ class TestRoomBookingRelationship:
 
         room = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="multi_booking_room",
+            pms_room_id="multi_booking_room",
             room_name="Multi Booking Room",
             ical_url_slug="multi-booking-room",
             enabled=True,
@@ -361,7 +361,7 @@ class TestRoomBookingRelationship:
         booking1 = Booking(
             listing_id=listing.id,
             room_id=room.id,
-            cloudbeds_booking_id="BK_MULTI_1",
+            pms_booking_id="BK_MULTI_1",
             guest_name="Guest 1",
             check_in_date=datetime(2026, 5, 1),
             check_out_date=datetime(2026, 5, 3),
@@ -370,7 +370,7 @@ class TestRoomBookingRelationship:
         booking2 = Booking(
             listing_id=listing.id,
             room_id=room.id,
-            cloudbeds_booking_id="BK_MULTI_2",
+            pms_booking_id="BK_MULTI_2",
             guest_name="Guest 2",
             check_in_date=datetime(2026, 5, 5),
             check_out_date=datetime(2026, 5, 7),
@@ -393,7 +393,7 @@ class TestRoomBookingRelationship:
         from src.models import Booking, Room
 
         listing = Listing(
-            cloudbeds_id="room_delete_test",
+            pms_id="room_delete_test",
             name="Room Delete Test",
             ical_url_slug="room-delete-test",
             enabled=True,
@@ -405,7 +405,7 @@ class TestRoomBookingRelationship:
 
         room = Room(
             listing_id=listing.id,
-            cloudbeds_room_id="delete_room",
+            pms_room_id="delete_room",
             room_name="Delete Room",
             ical_url_slug="delete-room",
             enabled=True,
@@ -416,7 +416,7 @@ class TestRoomBookingRelationship:
         booking = Booking(
             listing_id=listing.id,
             room_id=room.id,
-            cloudbeds_booking_id="BK_DELETE_ROOM",
+            pms_booking_id="BK_DELETE_ROOM",
             guest_name="Delete Room Guest",
             check_in_date=datetime(2026, 6, 1),
             check_out_date=datetime(2026, 6, 3),

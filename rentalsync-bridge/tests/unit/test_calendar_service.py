@@ -108,7 +108,7 @@ class TestCalendarService:
     def listing(self):
         """Create test listing."""
         listing = Listing(
-            cloudbeds_id="test_prop",
+            pms_id="test_prop",
             name="Test Property",
             ical_url_slug="test-property",
             enabled=True,
@@ -123,7 +123,7 @@ class TestCalendarService:
         """Create test booking."""
         booking = Booking(
             listing_id=listing.id,
-            cloudbeds_booking_id="BK12345",
+            pms_booking_id="BK12345",
             guest_name="John Smith",
             guest_phone_last4="1234",
             check_in_date=datetime(2026, 3, 1, 14, 0, tzinfo=UTC),
@@ -165,7 +165,7 @@ class TestCalendarService:
         """Test guest name fallback to booking ID."""
         booking = Booking(
             listing_id=listing.id,
-            cloudbeds_booking_id="FALLBACK123",
+            pms_booking_id="FALLBACK123",
             guest_name=None,  # No guest name
             check_in_date=datetime(2026, 3, 1, tzinfo=UTC),
             check_out_date=datetime(2026, 3, 5, tzinfo=UTC),
@@ -374,7 +374,7 @@ class TestListingSpecificCustomFields:
         # Create two listings
         listing1 = Listing(
             id=1,
-            cloudbeds_id="PROP1",
+            pms_id="PROP1",
             name="Beach House",
             enabled=True,
             sync_enabled=True,
@@ -383,7 +383,7 @@ class TestListingSpecificCustomFields:
         )
         listing2 = Listing(
             id=2,
-            cloudbeds_id="PROP2",
+            pms_id="PROP2",
             name="Mountain Cabin",
             enabled=True,
             sync_enabled=True,
@@ -395,7 +395,7 @@ class TestListingSpecificCustomFields:
         booking1 = Booking(
             id=1,
             listing_id=1,
-            cloudbeds_booking_id="CB001",
+            pms_booking_id="CB001",
             guest_name="Guest One",
             check_in_date=datetime(2024, 7, 1, tzinfo=UTC),
             check_out_date=datetime(2024, 7, 5, tzinfo=UTC),
@@ -405,7 +405,7 @@ class TestListingSpecificCustomFields:
         booking2 = Booking(
             id=2,
             listing_id=2,
-            cloudbeds_booking_id="CB002",
+            pms_booking_id="CB002",
             guest_name="Guest Two",
             check_in_date=datetime(2024, 8, 1, tzinfo=UTC),
             check_out_date=datetime(2024, 8, 5, tzinfo=UTC),
