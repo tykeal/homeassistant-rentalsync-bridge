@@ -184,7 +184,7 @@ async def configure_oauth(
         Configuration status.
     """
     settings = get_settings()
-    pms_type = request.pms_type or settings.pms_type
+    pms_type = (request.pms_type or settings.pms_type).strip().lower()
 
     # Validate pms_type against known providers
     if pms_type not in KNOWN_PMS_TYPES:

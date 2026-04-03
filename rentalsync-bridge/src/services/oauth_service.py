@@ -9,6 +9,8 @@ from typing import Any
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# Ensure provider classes are registered in the registry
+import src.providers  # noqa: F401
 from src.config import get_settings
 from src.models.oauth_credential import OAuthCredential
 from src.providers.registry import get_provider_class
