@@ -232,20 +232,22 @@ async def configure_oauth(
 
     if credential:
         # Update existing
-        credential.client_id = request.client_id
-        credential.client_secret = request.client_secret
-        credential.api_key = request.api_key
-        credential.access_token = request.access_token
-        credential.refresh_token = request.refresh_token
+        credential.client_id = request.client_id.strip()
+        credential.client_secret = request.client_secret.strip()
+        credential.api_key = api_key or None
+        credential.access_token = access_token_val or None
+        credential.refresh_token = refresh_token_val or None
         credential.token_expires_at = request.token_expires_at
         logger.info("Updated existing %s credentials", pms_type)
     else:
         # Create new
-        credential = OAuthCredential(client_id=request.client_id, pms_type=pms_type)
-        credential.client_secret = request.client_secret
-        credential.api_key = request.api_key
-        credential.access_token = request.access_token
-        credential.refresh_token = request.refresh_token
+        credential = OAuthCredential(
+            client_id=request.client_id.strip(), pms_type=pms_type
+        )
+        credential.client_secret = request.client_secret.strip()
+        credential.api_key = api_key or None
+        credential.access_token = access_token_val or None
+        credential.refresh_token = refresh_token_val or None
         credential.token_expires_at = request.token_expires_at
         db.add(credential)
         logger.info("Created new %s credentials", pms_type)
