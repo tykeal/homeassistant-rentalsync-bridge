@@ -347,7 +347,7 @@ Must implement against the Guesty Open API, primarily using v1 endpoints (`/v1/l
 - `get_guest()` → `GET /v1/guests/{id}`, return None on 404
 - `get_custom_fields()` → `GET /v1/reservations-v3/{id}/custom-fields`
 - `refresh_token()` → `POST /oauth2/token` with rate tracking
-- `test_connection()` → call `get_listings()` and check that it succeeds and returns at least one listing
+- `test_connection()` → validate authentication and API reachability via a successful authenticated request (e.g., call `get_listings()` and verify the request succeeds); do not require at least one listing for success — surface zero listings as a separate warning
 - `provider_type` → `"guesty"`
 - All API calls use exponential backoff on 429 responses
 - Pagination continues until `len(results) < limit`

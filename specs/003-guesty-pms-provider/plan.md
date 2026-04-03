@@ -471,7 +471,11 @@ New fields: `pms_type`, `token_requests_remaining` (Guesty-specific, null for Cl
 
 #### Modified Endpoint: `POST /api/listings/sync-properties`
 
-No request body change. Behavior change: Uses the active provider (determined by stored `pms_type` on credential) to fetch listings instead of hardcoded Cloudbeds. Response format unchanged.
+No request body change. Behavior change: Uses the active provider
+(determined by stored `pms_type` on credential) to fetch listings instead
+of hardcoded Cloudbeds. Response shape is updated to use provider-agnostic
+fields; specifically, `cloudbeds_id` is renamed to `pms_id`. See
+`contracts/api-contracts.md` for the canonical response schema.
 
 #### New Endpoint: `GET /api/providers`
 
