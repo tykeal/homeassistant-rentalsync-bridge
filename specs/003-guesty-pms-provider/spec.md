@@ -165,7 +165,7 @@ The system correctly assembles complete reservation records from Guesty's multi-
 ## Assumptions
 
 - Each rentalsync-bridge installation connects to exactly one PMS provider at a time (no multi-provider installations).
-- Guesty's OAuth 2.0 token endpoint uses standard client_credentials grant type with clientId and clientSecret in the request body.
+- Guesty's OAuth 2.0 token endpoint uses standard client_credentials grant type with client_id and client_secret in the request body.
 - Guesty's 24-hour token validity and 5-request-per-key daily limit are enforced server-side and may change; the system should be configurable for these thresholds.
 - The existing Cloudbeds integration will be refactored to implement the same provider abstraction, not maintained as a separate code path.
 - Guesty listing and reservation pagination follows a limit/skip pattern where the system must iterate until all results are retrieved.
@@ -181,9 +181,9 @@ The system correctly assembles complete reservation records from Guesty's multi-
 - Q: How are different PMS auth models stored in a single credential table? → A: `pms_type` discriminator on OAuthCredential — Guesty uses client_credentials grant; Cloudbeds uses authorization_code grant or API key.
 - Q: How do Guesty multi-unit listings with sub-units map to the data model? → A: Sub-units map to existing Room model; single-unit listings create one implicit Room.
 - Q: Is the database schema migration reversible? → A: No — one-way Alembic migration from `cloudbeds_*` to `pms_*` columns; no rollback support.
-- Q: What is the canonical internal term for guest reservations? → A: "Booking" — Guesty API uses "reservation" but the internal model, table, and APIs use "Booking."
+- Q: What is the canonical internal term for guest reservations? → A: "Booking" — Guesty API uses "reservation" but the internal model, table, and APIs use "Booking"
 - Q: Which Guesty custom fields API version is required? → A: V3 endpoint only; V2 is deprecated as of April 2026 and must not be used.
-- Q: What does "proceeds cautiously" mean for Guesty token limit? → A: Log warning at 4th request; proceed with request; at 5th, log error and defer until 24h window resets.
+- Q: What does "proceeds cautiously" mean for Guesty token limit? → A: Log warning at 4th request; proceed with request; at 5th, log warning and proceed (final allowed request); at 6th+, log error and defer until 24h window resets.
 
 ## Success Criteria *(mandatory)*
 

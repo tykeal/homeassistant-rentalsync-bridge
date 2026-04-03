@@ -26,6 +26,8 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Path Conventions
 
+> **Note**: All paths in this task list are relative to the `rentalsync-bridge/` directory unless otherwise stated.
+
 - **Single project**: `src/`, `tests/` at repository root
 - Provider modules: `src/providers/{provider}/`
 - Migrations: `alembic/versions/`
@@ -38,7 +40,7 @@ SPDX-License-Identifier: Apache-2.0
 
 **Dependencies**: None — this is the foundation.
 
-- [ ] T001 Create src/providers/ package with PMSProvider ABC, DTO dataclasses (PMSListing, PMSRoom, PMSReservation, PMSGuest, TokenResult), and exception hierarchy (PMSProviderError, PMSAuthenticationError, PMSRateLimitError, TokenRateLimitError, PMSConnectionError) in src/providers/__init__.py and src/providers/base.py
+- [ ] T001 Create src/providers/ package with PMSProvider ABC, DTO dataclasses (PMSListing, PMSRoom, PMSReservation, PMSGuest, TokenResult), and exception hierarchy (PMSProviderError, PMSAuthenticationError, PMSRateLimitError, TokenRateLimitError, PMSConnectionError) defined in src/providers/base.py and optionally re-exported from src/providers/__init__.py
 - [ ] T002 Create provider registry with register_provider, get_provider_class, create_provider, and list_providers functions in src/providers/registry.py
 - [ ] T003 [P] Write unit tests for PMSProvider ABC contract enforcement and DTO frozen dataclass behavior in tests/unit/test_pms_provider_base.py
 - [ ] T004 [P] Write unit tests for provider registry: registration, lookup, factory creation, duplicate-registration error, and unknown-type error in tests/unit/test_provider_registry.py
@@ -97,7 +99,7 @@ SPDX-License-Identifier: Apache-2.0
 **Dependencies**: Phase 1 (PMSProvider interface to implement), Phase 3 (credential storage and config).
 
 - [ ] T024 [US1] Create Guesty provider package with __init__.py exporting GuestyProvider class in src/providers/guesty/__init__.py
-- [ ] T025 [US4] Implement GuestyTokenManager with token caching, 24h validity check, request counting per rolling window, warn-at-4th/defer-at-5th enforcement, and window reset logic in src/providers/guesty/auth.py
+- [ ] T025 [US4] Implement GuestyTokenManager with token caching, 24h validity check, request counting per rolling window, warn-at-4th, allow-5th-with-warning, defer-at-6th enforcement, and window reset logic in src/providers/guesty/auth.py
 - [ ] T026 [US1] Implement GuestyProvider(PMSProvider) core with httpx async client, base URL config, auth header injection, and get_listings using paginated GET /v1/listings (limit=100, skip-based, stop when results < limit) in src/providers/guesty/service.py
 - [ ] T027 [US4] Implement HTTP 429 rate-limit response handler with exponential backoff (1s → 2s → 4s, max 30s), Retry-After header parsing, and max 3 retries as reusable request wrapper in src/providers/guesty/service.py
 - [ ] T028 [US1] Implement get_reservations with listingId filter, status mapping (confirmed/checked_in/checked_out/canceled → internal statuses; exclude inquiry/reserved), date range filters, and skip-based pagination in src/providers/guesty/service.py
@@ -105,7 +107,7 @@ SPDX-License-Identifier: Apache-2.0
 - [ ] T030 [US5] Implement get_guest via GET /v1/guests/{id} returning PMSGuest with fullName, phone, email; return None on 404 for "Guest [guestId]" fallback in src/providers/guesty/service.py
 - [ ] T031 [US5] Implement get_custom_fields via GET /v1/reservations-v3/{id}/custom-fields (v3 endpoint only — v2 is deprecated) returning fieldId → value dict in src/providers/guesty/service.py
 - [ ] T032 [US1] Register GuestyProvider in provider registry and implement test_connection via get_listings(limit=1) success check in src/providers/guesty/__init__.py and src/providers/registry.py
-- [ ] T033 [P] [US4] Write unit tests for GuestyTokenManager: cache hit, cache miss, rate tracking, window reset, warn-at-4th, and defer-at-5th scenarios in tests/unit/test_guesty_auth.py
+- [ ] T033 [P] [US4] Write unit tests for GuestyTokenManager: cache hit, cache miss, rate tracking, window reset, warn-at-4th, allow-5th-with-warning, and defer-at-6th scenarios in tests/unit/test_guesty_auth.py
 - [ ] T034 [P] [US1] Write unit tests for GuestyProvider with mocked httpx responses: get_listings pagination, get_reservations filtering, get_rooms multi/single-unit, get_guest with 404, get_custom_fields v3, and 429 retry behavior in tests/unit/test_guesty_service.py
 
 **Checkpoint**: Guesty provider fully implemented and unit-tested. All PMSProvider abstract methods operational against mocked Guesty API responses. Token management handles all rate-limit scenarios.
@@ -142,7 +144,7 @@ SPDX-License-Identifier: Apache-2.0
 - [ ] T045 [US3] Update connection test button to include pms_type in POST /api/oauth/configure request and display provider-specific success/error messages in src/static/js/admin.js
 - [ ] T046 [US3] Add CSS styling for PMS provider selector dropdown, conditional form visibility toggles, and provider status badge in src/static/css/admin.css
 - [ ] T047 [US3]: Implement PMS type switch confirmation warning
-  - **Files**: `rentalsync-bridge/src/static/js/admin.js`
+  - **Files**: `src/static/js/admin.js`
   - **Acceptance**: When user changes PMS type on an installation with existing synced data, a confirmation dialog warns that existing data won't be deleted but new syncs will use the new provider
   - **Depends on**: T042
   - **Traces to**: EC-006
@@ -164,7 +166,7 @@ SPDX-License-Identifier: Apache-2.0
 - [ ] T052 Update shared test fixtures with multi-provider factory helpers (Guesty + Cloudbeds credential factories, listing/booking/room factories with pms_* fields) in tests/conftest.py
 - [ ] T053 Validate quickstart.md developer setup steps by running full environment setup, migration, and end-to-end workflow on clean state
 - [ ] T054: Write performance validation tests
-  - **Files**: `rentalsync-bridge/tests/integration/test_performance.py`
+  - **Files**: `tests/integration/test_performance.py`
   - **Acceptance**: Tests validate: (a) sync cycle completes within 60s for 50-listing test dataset, (b) iCal generation latency <500ms, (c) token request count ≤2 per simulated 24h cycle
   - **Depends on**: T048
   - **Traces to**: SC-001, SC-005, Constitution Principle IV
@@ -226,7 +228,7 @@ Phase 7: Testing & Integration
 - Tasks are listed in execution order (sequential by default)
 - Tasks marked **[P]** within a phase can run in parallel
 - Models/interfaces before implementations
-- Implementations before tests (except when tests are for already-defined interfaces)
+- For implementation tasks with corresponding test tasks in the same phase, write tests first, verify they fail, then implement; otherwise follow the listed task order
 - Core logic before integration points
 
 ### Key Task Dependencies (Cross-Phase)

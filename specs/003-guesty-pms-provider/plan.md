@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Summary
 
-Add Guesty as a second PMS provider to rentalsync-bridge by introducing a pluggable PMS provider abstraction layer, generalizing the database schema from Cloudbeds-specific columns to provider-agnostic `pms_*` columns, implementing a GuestyService that communicates with the Guesty Open API v3, and updating the admin UI, configuration, and sync orchestration to be PMS-agnostic. The existing Cloudbeds integration is refactored to implement the same provider interface, ensuring backward compatibility with zero user intervention on upgrade.
+Add Guesty as a second PMS provider to rentalsync-bridge by introducing a pluggable PMS provider abstraction layer, generalizing the database schema from Cloudbeds-specific columns to provider-agnostic `pms_*` columns, implementing a GuestyService that communicates with the Guesty Open API using the appropriate endpoint versions, and updating the admin UI, configuration, and sync orchestration to be PMS-agnostic. The existing Cloudbeds integration is refactored to implement the same provider interface, ensuring backward compatibility with zero user intervention on upgrade.
 
 ## Technical Context
 
@@ -150,7 +150,7 @@ rentalsync-bridge/
 - Cache token in the OAuthCredential record with `token_expires_at`
 - Add `token_request_count` (int) and `token_request_window_start` (datetime) columns to track daily usage
 - Refresh only when expired (check `token_expires_at` before any API call)
-- Log warning at 4th request; log error and defer at 5th request in window
+- Log warning at 4th request; allow the 5th (final) request with a warning that the 24h limit is exhausted; log error and defer starting with the 6th request in the window
 - Under normal operations, expect ≤2 token requests per 24h (startup + one expiry-driven refresh)
 
 **Alternatives Considered**:

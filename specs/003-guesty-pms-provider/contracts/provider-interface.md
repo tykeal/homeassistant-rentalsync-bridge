@@ -337,7 +337,7 @@ Must wrap the existing `CloudbedsService` and:
 
 ### GuestyProvider
 
-Must implement against Guesty Open API v3 and:
+Must implement against the Guesty Open API, primarily using v1 endpoints (`/v1/listings`, `/v1/reservations`, `/v1/guests/{id}`) with the v3 custom-fields endpoint (`/v1/reservations-v3/{id}/custom-fields`), and:
 - `get_listings()` → paginated `GET /v1/listings`, handle multi-unit → Room mapping
 - `get_reservations()` → paginated `GET /v1/reservations` with guest ID resolution
 - `get_rooms()` → extract from listing detail (multi-unit) or create implicit (single-unit)

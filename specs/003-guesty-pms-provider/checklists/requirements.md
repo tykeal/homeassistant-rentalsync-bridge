@@ -10,7 +10,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Content Quality
 
-- [x] No implementation details (languages, frameworks, APIs)
+- [x] No implementation details — references to existing project infrastructure and external API constraints are permitted as they constrain the design rather than prescribe new implementation
 - [x] Focused on user value and business needs
 - [x] Written for non-technical stakeholders
 - [x] All mandatory sections completed

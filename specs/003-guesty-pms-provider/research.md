@@ -50,7 +50,8 @@ Guesty uses OAuth 2.0 client credentials flow for server-to-server authenticatio
 - Before requesting a new token: check if cached token is still valid
 - On token request: increment counter, set window start if first request
 - At 4th request in window: log WARNING about approaching limit
-- At 5th request: log ERROR and defer until window resets
+- At 5th request: allow and log WARNING that the final allowed token request has been used
+- At 6th+ request: log ERROR and defer until window resets
 - Window reset: when `now - token_request_window_start > 24 hours`, reset counter to 0
 
 **Why not alternatives**:
@@ -76,7 +77,7 @@ Need to map Guesty API endpoints to the existing sync workflow: list properties 
 GET /v1/listings?limit=100&skip=0&fields=_id,title,address,timezone
 ```
 - Pagination: `limit` (max 100), `skip` (offset)
-- Response: Array of listing objects
+- Response: Paginated object wrapper `{results: [...], count, limit, skip}` with `results` array of listing objects plus pagination metadata
 - Key fields: `_id`, `title`, `address` (nested object), `timezone`, `type` ("single"/"multi"), `childListings` (for multi-unit)
 
 #### Reservations Endpoint

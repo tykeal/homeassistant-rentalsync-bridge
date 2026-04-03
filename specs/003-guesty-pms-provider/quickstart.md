@@ -31,10 +31,10 @@ uv sync --all-extras
 
 ### 3. Configure Environment
 
-Copy `.env.example` and configure for Guesty development:
+Create a `.env` file manually and configure for Guesty development:
 
 ```bash
-cp .env.example .env
+touch .env
 ```
 
 Edit `.env` with Guesty-specific settings:
@@ -88,12 +88,6 @@ This will apply the `generalize_pms_columns` migration that:
 ```bash
 cd rentalsync-bridge
 uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8099
-```
-
-Or use the dev script:
-
-```bash
-./dev.sh
 ```
 
 ### 6. Access the Admin UI
@@ -228,10 +222,16 @@ To test that existing Cloudbeds installations work after the migration:
 
 1. Create a test database with pre-migration schema:
 ```bash
-# Start from a clean DB with old schema
-uv run alembic downgrade base
+# Option A: Start fresh — remove existing DB and migrate to the pre-migration revision
+rm -f rentalsync_bridge.db
 uv run alembic upgrade <pre-migration-revision>
+
+# Option B: If you have an existing DB, check out the pre-migration code and upgrade forward
+# git checkout <pre-migration-commit> -- alembic/
+# uv run alembic upgrade <pre-migration-revision>
 ```
+> **Note**: `uv run alembic downgrade base` will NOT work because the migration's
+> `downgrade()` raises `NotImplementedError` — the schema change is one-way.
 
 2. Insert test Cloudbeds data manually or via old test fixtures
 

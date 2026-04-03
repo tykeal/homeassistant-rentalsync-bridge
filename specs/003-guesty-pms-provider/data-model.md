@@ -14,22 +14,22 @@ This document describes the data model changes required to support multiple PMS 
 ## Entity Relationship Diagram
 
 ```text
-┌─────────────────────────┐
-│   OAuthCredential       │
-├─────────────────────────┤
-│ id              INT PK  │
-│ pms_type        STR(20) │ ← NEW: "cloudbeds" | "guesty"
-│ client_id       STR     │
-│ client_secret   STR enc │
-│ api_key         TXT enc │
-│ access_token    TXT enc │
-│ refresh_token   TXT enc │
-│ token_expires   DT      │
-│ token_req_count INT     │ ← NEW: Guesty rate tracking
-│ token_req_start DT      │ ← NEW: 24h window start
-│ created_at      DT      │
-│ updated_at      DT      │
-└─────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│   OAuthCredential                                        │
+├──────────────────────────────────────────────────────────┤
+│ id                         INT PK  │
+│ pms_type                   STR(20) │ ← NEW: "cloudbeds" | "guesty"
+│ client_id                  STR     │
+│ client_secret              STR enc │
+│ api_key                    TXT enc │
+│ access_token               TXT enc │
+│ refresh_token              TXT enc │
+│ token_expires_at           DT      │
+│ token_request_count        INT     │ ← NEW: Guesty rate tracking
+│ token_request_window_start DT      │ ← NEW: 24h window start
+│ created_at                 DT      │
+│ updated_at                 DT      │
+└──────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────┐       ┌──────────────────────────┐
 │   Listing                │       │   Room                   │
