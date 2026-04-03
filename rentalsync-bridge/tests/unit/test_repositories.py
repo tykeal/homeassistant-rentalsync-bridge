@@ -59,7 +59,7 @@ class TestListingRepository:
 
     @pytest.mark.asyncio
     async def test_get_by_pms_id(self, async_session):
-        """Test getting listing by Cloudbeds ID."""
+        """Test getting listing by PMS ID."""
         repo = ListingRepository(async_session)
         listing = Listing(
             pms_id="cb_12345",

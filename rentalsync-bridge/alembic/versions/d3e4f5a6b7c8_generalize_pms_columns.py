@@ -47,13 +47,20 @@ def upgrade() -> None:
             )
         )
 
-    # --- listings: rename cloudbeds_id -> pms_id ---
+    # --- listings: rename cloudbeds_id -> pms_id, rename index ---
     with op.batch_alter_table("listings", schema=None) as batch_op:
         batch_op.alter_column(
             "cloudbeds_id",
             new_column_name="pms_id",
             existing_type=sa.String(length=100),
             existing_nullable=False,
+        )
+
+    # Rename the unique index in a separate batch operation
+    with op.batch_alter_table("listings", schema=None) as batch_op:
+        batch_op.drop_index("ix_listings_cloudbeds_id")
+        batch_op.create_index(
+            "ix_listings_pms_id", ["pms_id"], unique=True
         )
 
     # --- bookings: rename cloudbeds_booking_id -> pms_booking_id ---

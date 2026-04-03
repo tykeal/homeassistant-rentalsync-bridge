@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Integration tests for the PMS column generalization migration."""
 
+from pathlib import Path
+
 import pytest
 from alembic.config import Config
 from alembic.operations import Operations
@@ -9,10 +11,13 @@ from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
 
+# Resolve alembic.ini relative to rentalsync-bridge directory
+_ALEMBIC_INI = str(Path(__file__).parent.parent.parent / "alembic.ini")
+
 
 def _run_migrations(engine, target_revision):
     """Run Alembic migrations up to target_revision on engine."""
-    cfg = Config("alembic.ini")
+    cfg = Config(_ALEMBIC_INI)
     script = ScriptDirectory.from_config(cfg)
 
     with engine.connect() as conn:
