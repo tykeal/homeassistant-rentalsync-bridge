@@ -34,6 +34,8 @@ def mock_repo():
 
     mock_credential = MagicMock()
     mock_credential.token_request_window_start = None
+    mock_credential.access_token = None
+    mock_credential.token_expires_at = None
     repo.get_credential = AsyncMock(return_value=mock_credential)
     return repo
 
@@ -250,6 +252,8 @@ class TestWindowReset:
         window_start = datetime.now(UTC) - timedelta(hours=12)
         mock_credential = MagicMock()
         mock_credential.token_request_window_start = window_start
+        mock_credential.access_token = None
+        mock_credential.token_expires_at = None
         mock_repo.get_credential.return_value = mock_credential
 
         with pytest.raises(TokenRateLimitError) as exc_info:
@@ -266,6 +270,8 @@ class TestWindowReset:
 
         mock_credential = MagicMock()
         mock_credential.token_request_window_start = None
+        mock_credential.access_token = None
+        mock_credential.token_expires_at = None
         mock_repo.get_credential.return_value = mock_credential
 
         with pytest.raises(TokenRateLimitError) as exc_info:

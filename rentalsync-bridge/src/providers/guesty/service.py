@@ -21,7 +21,7 @@ from src.providers.base import (
     PMSRoom,
     TokenResult,
 )
-from src.providers.guesty.auth import GuestyTokenManager
+from src.providers.guesty.auth import GUESTY_TOKEN_URL, GuestyTokenManager
 from src.providers.registry import provider
 
 if TYPE_CHECKING:
@@ -94,6 +94,20 @@ class GuestyProvider(PMSProvider):
             )
         else:
             self._token_manager = None
+
+    async def aclose(self) -> None:
+        """Close the owned httpx client, if any."""
+        if self._owns_client and self._http_client is not None:
+            await self._http_client.aclose()
+            self._http_client = None
+
+    async def __aenter__(self) -> "GuestyProvider":
+        """Enter the async context manager."""
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        """Exit the async context manager."""
+        await self.aclose()
 
     # -- helpers ---------------------------------------------------------------
 
@@ -433,12 +447,15 @@ class GuestyProvider(PMSProvider):
 
     async def refresh_token(
         self,
-        credential: "OAuthCredential",  # noqa: ARG002
+        credential: "OAuthCredential",
     ) -> TokenResult:
         """Refresh the Guesty OAuth token.
 
         Guesty uses client-credentials flow, so "refresh" means
-        requesting a new token.  Delegates to the token manager.
+        requesting a new token.  Delegates to the token manager when
+        available; otherwise falls back to a direct HTTP request using
+        the credential's ``client_id`` / ``client_secret`` (e.g. when
+        constructed by ``OAuthService`` with no kwargs).
 
         Args:
             credential: Current credential record.
@@ -447,20 +464,69 @@ class GuestyProvider(PMSProvider):
             TokenResult with new access token and expiry.
 
         Raises:
-            PMSAuthenticationError: If the token manager is not
-                configured or token request fails.
+            PMSAuthenticationError: If token request fails.
+            PMSConnectionError: If unable to reach Guesty API.
         """
-        if self._token_manager is None:
-            msg = "GuestyProvider requires a token manager for refresh"
+        if self._token_manager is not None:
+            self._token_manager.invalidate_cache()
+            token = await self._token_manager.get_token()
+            expires_at = self._token_manager.cached_expires_at or datetime.now(UTC)
+            return TokenResult(
+                access_token=token,
+                refresh_token=None,
+                expires_at=expires_at,
+            )
+
+        # No token manager — direct client-credentials request
+        if not credential.client_id or not credential.client_secret:
+            msg = "Guesty refresh requires client_id and client_secret"
             raise PMSAuthenticationError(msg)
 
-        self._token_manager.invalidate_cache()
-        token = await self._token_manager.get_token()
-        expires_at = self._token_manager.cached_expires_at or datetime.now(UTC)
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    GUESTY_TOKEN_URL,
+                    data={
+                        "grant_type": "client_credentials",
+                        "scope": "open-api",
+                        "client_id": credential.client_id,
+                        "client_secret": credential.client_secret,
+                    },
+                )
+        except httpx.HTTPError as exc:
+            msg = f"Failed to connect to Guesty OAuth endpoint: {exc}"
+            raise PMSConnectionError(msg) from exc
+
+        if response.status_code in (401, 403):
+            msg = (
+                f"Guesty authentication failed "
+                f"(HTTP {response.status_code}): {response.text}"
+            )
+            raise PMSAuthenticationError(msg)
+
+        if response.status_code != 200:  # noqa: PLR2004
+            msg = (
+                f"Guesty token request failed "
+                f"(HTTP {response.status_code}): {response.text}"
+            )
+            raise PMSAuthenticationError(msg)
+
+        data = response.json()
+        access_token = data.get("access_token")
+        if not access_token:
+            msg = "Token response missing access_token"
+            raise PMSAuthenticationError(msg)
+
+        expires_in = data.get("expires_in", 86400)
+        try:
+            expires_in = int(expires_in)
+        except (TypeError, ValueError):
+            expires_in = 86400  # Default 24h
+
         return TokenResult(
-            access_token=token,
+            access_token=access_token,
             refresh_token=None,
-            expires_at=expires_at,
+            expires_at=datetime.now(UTC) + timedelta(seconds=expires_in),
         )
 
     async def test_connection(self) -> bool:

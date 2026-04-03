@@ -632,11 +632,13 @@ class TestRefreshToken:
 
     @pytest.mark.asyncio
     async def test_refresh_without_manager_raises(self, mock_http_client):
-        """Test that refresh without manager raises error."""
+        """Test that refresh without manager and missing creds raises."""
         prov = GuestyProvider(http_client=mock_http_client)
         mock_credential = MagicMock()
+        mock_credential.client_id = None
+        mock_credential.client_secret = None
 
-        with pytest.raises(PMSAuthenticationError, match="token manager"):
+        with pytest.raises(PMSAuthenticationError, match="client_id"):
             await prov.refresh_token(mock_credential)
 
 

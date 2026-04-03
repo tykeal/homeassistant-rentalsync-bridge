@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 GUESTY_TOKEN_URL = "https://open-api.guesty.com/oauth2/token"
 TOKEN_VALIDITY = timedelta(hours=24)
 TOKEN_REQUEST_LIMIT = 5
-TOKEN_WARN_THRESHOLD = 4
+TOKEN_WARN_THRESHOLD = 3
 
 
 class GuestyTokenManager:
@@ -143,6 +143,17 @@ class GuestyTokenManager:
         if self._is_cache_valid():
             return self._cached_token  # type: ignore[return-value]
 
+        # Try loading a still-valid token from the database
+        credential = await self._repo.get_credential("guesty")
+        if credential and credential.access_token and credential.token_expires_at:
+            expires_at = credential.token_expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=UTC)
+            if datetime.now(UTC) < expires_at:
+                self._cached_token = credential.access_token
+                self._cached_expires_at = expires_at
+                return self._cached_token
+
         await self._check_rate_limit()
 
         result = await self._request_token()
@@ -206,8 +217,16 @@ class GuestyTokenManager:
             raise PMSAuthenticationError(msg)
 
         data = response.json()
-        access_token = data.get("access_token", "")
+        access_token = data.get("access_token")
+        if not access_token:
+            msg = "Token response missing access_token"
+            raise PMSAuthenticationError(msg)
+
         expires_in = data.get("expires_in", 86400)
+        try:
+            expires_in = int(expires_in)
+        except (TypeError, ValueError):
+            expires_in = 86400  # Default 24h
         expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)
 
         return TokenResult(
