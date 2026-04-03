@@ -55,7 +55,7 @@ This document describes the data model changes required to support multiple PMS 
 ├──────────────────────────┤  │    │ room_id         INT FK   │
 │ id              INT PK   │  │    │ pms_booking_id  STR      │ ← RENAMED
 │ listing_id      INT FK   │──┘    │ guest_name      STR      │
-│ field_name      STR      │       │ guest_phone_l4  STR(4)   │
+│ field_name      STR      │       │ guest_phone_last4 STR(4) │
 │ display_label   STR      │       │ check_in_date   DT       │
 │ enabled         BOOL     │       │ check_out_date  DT       │
 │ sort_order      INT      │       │ status          STR      │
