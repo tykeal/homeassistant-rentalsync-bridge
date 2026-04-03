@@ -236,6 +236,11 @@ class CloudbedsProvider(PMSProvider):
 
         Raises:
             PMSProviderError: If API communication fails for all properties.
+
+        Note: CloudbedsService.get_reservations() uses a default date window
+            (24h ago to 365 days ahead). Reservations outside this window may
+            not be found. This is a known limitation of the Cloudbeds API
+            wrapper.
         """
         # TODO(optimization): Cloudbeds API does not support fetching a
         # single reservation by ID across properties.  This iterates all
