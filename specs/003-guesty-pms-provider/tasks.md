@@ -147,7 +147,7 @@ SPDX-License-Identifier: Apache-2.0
   - **Files**: `src/static/js/admin.js`
   - **Acceptance**: When user changes PMS type on an installation with existing synced data, a confirmation dialog warns that existing data won't be deleted but new syncs will use the new provider
   - **Depends on**: T042
-  - **Traces to**: EC-006
+  - **Traces to**: Provider-switch warning edge case in `spec.md`
 
 **Checkpoint**: Admin UI fully supports multi-PMS workflow. Users can select provider, enter provider-specific credentials, test connection, and see provider-aware status. Existing Cloudbeds UI flow unchanged.
 

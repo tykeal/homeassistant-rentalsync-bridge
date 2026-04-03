@@ -141,9 +141,9 @@ Configure PMS credentials. Updated to accept `pms_type` parameter.
 ### Response: 200 OK
 ```json
 {
-  "status": "connected",
-  "pms_type": "guesty",
-  "message": "Guesty credentials configured and connection verified"
+  "success": true,
+  "message": "Guesty credentials configured and connection verified",
+  "pms_type": "guesty"
 }
 ```
 
@@ -188,7 +188,7 @@ Updated to include `pms_type` and Guesty-specific rate limit info.
   "configured": true,
   "connected": true,
   "pms_type": "cloudbeds",
-  "auth_type": "oauth2",
+  "auth_type": "oauth",
   "token_expires_at": "2025-07-15T18:00:00Z",
   "token_expired": false,
   "token_requests_remaining": null
@@ -203,7 +203,7 @@ Updated to include `pms_type` and Guesty-specific rate limit info.
   "pms_type": null,
   "auth_type": null,
   "token_expires_at": null,
-  "token_expired": null,
+  "token_expired": false,
   "token_requests_remaining": null
 }
 ```
@@ -263,7 +263,10 @@ This is a breaking change for any client relying on the old field name.
 
 ## Minimally Changed Endpoints
 
-The following endpoints have no structural contract changes but may have field name changes due to the column rename:
+Existing endpoints are updated to support provider-specific configuration while
+preserving backward compatibility where possible. Any endpoint response-shape changes
+are considered breaking changes and must be explicitly documented as such. One new
+endpoint is added for provider discovery.
 
 | Endpoint | Reason |
 |----------|--------|
