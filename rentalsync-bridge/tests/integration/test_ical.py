@@ -7,7 +7,7 @@ iCal tests after the API changed in Feature 002.
 """
 
 from collections.abc import AsyncGenerator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -111,14 +111,15 @@ async def test_get_ical_success(test_app, test_session):
     await test_session.refresh(room)
 
     # Create test booking for the room
+    now = datetime.now(UTC)
     booking = Booking(
         listing_id=listing.id,
         room_id=room.id,
         cloudbeds_booking_id="BK12345",
         guest_name="Test Guest",
         guest_phone_last4="5678",
-        check_in_date=datetime(2026, 3, 1, 14, 0, tzinfo=UTC),
-        check_out_date=datetime(2026, 3, 5, 11, 0, tzinfo=UTC),
+        check_in_date=now + timedelta(days=1),
+        check_out_date=now + timedelta(days=5),
         status="confirmed",
     )
     test_session.add(booking)
@@ -239,13 +240,14 @@ async def test_get_ical_with_custom_fields(test_app, test_session):
     test_session.add(custom_field)
 
     # Create booking with custom data
+    now = datetime.now(UTC)
     booking = Booking(
         listing_id=listing.id,
         room_id=room.id,
         cloudbeds_booking_id="BK99999",
         guest_name="VIP Guest",
-        check_in_date=datetime(2026, 4, 1, tzinfo=UTC),
-        check_out_date=datetime(2026, 4, 3, tzinfo=UTC),
+        check_in_date=now + timedelta(days=10),
+        check_out_date=now + timedelta(days=12),
         status="confirmed",
         custom_data={"booking_notes": "Special requests noted"},
     )
@@ -404,13 +406,14 @@ async def test_per_room_ical_uses_independent_custom_fields(test_app, test_sessi
     test_session.add_all([field1, field2])
 
     # Create bookings with different custom data
+    now = datetime.now(UTC)
     booking1 = Booking(
         listing_id=listing1.id,
         room_id=room1.id,
         cloudbeds_booking_id="CB001",
         guest_name="Beach Guest",
-        check_in_date=datetime(2026, 7, 1, tzinfo=UTC),
-        check_out_date=datetime(2026, 7, 5, tzinfo=UTC),
+        check_in_date=now + timedelta(days=30),
+        check_out_date=now + timedelta(days=34),
         status="confirmed",
         custom_data={"booking_notes": "Loves the ocean view"},
     )
@@ -419,8 +422,8 @@ async def test_per_room_ical_uses_independent_custom_fields(test_app, test_sessi
         room_id=room2.id,
         cloudbeds_booking_id="CB002",
         guest_name="Mountain Guest",
-        check_in_date=datetime(2026, 8, 1, tzinfo=UTC),
-        check_out_date=datetime(2026, 8, 5, tzinfo=UTC),
+        check_in_date=now + timedelta(days=60),
+        check_out_date=now + timedelta(days=64),
         status="confirmed",
         custom_data={"special_requests": "Wants hiking trail map"},
     )

@@ -3,7 +3,7 @@
 """Integration tests for room-level iCal endpoint."""
 
 from collections.abc import AsyncGenerator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -131,6 +131,7 @@ async def bookings_for_rooms(
     ical_session: AsyncSession, listing_with_rooms: Listing, room1: Room, room2: Room
 ) -> list[Booking]:
     """Create bookings for different rooms."""
+    now = datetime.now(UTC)
     bookings = [
         # Room 1 bookings
         Booking(
@@ -139,8 +140,8 @@ async def bookings_for_rooms(
             cloudbeds_booking_id="booking-room1-1",
             guest_name="Alice Johnson",
             guest_phone_last4="1234",
-            check_in_date=datetime(2026, 3, 1, 15, 0, tzinfo=UTC),
-            check_out_date=datetime(2026, 3, 5, 11, 0, tzinfo=UTC),
+            check_in_date=now + timedelta(days=1),
+            check_out_date=now + timedelta(days=5),
             status="confirmed",
         ),
         Booking(
@@ -149,8 +150,8 @@ async def bookings_for_rooms(
             cloudbeds_booking_id="booking-room1-2",
             guest_name="Bob Smith",
             guest_phone_last4="5678",
-            check_in_date=datetime(2026, 3, 10, 15, 0, tzinfo=UTC),
-            check_out_date=datetime(2026, 3, 15, 11, 0, tzinfo=UTC),
+            check_in_date=now + timedelta(days=10),
+            check_out_date=now + timedelta(days=15),
             status="confirmed",
         ),
         # Room 2 bookings
@@ -160,8 +161,8 @@ async def bookings_for_rooms(
             cloudbeds_booking_id="booking-room2-1",
             guest_name="Charlie Brown",
             guest_phone_last4="9012",
-            check_in_date=datetime(2026, 3, 3, 15, 0, tzinfo=UTC),
-            check_out_date=datetime(2026, 3, 8, 11, 0, tzinfo=UTC),
+            check_in_date=now + timedelta(days=3),
+            check_out_date=now + timedelta(days=8),
             status="confirmed",
         ),
     ]
