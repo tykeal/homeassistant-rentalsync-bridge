@@ -182,7 +182,7 @@ Updated to include `pms_type` and Guesty-specific rate limit info.
 }
 ```
 
-### Response: 200 OK (Cloudbeds configured)
+### Response: 200 OK (Cloudbeds configured — OAuth)
 ```json
 {
   "configured": true,
@@ -190,6 +190,19 @@ Updated to include `pms_type` and Guesty-specific rate limit info.
   "pms_type": "cloudbeds",
   "auth_type": "oauth",
   "token_expires_at": "2025-07-15T18:00:00Z",
+  "token_expired": false,
+  "token_requests_remaining": null
+}
+```
+
+### Response: 200 OK (Cloudbeds configured — API Key)
+```json
+{
+  "configured": true,
+  "connected": true,
+  "pms_type": "cloudbeds",
+  "auth_type": "api_key",
+  "token_expires_at": null,
   "token_expired": false,
   "token_requests_remaining": null
 }

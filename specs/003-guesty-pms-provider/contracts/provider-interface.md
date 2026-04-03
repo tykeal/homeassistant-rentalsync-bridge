@@ -96,7 +96,8 @@ class PMSProvider(ABC):
         """Fetch all listings/properties from the PMS.
 
         Returns:
-            List of normalized listings with embedded room information.
+            List of normalized listings. ``rooms`` may be empty;
+            use ``get_rooms()`` to fetch room details per listing.
 
         Raises:
             PMSProviderError: If API communication fails.
@@ -119,7 +120,10 @@ class PMSProvider(ABC):
             end_date: Filter end (inclusive). Default: 365 days future.
 
         Returns:
-            List of normalized reservations with guest names resolved.
+            List of normalized reservations. ``guest_name`` may be
+            ``None`` if the provider does not include guest details
+            in the reservation payload; callers can use ``guest_id``
+            with ``get_guest()`` to resolve names when needed.
 
         Raises:
             PMSProviderError: If API communication fails.
