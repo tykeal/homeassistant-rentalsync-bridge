@@ -35,7 +35,6 @@ class CredentialRepository:
         Returns:
             The matching credential, or ``None`` if not configured.
         """
-        # TODO: add a unique constraint on pms_type in a future migration
         result = await self._session.execute(
             select(OAuthCredential)
             .where(OAuthCredential.pms_type == pms_type)

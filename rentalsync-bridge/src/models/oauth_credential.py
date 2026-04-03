@@ -73,7 +73,7 @@ class OAuthCredential(Base):
     __tablename__ = "oauth_credentials"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    client_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    client_id: Mapped[str] = mapped_column(String(255), nullable=False)
     _client_secret: Mapped[str] = mapped_column(
         "client_secret", String(255), nullable=False
     )
@@ -86,7 +86,7 @@ class OAuthCredential(Base):
     )
     token_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     pms_type: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="cloudbeds"
+        String(20), nullable=False, default="cloudbeds", unique=True
     )
     token_request_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     token_request_window_start: Mapped[datetime | None] = mapped_column(
