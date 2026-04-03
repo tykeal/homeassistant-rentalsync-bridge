@@ -28,6 +28,8 @@ class TestOAuthService:
         """Create mock OAuth credential."""
         cred = MagicMock()
         cred.pms_type = "cloudbeds"
+        cred.client_id = "test_client_id"
+        cred.client_secret = "test_client_secret"
         cred.access_token = "old_access_token"
         cred.refresh_token = "test_refresh_token"
         cred.token_expires_at = datetime.now(UTC) + timedelta(hours=1)

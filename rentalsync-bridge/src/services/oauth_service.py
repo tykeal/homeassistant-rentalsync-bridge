@@ -119,8 +119,8 @@ class OAuthService:
                     CLOUDBEDS_TOKEN_URL,
                     data={
                         "grant_type": "refresh_token",
-                        "client_id": self._settings.cloudbeds_client_id,
-                        "client_secret": self._settings.cloudbeds_client_secret,
+                        "client_id": credential.client_id,
+                        "client_secret": credential.client_secret,
                         "refresh_token": credential.refresh_token,
                     },
                     timeout=30.0,

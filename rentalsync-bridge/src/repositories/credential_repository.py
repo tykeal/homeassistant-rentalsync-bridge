@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Provider-aware credential repository for OAuth credentials."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import case, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -106,16 +106,35 @@ class CredentialRepository:
         Args:
             credential_id: Primary key of the credential row.
         """
-        # Atomic increment to avoid lost updates under concurrency
+        # Atomic increment to avoid lost updates under concurrency.
+        # Three branches:
+        #  1. No window yet (NULL) → start a new window, count = 1
+        #  2. Window expired (older than 24 h) → reset window, count = 1
+        #  3. Window still active → keep window, count += 1
         now = datetime.now(UTC)
+        window_cutoff = now - timedelta(hours=24)
         result = await self._session.execute(
             update(OAuthCredential)
             .where(OAuthCredential.id == credential_id)
             .values(
-                token_request_count=OAuthCredential.token_request_count + 1,
+                token_request_count=case(
+                    (
+                        OAuthCredential.token_request_window_start.is_(None),
+                        1,
+                    ),
+                    (
+                        OAuthCredential.token_request_window_start < window_cutoff,
+                        1,
+                    ),
+                    else_=OAuthCredential.token_request_count + 1,
+                ),
                 token_request_window_start=case(
                     (
                         OAuthCredential.token_request_window_start.is_(None),
+                        now,
+                    ),
+                    (
+                        OAuthCredential.token_request_window_start < window_cutoff,
                         now,
                     ),
                     else_=OAuthCredential.token_request_window_start,
