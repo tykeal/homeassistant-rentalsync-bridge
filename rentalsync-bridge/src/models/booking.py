@@ -87,6 +87,6 @@ class Booking(Base):
     def __repr__(self) -> str:
         """Return string representation."""
         return (
-            f"<Booking(id={self.id}, pms_id={self.pms_booking_id}, "
+            f"<Booking(id={self.id}, pms_booking_id={self.pms_booking_id}, "
             f"status={self.status})>"
         )
