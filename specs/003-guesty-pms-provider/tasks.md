@@ -106,7 +106,7 @@ SPDX-License-Identifier: Apache-2.0
 - [ ] T029 [US1] Implement get_rooms: for multi-unit listings fetch GET /v1/listings/{id} and map childListings to PMSRoom; for single-unit create one implicit PMSRoom record in src/providers/guesty/service.py
 - [ ] T030 [US5] Implement get_guest via GET /v1/guests/{id} returning PMSGuest with fullName, phone, email; return None on 404 for "Guest [guestId]" fallback in src/providers/guesty/service.py
 - [ ] T031 [US5] Implement get_custom_fields via GET /v1/reservations-v3/{id}/custom-fields (v3 endpoint only — v2 is deprecated) returning fieldId → value dict in src/providers/guesty/service.py
-- [ ] T032 [US1] Register GuestyProvider in provider registry and implement test_connection via get_listings(limit=1) success check in src/providers/guesty/__init__.py and src/providers/registry.py
+- [ ] T032 [US1] Register GuestyProvider in provider registry and implement test_connection via get_listings() success check (verify it returns at least one listing) in src/providers/guesty/__init__.py and src/providers/registry.py
 - [ ] T033 [P] [US4] Write unit tests for GuestyTokenManager: cache hit, cache miss, rate tracking, window reset, warn-at-4th, allow-5th-with-warning, and defer-at-6th scenarios in tests/unit/test_guesty_auth.py
 - [ ] T034 [P] [US1] Write unit tests for GuestyProvider with mocked httpx responses: get_listings pagination, get_reservations filtering, get_rooms multi/single-unit, get_guest with 404, get_custom_fields v3, and 429 retry behavior in tests/unit/test_guesty_service.py
 
