@@ -29,6 +29,17 @@ class CredentialRepository:
         """
         self._session = session
 
+    async def get_active_credential(self) -> OAuthCredential | None:
+        """Fetch the most recently updated credential across all providers.
+
+        Returns:
+            The most recently updated credential, or None.
+        """
+        result = await self._session.execute(
+            select(OAuthCredential).order_by(OAuthCredential.updated_at.desc())
+        )
+        return result.scalars().first()
+
     async def get_credential(self, pms_type: str) -> OAuthCredential | None:
         """Fetch the credential for a given provider type.
 

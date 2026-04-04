@@ -18,6 +18,32 @@ class TestCredentialRepository:
         """Create a CredentialRepository bound to the test session."""
         return CredentialRepository(async_session)
 
+    # -- get_active_credential --------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_get_active_credential_none(self, repo):
+        """Return None when no credentials exist."""
+        result = await repo.get_active_credential()
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_active_credential_returns_most_recent(self, repo, async_session):
+        """Return the most recently updated credential."""
+        older = OAuthCredential(client_id="old_client", pms_type="cloudbeds")
+        older.client_secret = "secret"
+        async_session.add(older)
+        await async_session.flush()
+
+        newer = OAuthCredential(client_id="new_client", pms_type="guesty")
+        newer.client_secret = "secret"
+        async_session.add(newer)
+        await async_session.flush()
+
+        result = await repo.get_active_credential()
+        assert result is not None
+        assert result.client_id == "new_client"
+        assert result.pms_type == "guesty"
+
     # -- get_credential ---------------------------------------------------
 
     @pytest.mark.asyncio

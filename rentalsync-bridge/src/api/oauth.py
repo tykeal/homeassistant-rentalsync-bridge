@@ -110,17 +110,21 @@ async def get_oauth_status(
         OAuth configuration and connection status.
     """
     settings = get_settings()
-    pms_type = settings.pms_type
-
     repo = CredentialRepository(db)
-    credential = await repo.get_credential(pms_type)
+
+    # Try settings-configured type first, then fall back to any active
+    # credential so that UI-configured providers are visible even when
+    # the env-var default differs.
+    credential = await repo.get_credential(settings.pms_type)
+    if not credential:
+        credential = await repo.get_active_credential()
 
     if not credential:
         return {
             "configured": False,
             "connected": False,
             "auth_type": None,
-            "pms_type": pms_type,
+            "pms_type": settings.pms_type,
             "token_expires_at": None,
             "token_expired": False,
             "token_requests_remaining": None,
@@ -288,6 +292,8 @@ async def refresh_oauth_token(
     settings = get_settings()
     repo = CredentialRepository(db)
     credential = await repo.get_credential(settings.pms_type)
+    if not credential:
+        credential = await repo.get_active_credential()
 
     if not credential:
         raise HTTPException(
