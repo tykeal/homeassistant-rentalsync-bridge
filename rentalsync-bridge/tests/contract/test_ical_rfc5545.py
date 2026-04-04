@@ -4,6 +4,7 @@
 
 These tests validate that generated iCal feeds comply with RFC 5545
 (Internet Calendaring and Scheduling Core Object Specification).
+Includes cross-provider structural equivalence checks.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -441,3 +442,170 @@ class TestDateTimeCompliance:
             dtend = dtend.date() if not hasattr(dtend, "hour") else dtend
 
         assert dtend >= dtstart, "DTEND must be on or after DTSTART"
+
+
+class TestGuestySourcedCompliance:
+    """Verify Guesty-sourced bookings produce valid iCal output."""
+
+    @pytest.fixture
+    def calendar_service(self):
+        """Create calendar service without cache."""
+        from src.services.calendar_service import CalendarCache
+
+        return CalendarService(cache=CalendarCache(ttl_seconds=0))
+
+    @pytest.fixture
+    def guesty_listing(self):
+        """Create a Guesty sample listing."""
+        return Listing(
+            id=10,
+            pms_id="GUESTY001",
+            name="Guesty Beach House",
+            ical_url_slug="guesty-beach-house",
+            enabled=True,
+            sync_enabled=True,
+            timezone="America/Los_Angeles",
+        )
+
+    @pytest.fixture
+    def guesty_booking(self):
+        """Create a Guesty sample booking."""
+        return Booking(
+            id=10,
+            listing_id=10,
+            pms_booking_id="GR_BOOKING_42",
+            guest_name="Alice Guesty",
+            guest_phone_last4="9876",
+            check_in_date=datetime(2026, 8, 1, 15, 0, 0, tzinfo=UTC),
+            check_out_date=datetime(2026, 8, 5, 11, 0, 0, tzinfo=UTC),
+            status="confirmed",
+            custom_data={"note": "VIP guest"},
+        )
+
+    def test_guesty_vevent_properties(
+        self, calendar_service, guesty_listing, guesty_booking
+    ):
+        """Guesty events contain all required VEVENT properties."""
+        ical_str = calendar_service.generate_ical(guesty_listing, [guesty_booking])
+        cal = Calendar.from_ical(ical_str)
+        events = list(cal.walk("VEVENT"))
+        assert len(events) == 1
+
+        evt = events[0]
+        assert "uid" in evt
+        assert "@rentalsync-bridge" in str(evt["uid"])
+        assert "dtstart" in evt
+        assert "dtend" in evt
+        assert "summary" in evt
+        assert "Alice Guesty" in str(evt["summary"])
+        assert "dtstamp" in evt
+
+    def test_guesty_booking_uid_stable(
+        self, calendar_service, guesty_listing, guesty_booking
+    ):
+        """Guesty booking UID is deterministic across generations."""
+        ical1 = calendar_service.generate_ical(guesty_listing, [guesty_booking])
+        ical2 = calendar_service.generate_ical(guesty_listing, [guesty_booking])
+        cal1 = Calendar.from_ical(ical1)
+        cal2 = Calendar.from_ical(ical2)
+        uid1 = str(next(iter(cal1.walk("VEVENT")))["uid"])
+        uid2 = str(next(iter(cal2.walk("VEVENT")))["uid"])
+        assert uid1 == uid2
+
+    def test_guesty_all_day_date_format(
+        self, calendar_service, guesty_listing, guesty_booking
+    ):
+        """Guesty events use VALUE=DATE for all-day format."""
+        ical_str = calendar_service.generate_ical(guesty_listing, [guesty_booking])
+        # All-day events use VALUE=DATE format
+        assert "DTSTART;VALUE=DATE:" in ical_str
+        assert "DTEND;VALUE=DATE:" in ical_str
+
+
+class TestCrossProviderEquivalence:
+    """Guesty- and Cloudbeds-sourced events have equivalent structure."""
+
+    @pytest.fixture
+    def calendar_service(self):
+        """Create calendar service without cache."""
+        from src.services.calendar_service import CalendarCache
+
+        return CalendarService(cache=CalendarCache(ttl_seconds=0))
+
+    def _make_listing(self, *, pms_id, name, slug, list_id):
+        """Build a Listing model for comparison tests."""
+        return Listing(
+            id=list_id,
+            pms_id=pms_id,
+            name=name,
+            ical_url_slug=slug,
+            enabled=True,
+            sync_enabled=True,
+            timezone="America/New_York",
+        )
+
+    def _make_booking(self, *, listing_id, booking_id, guest):
+        """Build a Booking model for comparison tests."""
+        return Booking(
+            listing_id=listing_id,
+            pms_booking_id=booking_id,
+            guest_name=guest,
+            check_in_date=datetime(2026, 9, 1, 14, 0, 0, tzinfo=UTC),
+            check_out_date=datetime(2026, 9, 5, 11, 0, 0, tzinfo=UTC),
+            status="confirmed",
+        )
+
+    def test_events_have_same_required_properties(self, calendar_service):
+        """Guesty and Cloudbeds events share all required VEVENT props."""
+        guesty_listing = self._make_listing(
+            pms_id="G001", name="Guesty Prop", slug="g-prop", list_id=100
+        )
+        cloudbeds_listing = self._make_listing(
+            pms_id="CB001", name="CB Prop", slug="cb-prop", list_id=200
+        )
+
+        guesty_bk = self._make_booking(
+            listing_id=100, booking_id="G_BK1", guest="Guesty Guest"
+        )
+        cb_bk = self._make_booking(
+            listing_id=200, booking_id="CB_BK1", guest="Cloudbeds Guest"
+        )
+
+        g_ical = calendar_service.generate_ical(guesty_listing, [guesty_bk])
+        cb_ical = calendar_service.generate_ical(cloudbeds_listing, [cb_bk])
+
+        g_cal = Calendar.from_ical(g_ical)
+        cb_cal = Calendar.from_ical(cb_ical)
+
+        g_evt = next(iter(g_cal.walk("VEVENT")))
+        cb_evt = next(iter(cb_cal.walk("VEVENT")))
+
+        required_props = ["uid", "dtstart", "dtend", "dtstamp", "summary"]
+        for prop in required_props:
+            assert prop in g_evt, f"Guesty event missing {prop}"
+            assert prop in cb_evt, f"Cloudbeds event missing {prop}"
+
+    def test_calendar_metadata_equivalent(self, calendar_service):
+        """Both providers produce matching calendar-level metadata."""
+        guesty_listing = self._make_listing(
+            pms_id="G002", name="G Prop", slug="g-prop-2", list_id=101
+        )
+        cloudbeds_listing = self._make_listing(
+            pms_id="CB002", name="CB Prop", slug="cb-prop-2", list_id=201
+        )
+
+        g_ical = calendar_service.generate_ical(guesty_listing, [])
+        cb_ical = calendar_service.generate_ical(cloudbeds_listing, [])
+
+        g_cal = Calendar.from_ical(g_ical)
+        cb_cal = Calendar.from_ical(cb_ical)
+
+        # Both should have same structural properties
+        assert str(g_cal["prodid"]) == str(cb_cal["prodid"])
+        assert str(g_cal["version"]) == str(cb_cal["version"])
+
+        if "calscale" in g_cal and "calscale" in cb_cal:
+            assert str(g_cal["calscale"]) == str(cb_cal["calscale"])
+
+        if "method" in g_cal and "method" in cb_cal:
+            assert str(g_cal["method"]) == str(cb_cal["method"])
