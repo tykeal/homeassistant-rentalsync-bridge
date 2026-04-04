@@ -170,6 +170,70 @@ class TestOAuthStatus:
         assert data["pms_type"] == "guesty"
         assert data["token_requests_remaining"] == 3
 
+    @pytest.mark.asyncio
+    async def test_status_falls_back_to_active_credential(
+        self, oauth_app, oauth_session
+    ):
+        """Status finds a Guesty credential when settings default to cloudbeds."""
+        # Settings default to cloudbeds, but only a guesty credential exists
+        cred = OAuthCredential(client_id="gu_client", pms_type="guesty")
+        cred.client_secret = "secret"
+        cred.access_token = "access"
+        cred.token_expires_at = datetime.now(UTC) + timedelta(hours=1)
+        oauth_session.add(cred)
+        await oauth_session.commit()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=oauth_app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/api/oauth/status",
+                headers={"Authorization": "Bearer test"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["configured"] is True
+        assert data["pms_type"] == "guesty"
+
+    @pytest.mark.asyncio
+    async def test_status_prefers_settings_pms_type(
+        self, oauth_app, oauth_session, monkeypatch
+    ):
+        """When settings type matches a credential, prefer it."""
+        monkeypatch.setenv("PMS_TYPE", "guesty")
+        from src.config import get_settings
+
+        get_settings.cache_clear()
+
+        gu = OAuthCredential(client_id="gu_client", pms_type="guesty")
+        gu.client_secret = "secret"
+        gu.access_token = "access"
+        gu.token_expires_at = datetime.now(UTC) + timedelta(hours=1)
+        cb = OAuthCredential(client_id="cb_client", pms_type="cloudbeds")
+        cb.client_secret = "secret"
+        cb.access_token = "access"
+        cb.refresh_token = "refresh"
+        cb.token_expires_at = datetime.now(UTC) + timedelta(hours=1)
+        oauth_session.add_all([gu, cb])
+        await oauth_session.commit()
+
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=oauth_app),
+                base_url="http://test",
+            ) as client:
+                response = await client.get(
+                    "/api/oauth/status",
+                    headers={"Authorization": "Bearer test"},
+                )
+        finally:
+            get_settings.cache_clear()
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["pms_type"] == "guesty"
+
 
 class TestOAuthConfigure:
     """Tests for POST /api/oauth/configure endpoint."""
