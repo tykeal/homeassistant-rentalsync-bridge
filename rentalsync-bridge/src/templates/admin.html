@@ -14,7 +14,7 @@ SPDX-License-Identifier: Apache-2.0
     <div class="container">
         <header>
             <h1>RentalSync Bridge</h1>
-            <p class="subtitle">Cloudbeds to Airbnb iCal Export</p>
+            <p class="subtitle" id="app-subtitle">PMS to Airbnb iCal Export</p>
         </header>
 
         <!-- Status Section -->
@@ -24,6 +24,10 @@ SPDX-License-Identifier: Apache-2.0
                 <div class="status-item">
                     <span class="label">Overall:</span>
                     <span id="status-overall" class="badge">Loading...</span>
+                </div>
+                <div class="status-item">
+                    <span class="label">PMS:</span>
+                    <span id="status-pms" class="badge">--</span>
                 </div>
                 <div class="status-item">
                     <span class="label">OAuth:</span>
@@ -42,40 +46,25 @@ SPDX-License-Identifier: Apache-2.0
 
         <!-- OAuth Configuration -->
         <section id="oauth-section" class="card">
-            <h2>Cloudbeds Authentication</h2>
+            <h2 id="oauth-section-title">PMS Authentication</h2>
             <div id="oauth-status-display">
                 <p id="oauth-status-text">Checking authentication status...</p>
             </div>
+            <div id="pms-selector" class="form-group">
+                <label for="pms-type">PMS Provider</label>
+                <select id="pms-type">
+                    <option value="">Loading providers...</option>
+                </select>
+            </div>
             <form id="oauth-form" class="hidden">
-                <p class="description">Enter your Cloudbeds credentials. You can use either an API Key (simpler) or OAuth tokens.</p>
-                <div class="form-group">
-                    <label for="client-id">Client ID *</label>
-                    <input type="text" id="client-id" required>
-                </div>
-                <div class="form-group">
-                    <label for="client-secret">Client Secret *</label>
-                    <input type="password" id="client-secret" required>
-                </div>
-                <div class="form-group">
-                    <label for="api-key">API Key (recommended)</label>
-                    <input type="text" id="api-key" placeholder="Use API Key OR OAuth tokens below">
-                </div>
-                <details>
-                    <summary>OAuth Tokens (alternative)</summary>
-                    <div class="form-group">
-                        <label for="access-token">Access Token</label>
-                        <input type="text" id="access-token">
-                    </div>
-                    <div class="form-group">
-                        <label for="refresh-token">Refresh Token</label>
-                        <input type="text" id="refresh-token">
-                    </div>
-                </details>
+                <p class="description" id="oauth-form-description">Enter your credentials.</p>
+                <div id="credential-fields"></div>
                 <button type="submit" class="btn primary">Save Credentials</button>
             </form>
             <div id="oauth-connected" class="hidden">
-                <p class="success">✓ Connected to Cloudbeds</p>
+                <p class="success" id="oauth-connected-text">&#x2713; Connected</p>
                 <p id="auth-type-display"></p>
+                <p id="token-requests-display" class="hidden"></p>
                 <div class="button-group">
                     <button id="refresh-token-btn" class="btn secondary">Refresh Token</button>
                     <button id="replace-credentials-btn" class="btn secondary">Replace Credentials</button>
@@ -103,9 +92,9 @@ SPDX-License-Identifier: Apache-2.0
         <!-- Listings Section -->
         <section id="listings-section" class="card">
             <h2>Properties</h2>
-            <p class="description">Enable iCal export for your Cloudbeds properties.</p>
+            <p class="description" id="listings-description">Enable iCal export for your properties.</p>
             <div class="bulk-actions">
-                <button id="sync-properties-btn" class="btn primary">Sync Rooms from Cloudbeds</button>
+                <button id="sync-properties-btn" class="btn primary">Sync Properties</button>
                 <button id="bulk-enable-btn" class="btn secondary" disabled>Enable Selected</button>
                 <button id="bulk-disable-btn" class="btn secondary" disabled>Disable Selected</button>
                 <span id="selected-count" class="selected-info">0 selected</span>

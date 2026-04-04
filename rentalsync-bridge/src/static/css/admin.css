@@ -608,6 +608,45 @@ header .subtitle {
     margin-top: 15px;
 }
 
+/* PMS Selector */
+#pms-selector {
+    margin-bottom: 15px;
+}
+
+#pms-type {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 1rem;
+    background: var(--card-bg);
+    cursor: pointer;
+}
+
+#pms-type:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+/* Provider Status Badge */
+.badge.provider {
+    background: var(--primary-color);
+    color: white;
+    text-transform: capitalize;
+}
+
+/* Token Requests Display */
+#token-requests-display {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    margin-top: 5px;
+}
+
+#token-requests-display.warning {
+    color: var(--warning-color);
+    font-weight: 500;
+}
+
 /* Utility Classes */
 .hidden {
     display: none !important;
