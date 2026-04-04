@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import src.providers  # noqa: F401
 from src.config import get_settings
 from src.models.oauth_credential import OAuthCredential
-from src.providers.registry import get_provider_class
+from src.providers.factory import create_provider_for_credential
 
 logger = logging.getLogger(__name__)
 
@@ -73,29 +73,37 @@ class OAuthService:
         pms_type = credential.pms_type or "cloudbeds"
 
         try:
-            provider_cls = get_provider_class(pms_type)
+            provider_inst = create_provider_for_credential(credential, self._session)
         except ValueError:
-            # Provider not yet registered (e.g. guesty before Phase 4)
+            # Provider not yet registered
             logger.warning(
-                "Provider '%s' is not registered; cannot refresh token", pms_type
+                "Provider '%s' is not registered; cannot refresh token",
+                pms_type,
             )
             msg = (
                 f"Provider '{pms_type}' is not yet registered. "
-                "Token refresh is unavailable until the provider is implemented."
+                "Token refresh is unavailable until the provider "
+                "is implemented."
             )
             raise OAuthServiceError(msg) from None
 
         try:
-            provider_inst = provider_cls()
             result = await provider_inst.refresh_token(credential)
-            return result.access_token, result.refresh_token, result.expires_at
+            return (
+                result.access_token,
+                result.refresh_token,
+                result.expires_at,
+            )
         except NotImplementedError:
-            # Provider does not handle refresh itself — use legacy path
+            # Provider does not handle refresh — use legacy path
             return await self._cloudbeds_refresh(credential)
         except Exception as e:
             logger.exception("Provider %s token refresh failed", pms_type)
             msg = f"Token refresh failed for {pms_type}: {e}"
             raise OAuthServiceError(msg) from e
+        finally:
+            if hasattr(provider_inst, "aclose"):
+                await provider_inst.aclose()
 
     async def _cloudbeds_refresh(
         self, credential: OAuthCredential
