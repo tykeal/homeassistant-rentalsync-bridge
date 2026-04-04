@@ -531,7 +531,7 @@ class SyncService:
                 extra = {}
 
             if extra:
-                merged = {**r.custom_data, **extra}
+                merged = {**extra, **r.custom_data}
                 enriched.append(
                     PMSReservation(
                         pms_booking_id=r.pms_booking_id,

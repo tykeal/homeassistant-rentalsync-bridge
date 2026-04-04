@@ -1263,7 +1263,7 @@ class TestCustomFieldEnrichment:
         """Test custom fields are merged into custom_data."""
         mock_provider.has_separate_custom_fields = True
         mock_provider.get_custom_fields = AsyncMock(
-            return_value={"cf_1": "val1", "cf_2": "val2"}
+            return_value={"cf_1": "val1", "cf_2": "val2", "source": "api"},
         )
 
         service = SyncService(sync_session)
@@ -1276,9 +1276,10 @@ class TestCustomFieldEnrichment:
         enriched = await service._enrich_custom_fields(mock_provider, reservations)
 
         assert len(enriched) == 1
-        assert enriched[0].custom_data["source"] == "airbnb"
         assert enriched[0].custom_data["cf_1"] == "val1"
         assert enriched[0].custom_data["cf_2"] == "val2"
+        # Existing custom_data wins on key conflicts
+        assert enriched[0].custom_data["source"] == "airbnb"
 
     @pytest.mark.asyncio
     async def test_enrichment_noop_when_empty(self, sync_session, mock_provider):
