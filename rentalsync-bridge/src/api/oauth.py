@@ -168,6 +168,38 @@ async def get_oauth_status(
     }
 
 
+async def _auto_fetch_guesty_token(
+    db: AsyncSession,
+    credential: OAuthCredential,
+) -> None:
+    """Try to fetch an initial Guesty access token after configure.
+
+    Logs a warning on failure but does not raise — the credentials
+    are already persisted and the token will be retried on the next
+    sync cycle.
+
+    Args:
+        db: Async database session.
+        credential: Newly saved Guesty credential.
+    """
+    try:
+        await db.refresh(credential)
+        oauth_service = OAuthService(db)
+        await oauth_service.refresh_and_save(credential)
+        logger.info("Auto-fetched initial Guesty access token")
+    except OAuthServiceError as exc:
+        await db.rollback()
+        logger.warning(
+            "Could not auto-fetch Guesty token; will retry on next sync: %s",
+            exc,
+        )
+    except Exception:
+        await db.rollback()
+        logger.exception(
+            "Unexpected error auto-fetching Guesty token; will retry on next sync"
+        )
+
+
 @router.post("/configure", response_model=OAuthConfigureResponse)
 async def configure_oauth(
     request: OAuthConfigureRequest,
@@ -267,7 +299,11 @@ async def configure_oauth(
             "constraint violation occurred",
         ) from e
 
-    auth_type = "API key" if request.api_key else "OAuth tokens"
+    # Auto-fetch initial token for Guesty (client_credentials flow)
+    if pms_type == "guesty":
+        await _auto_fetch_guesty_token(db, credential)
+
+    auth_type = "API key" if api_key else "OAuth tokens"
     return {
         "success": True,
         "message": f"Credentials configured successfully using {auth_type}",

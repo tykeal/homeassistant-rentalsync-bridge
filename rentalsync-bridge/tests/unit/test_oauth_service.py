@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from src.providers.base import TokenResult
 from src.services.oauth_service import (
     TOKEN_EXPIRY_BUFFER_SECONDS,
     OAuthService,
@@ -43,7 +44,7 @@ class TestOAuthService:
 
     @pytest.mark.asyncio
     async def test_refresh_token_success(self, service, mock_credential):
-        """Test successful token refresh."""
+        """Test successful token refresh via Cloudbeds legacy path."""
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
@@ -52,7 +53,17 @@ class TestOAuthService:
             "expires_in": 3600,
         }
 
-        with patch("src.services.oauth_service.httpx.AsyncClient") as mock_client:
+        mock_provider = MagicMock()
+        mock_provider.refresh_token = AsyncMock(side_effect=NotImplementedError)
+        mock_provider.aclose = AsyncMock()
+
+        with (
+            patch(
+                "src.services.oauth_service.create_provider_for_credential",
+                return_value=mock_provider,
+            ),
+            patch("src.services.oauth_service.httpx.AsyncClient") as mock_client,
+        ):
             mock_client.return_value.__aenter__.return_value.post = AsyncMock(
                 return_value=mock_response
             )
@@ -61,6 +72,7 @@ class TestOAuthService:
         assert access == "new_access_token"
         assert refresh == "new_refresh_token"
         assert expires > datetime.now(UTC)
+        mock_provider.aclose.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_refresh_token_no_refresh_token(self, service):
@@ -69,7 +81,17 @@ class TestOAuthService:
         cred.pms_type = "cloudbeds"
         cred.refresh_token = None
 
-        with pytest.raises(OAuthServiceError, match="No refresh token"):
+        mock_provider = MagicMock()
+        mock_provider.refresh_token = AsyncMock(side_effect=NotImplementedError)
+        mock_provider.aclose = AsyncMock()
+
+        with (
+            patch(
+                "src.services.oauth_service.create_provider_for_credential",
+                return_value=mock_provider,
+            ),
+            pytest.raises(OAuthServiceError, match="No refresh token"),
+        ):
             await service.refresh_token(cred)
 
     @pytest.mark.asyncio
@@ -79,7 +101,17 @@ class TestOAuthService:
         mock_response.status_code = 400
         mock_response.text = "Invalid token"
 
-        with patch("src.services.oauth_service.httpx.AsyncClient") as mock_client:
+        mock_provider = MagicMock()
+        mock_provider.refresh_token = AsyncMock(side_effect=NotImplementedError)
+        mock_provider.aclose = AsyncMock()
+
+        with (
+            patch(
+                "src.services.oauth_service.create_provider_for_credential",
+                return_value=mock_provider,
+            ),
+            patch("src.services.oauth_service.httpx.AsyncClient") as mock_client,
+        ):
             mock_client.return_value.__aenter__.return_value.post = AsyncMock(
                 return_value=mock_response
             )
@@ -89,7 +121,17 @@ class TestOAuthService:
     @pytest.mark.asyncio
     async def test_refresh_token_network_error(self, service, mock_credential):
         """Test refresh fails on network error."""
-        with patch("src.services.oauth_service.httpx.AsyncClient") as mock_client:
+        mock_provider = MagicMock()
+        mock_provider.refresh_token = AsyncMock(side_effect=NotImplementedError)
+        mock_provider.aclose = AsyncMock()
+
+        with (
+            patch(
+                "src.services.oauth_service.create_provider_for_credential",
+                return_value=mock_provider,
+            ),
+            patch("src.services.oauth_service.httpx.AsyncClient") as mock_client,
+        ):
             mock_client.return_value.__aenter__.return_value.post = AsyncMock(
                 side_effect=httpx.RequestError("Network error")
             )
@@ -107,7 +149,17 @@ class TestOAuthService:
             "expires_in": 3600,
         }
 
-        with patch("src.services.oauth_service.httpx.AsyncClient") as mock_client:
+        mock_provider = MagicMock()
+        mock_provider.refresh_token = AsyncMock(side_effect=NotImplementedError)
+        mock_provider.aclose = AsyncMock()
+
+        with (
+            patch(
+                "src.services.oauth_service.create_provider_for_credential",
+                return_value=mock_provider,
+            ),
+            patch("src.services.oauth_service.httpx.AsyncClient") as mock_client,
+        ):
             mock_client.return_value.__aenter__.return_value.post = AsyncMock(
                 return_value=mock_response
             )
@@ -116,6 +168,91 @@ class TestOAuthService:
         assert result.access_token == "saved_access_token"
         assert result.refresh_token == "saved_refresh_token"
         mock_session.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_refresh_unregistered_provider(self, service):
+        """Test refresh raises for unregistered provider."""
+        cred = MagicMock()
+        cred.pms_type = "unknown_pms"
+
+        with (
+            patch(
+                "src.services.oauth_service.create_provider_for_credential",
+                side_effect=ValueError("Unknown provider type: 'unknown_pms'"),
+            ),
+            pytest.raises(OAuthServiceError, match="not yet registered"),
+        ):
+            await service.refresh_token(cred)
+
+
+class TestOAuthServiceGuesty:
+    """Tests for OAuthService Guesty provider path."""
+
+    @pytest.fixture
+    def mock_session(self):
+        """Create mock database session."""
+        return AsyncMock()
+
+    @pytest.fixture
+    def guesty_credential(self):
+        """Create mock Guesty credential."""
+        cred = MagicMock()
+        cred.pms_type = "guesty"
+        cred.id = 42
+        cred.client_id = "gu_client"
+        cred.client_secret = "gu_secret"
+        cred.access_token = None
+        cred.refresh_token = None
+        return cred
+
+    @pytest.fixture
+    def service(self, mock_session):
+        """Create OAuth service."""
+        return OAuthService(mock_session)
+
+    @pytest.mark.asyncio
+    async def test_guesty_uses_factory(self, service, guesty_credential, mock_session):
+        """Provider is created via create_provider_for_credential."""
+        expires = datetime.now(UTC) + timedelta(hours=24)
+        mock_provider = MagicMock()
+        mock_provider.refresh_token = AsyncMock(
+            return_value=TokenResult(
+                access_token="guesty_token",
+                refresh_token=None,
+                expires_at=expires,
+            )
+        )
+        mock_provider.aclose = AsyncMock()
+
+        with patch(
+            "src.services.oauth_service.create_provider_for_credential",
+            return_value=mock_provider,
+        ) as factory_mock:
+            access, refresh, exp = await service.refresh_token(guesty_credential)
+
+        factory_mock.assert_called_once_with(guesty_credential, mock_session)
+        assert access == "guesty_token"
+        assert refresh is None
+        assert exp == expires
+        mock_provider.aclose.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_guesty_provider_closed_on_error(self, service, guesty_credential):
+        """Provider aclose is called even when refresh raises."""
+        mock_provider = MagicMock()
+        mock_provider.refresh_token = AsyncMock(side_effect=RuntimeError("boom"))
+        mock_provider.aclose = AsyncMock()
+
+        with (
+            patch(
+                "src.services.oauth_service.create_provider_for_credential",
+                return_value=mock_provider,
+            ),
+            pytest.raises(OAuthServiceError, match="boom"),
+        ):
+            await service.refresh_token(guesty_credential)
+
+        mock_provider.aclose.assert_awaited_once()
 
 
 class TestShouldRefresh:
