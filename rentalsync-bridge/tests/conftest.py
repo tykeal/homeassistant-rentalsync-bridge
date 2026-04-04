@@ -4,8 +4,10 @@
 
 import os
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from cryptography.fernet import Fernet
@@ -37,6 +39,16 @@ _setup_env()
 # Now safe to import from src
 from fastapi import FastAPI  # noqa: E402
 from src.database import Base  # noqa: E402
+from src.models.booking import Booking  # noqa: E402
+from src.models.listing import Listing  # noqa: E402
+from src.models.room import Room  # noqa: E402
+from src.providers.base import (  # noqa: E402
+    PMSGuest,
+    PMSListing,
+    PMSProvider,
+    PMSReservation,
+    PMSRoom,
+)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -137,3 +149,169 @@ def sample_booking_data() -> dict[str, Any]:
 def encryption_key(setup_test_environment) -> str:
     """Get test encryption key."""
     return os.environ["ENCRYPTION_KEY"]
+
+
+# ---------------------------------------------------------------------------
+# Multi-provider factory helpers (Phase 7 - T052)
+# ---------------------------------------------------------------------------
+
+
+def make_listing(
+    *,
+    pms_id: str = "PROP001",
+    name: str = "Test Property",
+    slug: str = "test-property",
+    timezone: str = "America/New_York",
+    enabled: bool = True,
+    sync_enabled: bool = True,
+) -> Listing:
+    """Create a Listing model instance for tests."""
+    return Listing(
+        pms_id=pms_id,
+        name=name,
+        ical_url_slug=slug,
+        timezone=timezone,
+        enabled=enabled,
+        sync_enabled=sync_enabled,
+    )
+
+
+def make_room(
+    *,
+    listing_id: int = 1,
+    pms_room_id: str = "ROOM001",
+    room_name: str = "Main Room",
+    slug: str = "main-room",
+    room_type_name: str | None = None,
+    enabled: bool = True,
+) -> Room:
+    """Create a Room model instance for tests."""
+    return Room(
+        listing_id=listing_id,
+        pms_room_id=pms_room_id,
+        room_name=room_name,
+        ical_url_slug=slug,
+        room_type_name=room_type_name,
+        enabled=enabled,
+    )
+
+
+def make_booking(
+    *,
+    listing_id: int = 1,
+    room_id: int | None = None,
+    pms_booking_id: str = "BK001",
+    guest_name: str = "Jane Doe",
+    guest_phone_last4: str | None = None,
+    check_in_date: datetime | None = None,
+    check_out_date: datetime | None = None,
+    status: str = "confirmed",
+    custom_data: dict[str, Any] | None = None,
+) -> Booking:
+    """Create a Booking model instance for tests."""
+    now = datetime.now(UTC)
+    return Booking(
+        listing_id=listing_id,
+        room_id=room_id,
+        pms_booking_id=pms_booking_id,
+        guest_name=guest_name,
+        guest_phone_last4=guest_phone_last4,
+        check_in_date=check_in_date or now + timedelta(days=7),
+        check_out_date=check_out_date or now + timedelta(days=10),
+        status=status,
+        custom_data=custom_data,
+    )
+
+
+def make_pms_listing(
+    *,
+    pms_id: str = "PROP001",
+    name: str = "Test Property",
+    timezone: str = "America/New_York",
+    address: str | None = None,
+    rooms: tuple[PMSRoom, ...] = (),
+) -> PMSListing:
+    """Create a PMSListing DTO for tests."""
+    return PMSListing(
+        pms_id=pms_id,
+        name=name,
+        timezone=timezone,
+        address=address,
+        rooms=rooms,
+    )
+
+
+def make_pms_room(
+    *,
+    pms_room_id: str = "ROOM001",
+    name: str = "Main Room",
+    room_type: str | None = None,
+) -> PMSRoom:
+    """Create a PMSRoom DTO for tests."""
+    return PMSRoom(
+        pms_room_id=pms_room_id,
+        name=name,
+        room_type=room_type,
+    )
+
+
+def make_pms_reservation(
+    *,
+    pms_booking_id: str = "RES001",
+    listing_pms_id: str = "PROP001",
+    guest_name: str | None = "Jane Doe",
+    guest_id: str | None = None,
+    check_in: datetime | None = None,
+    check_out: datetime | None = None,
+    status: str = "confirmed",
+    room_ids: tuple[str, ...] = ("ROOM001",),
+    custom_data: dict[str, Any] | None = None,
+) -> PMSReservation:
+    """Create a PMSReservation DTO for tests."""
+    now = datetime.now(UTC)
+    return PMSReservation(
+        pms_booking_id=pms_booking_id,
+        listing_pms_id=listing_pms_id,
+        guest_name=guest_name,
+        guest_id=guest_id,
+        check_in=check_in or now + timedelta(days=7),
+        check_out=check_out or now + timedelta(days=10),
+        status=status,
+        room_ids=room_ids,
+        custom_data=custom_data or {},
+    )
+
+
+def make_pms_guest(
+    *,
+    guest_id: str = "GUEST001",
+    full_name: str = "Jane Doe",
+    phone: str | None = "+15551234567",
+    email: str | None = "jane@example.com",
+) -> PMSGuest:
+    """Create a PMSGuest DTO for tests."""
+    return PMSGuest(
+        guest_id=guest_id,
+        full_name=full_name,
+        phone=phone,
+        email=email,
+    )
+
+
+def make_mock_provider(
+    *,
+    provider_type: str = "guesty",
+    listings: list[PMSListing] | None = None,
+    reservations: list[PMSReservation] | None = None,
+    rooms: list[PMSRoom] | None = None,
+    guest: PMSGuest | None = None,
+) -> AsyncMock:
+    """Create a mock PMSProvider with configurable return values."""
+    mock = AsyncMock(spec=PMSProvider)
+    mock.provider_type = provider_type
+    mock.get_listings = AsyncMock(return_value=listings or [])
+    mock.get_reservations = AsyncMock(return_value=reservations or [])
+    mock.get_rooms = AsyncMock(return_value=rooms or [])
+    mock.get_guest = AsyncMock(return_value=guest)
+    mock.get_custom_fields = AsyncMock(return_value={})
+    return mock
