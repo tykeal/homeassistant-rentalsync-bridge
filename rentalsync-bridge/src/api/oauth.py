@@ -188,11 +188,13 @@ async def _auto_fetch_guesty_token(
         await oauth_service.refresh_and_save(credential)
         logger.info("Auto-fetched initial Guesty access token")
     except OAuthServiceError as exc:
+        await db.rollback()
         logger.warning(
             "Could not auto-fetch Guesty token; will retry on next sync: %s",
             exc,
         )
     except Exception:
+        await db.rollback()
         logger.exception(
             "Unexpected error auto-fetching Guesty token; will retry on next sync"
         )
@@ -301,7 +303,7 @@ async def configure_oauth(
     if pms_type == "guesty":
         await _auto_fetch_guesty_token(db, credential)
 
-    auth_type = "API key" if request.api_key else "OAuth tokens"
+    auth_type = "API key" if api_key else "OAuth tokens"
     return {
         "success": True,
         "message": f"Credentials configured successfully using {auth_type}",
