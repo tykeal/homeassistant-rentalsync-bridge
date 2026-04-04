@@ -23,7 +23,9 @@ logger = logging.getLogger(__name__)
 
 GUESTY_TOKEN_URL = "https://open-api.guesty.com/oauth2/token"
 TOKEN_REQUEST_LIMIT = 5
-TOKEN_WARN_THRESHOLD = 3
+# Warn when this many requests have already been made
+# (next request is the 4th).
+TOKEN_WARN_AT_COUNT = 3
 
 
 class GuestyTokenManager:
@@ -132,7 +134,7 @@ class GuestyTokenManager:
             logger.error(msg)
             raise TokenRateLimitError(msg, reset_at=reset_at)
 
-        if count >= TOKEN_WARN_THRESHOLD:
+        if count >= TOKEN_WARN_AT_COUNT:
             remaining = TOKEN_REQUEST_LIMIT - count - 1
             logger.warning(
                 "Guesty token request rate limit warning: "

@@ -15,7 +15,7 @@ from src.providers.base import (
 from src.providers.guesty.auth import (
     GUESTY_TOKEN_URL,
     TOKEN_REQUEST_LIMIT,
-    TOKEN_WARN_THRESHOLD,
+    TOKEN_WARN_AT_COUNT,
     GuestyTokenManager,
 )
 from src.repositories.credential_repository import TOKEN_REQUEST_WINDOW
@@ -181,7 +181,7 @@ class TestRateTracking:
     @pytest.mark.asyncio
     async def test_warns_at_4th_request(self, token_manager, mock_repo, caplog):
         """Test that a warning is logged at the 4th request."""
-        mock_repo.get_token_request_count.return_value = TOKEN_WARN_THRESHOLD
+        mock_repo.get_token_request_count.return_value = TOKEN_WARN_AT_COUNT
 
         with patch.object(
             token_manager,

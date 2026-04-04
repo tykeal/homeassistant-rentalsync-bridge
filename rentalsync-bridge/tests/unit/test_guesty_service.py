@@ -648,6 +648,92 @@ class TestRefreshToken:
         with pytest.raises(PMSAuthenticationError, match="client_id"):
             await prov.refresh_token(mock_credential)
 
+    @pytest.mark.asyncio
+    async def test_refresh_direct_http_success(self, mock_http_client):
+        """Test direct HTTP refresh returns TokenResult on 200."""
+        prov = GuestyProvider(http_client=mock_http_client)
+        mock_credential = MagicMock()
+        mock_credential.client_id = "cid"
+        mock_credential.client_secret = "csecret"
+
+        resp = httpx.Response(
+            status_code=200,
+            json={"access_token": "new-tok", "expires_in": 3600},
+            request=httpx.Request("POST", "https://example.com"),
+        )
+        with patch("httpx.AsyncClient") as mock_cls:
+            ctx = AsyncMock()
+            ctx.post = AsyncMock(return_value=resp)
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=ctx)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            result = await prov.refresh_token(mock_credential)
+
+        assert result.access_token == "new-tok"
+        assert result.refresh_token is None
+        assert result.expires_at is not None
+
+    @pytest.mark.asyncio
+    async def test_refresh_direct_http_non_200(self, mock_http_client):
+        """Test direct HTTP refresh raises on non-200 response."""
+        prov = GuestyProvider(http_client=mock_http_client)
+        mock_credential = MagicMock()
+        mock_credential.client_id = "cid"
+        mock_credential.client_secret = "csecret"
+
+        resp = httpx.Response(
+            status_code=500,
+            text="Internal Server Error",
+            request=httpx.Request("POST", "https://example.com"),
+        )
+        with patch("httpx.AsyncClient") as mock_cls:
+            ctx = AsyncMock()
+            ctx.post = AsyncMock(return_value=resp)
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=ctx)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            with pytest.raises(PMSAuthenticationError, match="failed"):
+                await prov.refresh_token(mock_credential)
+
+    @pytest.mark.asyncio
+    async def test_refresh_direct_http_missing_access_token(self, mock_http_client):
+        """Test direct HTTP refresh raises when access_token missing."""
+        prov = GuestyProvider(http_client=mock_http_client)
+        mock_credential = MagicMock()
+        mock_credential.client_id = "cid"
+        mock_credential.client_secret = "csecret"
+
+        resp = httpx.Response(
+            status_code=200,
+            json={"expires_in": 3600},
+            request=httpx.Request("POST", "https://example.com"),
+        )
+        with patch("httpx.AsyncClient") as mock_cls:
+            ctx = AsyncMock()
+            ctx.post = AsyncMock(return_value=resp)
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=ctx)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            with pytest.raises(PMSAuthenticationError, match="missing access_token"):
+                await prov.refresh_token(mock_credential)
+
+    @pytest.mark.asyncio
+    async def test_refresh_direct_http_network_error(self, mock_http_client):
+        """Test direct HTTP refresh raises on network error."""
+        prov = GuestyProvider(http_client=mock_http_client)
+        mock_credential = MagicMock()
+        mock_credential.client_id = "cid"
+        mock_credential.client_secret = "csecret"
+
+        with patch("httpx.AsyncClient") as mock_cls:
+            ctx = AsyncMock()
+            ctx.post = AsyncMock(side_effect=httpx.ConnectError("connection refused"))
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=ctx)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            with pytest.raises(PMSConnectionError, match="Failed to connect"):
+                await prov.refresh_token(mock_credential)
+
 
 # ---------------------------------------------------------------------------
 # test_connection
