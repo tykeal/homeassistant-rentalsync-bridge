@@ -75,6 +75,7 @@ class TestCloudbedsBackwardCompat:
             ]
         )
         mock_provider.get_guest = AsyncMock(return_value=None)
+        mock_provider.get_custom_fields = AsyncMock(return_value={})
 
         sync = SyncService(
             async_session,
@@ -173,6 +174,7 @@ class TestCloudbedsBackwardCompat:
             ]
         )
         mock_provider.get_guest = AsyncMock(return_value=None)
+        mock_provider.get_custom_fields = AsyncMock(return_value={})
 
         sync = SyncService(
             async_session,

@@ -62,6 +62,7 @@ class TestGuest404Fallback:
         )
         # get_guest returns None (404 scenario)
         mock_provider.get_guest = AsyncMock(return_value=None)
+        mock_provider.get_custom_fields = AsyncMock(return_value={})
 
         sync = SyncService(
             async_session,
@@ -117,6 +118,7 @@ class TestListingWithNoRooms:
             ]
         )
         mock_provider.get_guest = AsyncMock(return_value=None)
+        mock_provider.get_custom_fields = AsyncMock(return_value={})
 
         sync = SyncService(
             async_session,
@@ -271,6 +273,7 @@ class TestCancelledReservation:
             ]
         )
         mock_provider.get_guest = AsyncMock(return_value=None)
+        mock_provider.get_custom_fields = AsyncMock(return_value={})
 
         sync = SyncService(
             async_session,
@@ -341,6 +344,7 @@ class TestCancelledReservation:
             ]
         )
         mock_provider.get_guest = AsyncMock(return_value=None)
+        mock_provider.get_custom_fields = AsyncMock(return_value={})
 
         sync = SyncService(
             async_session,

@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock
 
 from icalendar import Calendar
 from sqlalchemy import select
+from src.models.available_field import AvailableField
 from src.models.booking import Booking
 from src.models.oauth_credential import OAuthCredential
 from src.providers.base import PMSGuest, PMSReservation
@@ -82,7 +83,10 @@ class TestGuestyEndToEnd:
                     check_out=now + timedelta(days=8),
                     status="confirmed",
                     room_ids=("guesty_room_1",),
-                    custom_data={},
+                    custom_data={
+                        "source": "airbnb",
+                        "confirmationCode": "CF001",
+                    },
                 ),
             ]
         )
@@ -93,6 +97,9 @@ class TestGuestyEndToEnd:
                 phone="+15559876543",
                 email="alice@example.com",
             )
+        )
+        mock_provider.get_custom_fields = AsyncMock(
+            return_value={"cf_wifi": "password123"},
         )
 
         cache = CalendarCache(ttl_seconds=0)
@@ -175,6 +182,7 @@ class TestGuestyEndToEnd:
             ]
         )
         mock_provider.get_guest = AsyncMock(return_value=None)
+        mock_provider.get_custom_fields = AsyncMock(return_value={})
 
         cache = CalendarCache(ttl_seconds=0)
         sync = SyncService(
@@ -199,3 +207,66 @@ class TestGuestyEndToEnd:
 
         uids = {str(e["uid"]) for e in events}
         assert len(uids) == 3
+
+    async def test_guesty_field_discovery(self, async_session, async_session_factory):
+        """Test that custom fields are discovered after sync."""
+        listing = make_listing(
+            pms_id="guesty_fields",
+            name="Field Discovery Villa",
+            slug="guesty-field-discovery",
+        )
+        async_session.add(listing)
+        await async_session.commit()
+        await async_session.refresh(listing)
+
+        now = datetime.now(UTC)
+        mock_provider = AsyncMock()
+        mock_provider.provider_type = "guesty"
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                PMSReservation(
+                    pms_booking_id="GRF001",
+                    listing_pms_id="guesty_fields",
+                    guest_name=None,
+                    guest_id="gf_42",
+                    check_in=now + timedelta(days=5),
+                    check_out=now + timedelta(days=8),
+                    status="confirmed",
+                    room_ids=(),
+                    custom_data={
+                        "source": "airbnb",
+                        "confirmationCode": "CF001",
+                    },
+                ),
+            ]
+        )
+        mock_provider.get_guest = AsyncMock(
+            return_value=PMSGuest(
+                guest_id="gf_42",
+                full_name="Field Guest",
+                phone="+15551112222",
+                email="fields@example.com",
+            )
+        )
+        mock_provider.get_custom_fields = AsyncMock(
+            return_value={"cf_wifi": "password123"},
+        )
+
+        sync = SyncService(
+            async_session,
+            calendar_cache=CalendarCache(ttl_seconds=0),
+            session_factory=async_session_factory,
+        )
+        await sync.sync_listing(listing, mock_provider)
+
+        fields_result = await async_session.execute(
+            select(AvailableField).where(
+                AvailableField.listing_id == listing.id,
+            )
+        )
+        field_keys = {f.field_key for f in fields_result.scalars().all()}
+        assert "source" in field_keys
+        assert "confirmationCode" in field_keys
+        assert "guest_email" in field_keys
+        assert "guest_phone" in field_keys
+        assert "cf_wifi" in field_keys
