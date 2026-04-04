@@ -4,6 +4,7 @@
 
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -344,18 +345,22 @@ class TestOAuthConfigure:
     @pytest.mark.asyncio
     async def test_configure_guesty_success(self, oauth_app):
         """Test Guesty configure with only client credentials."""
-        async with AsyncClient(
-            transport=ASGITransport(app=oauth_app), base_url="http://test"
-        ) as client:
-            response = await client.post(
-                "/api/oauth/configure",
-                headers={"Authorization": "Bearer test"},
-                json={
-                    "pms_type": "guesty",
-                    "client_id": "gu_client",
-                    "client_secret": "gu_secret",
-                },
-            )
+        with patch(
+            "src.api.oauth._auto_fetch_guesty_token",
+            new_callable=AsyncMock,
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=oauth_app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/api/oauth/configure",
+                    headers={"Authorization": "Bearer test"},
+                    json={
+                        "pms_type": "guesty",
+                        "client_id": "gu_client",
+                        "client_secret": "gu_secret",
+                    },
+                )
 
         assert response.status_code == 200
         data = response.json()
@@ -438,3 +443,94 @@ class TestProvidersEndpoint:
             assert isinstance(entry["credential_fields"], list)
             assert "registered" in entry
             assert isinstance(entry["registered"], bool)
+
+
+class TestGuestyAutoFetch:
+    """Tests for auto-fetch token on Guesty configure."""
+
+    @pytest.mark.asyncio
+    async def test_configure_guesty_triggers_auto_fetch(self, oauth_app):
+        """POST /configure for guesty calls _auto_fetch_guesty_token."""
+        with patch(
+            "src.api.oauth._auto_fetch_guesty_token",
+            new_callable=AsyncMock,
+        ) as mock_fetch:
+            async with AsyncClient(
+                transport=ASGITransport(app=oauth_app),
+                base_url="http://test",
+            ) as client:
+                response = await client.post(
+                    "/api/oauth/configure",
+                    headers={"Authorization": "Bearer test"},
+                    json={
+                        "pms_type": "guesty",
+                        "client_id": "gu_client",
+                        "client_secret": "gu_secret",
+                    },
+                )
+
+        assert response.status_code == 200
+        mock_fetch.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_configure_cloudbeds_no_auto_fetch(self, oauth_app):
+        """POST /configure for cloudbeds does NOT auto-fetch."""
+        with patch(
+            "src.api.oauth._auto_fetch_guesty_token",
+            new_callable=AsyncMock,
+        ) as mock_fetch:
+            async with AsyncClient(
+                transport=ASGITransport(app=oauth_app),
+                base_url="http://test",
+            ) as client:
+                response = await client.post(
+                    "/api/oauth/configure",
+                    headers={"Authorization": "Bearer test"},
+                    json={
+                        "pms_type": "cloudbeds",
+                        "client_id": "cb_client",
+                        "client_secret": "cb_secret",
+                        "access_token": "tok",
+                        "refresh_token": "ref",
+                    },
+                )
+
+        assert response.status_code == 200
+        mock_fetch.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_auto_fetch_failure_still_saves(self, oauth_app, oauth_session):
+        """Credentials persist even when auto-fetch fails."""
+        from src.services.oauth_service import OAuthServiceError
+
+        with patch(
+            "src.api.oauth.OAuthService.refresh_and_save",
+            new_callable=AsyncMock,
+            side_effect=OAuthServiceError("fail"),
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=oauth_app),
+                base_url="http://test",
+            ) as client:
+                response = await client.post(
+                    "/api/oauth/configure",
+                    headers={"Authorization": "Bearer test"},
+                    json={
+                        "pms_type": "guesty",
+                        "client_id": "gu_client",
+                        "client_secret": "gu_secret",
+                    },
+                )
+
+        # The helper catches OAuthServiceError internally so the
+        # response is still 200.  Verify creds are saved in the DB.
+        assert response.status_code == 200
+
+        from src.repositories.credential_repository import (
+            CredentialRepository,
+        )
+
+        repo = CredentialRepository(oauth_session)
+        cred = await repo.get_credential("guesty")
+        assert cred is not None
+        assert cred.client_id == "gu_client"
