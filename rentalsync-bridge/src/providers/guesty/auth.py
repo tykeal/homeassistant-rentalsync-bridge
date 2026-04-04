@@ -131,7 +131,7 @@ class GuestyTokenManager:
             raise TokenRateLimitError(msg, reset_at=reset_at)
 
         if count >= TOKEN_WARN_THRESHOLD:
-            remaining = TOKEN_REQUEST_LIMIT - count
+            remaining = TOKEN_REQUEST_LIMIT - count - 1
             logger.warning(
                 "Guesty token request rate limit warning: "
                 "%d/%d used, %d remaining in current window",

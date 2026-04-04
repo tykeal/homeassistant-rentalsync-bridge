@@ -3,7 +3,7 @@
 """Unit tests for GuestyProvider."""
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -530,7 +530,8 @@ class TestRetryLogic:
     """Tests for HTTP 429 retry logic."""
 
     @pytest.mark.asyncio
-    async def test_retries_on_429(self, guesty_provider, mock_http_client):
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    async def test_retries_on_429(self, _mock_sleep, guesty_provider, mock_http_client):
         """Test that 429 responses trigger retries."""
         rate_limit_resp = httpx.Response(
             status_code=429,
@@ -549,7 +550,10 @@ class TestRetryLogic:
         assert mock_http_client.request.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_raises_after_max_retries(self, guesty_provider, mock_http_client):
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    async def test_raises_after_max_retries(
+        self, _mock_sleep, guesty_provider, mock_http_client
+    ):
         """Test that PMSRateLimitError is raised after max retries."""
         rate_limit_resp = httpx.Response(
             status_code=429,
@@ -566,7 +570,10 @@ class TestRetryLogic:
         assert mock_http_client.request.call_count == 4
 
     @pytest.mark.asyncio
-    async def test_retry_after_header_parsed(self, guesty_provider, mock_http_client):
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    async def test_retry_after_header_parsed(
+        self, _mock_sleep, guesty_provider, mock_http_client
+    ):
         """Test that Retry-After header is respected."""
         rate_limit_resp = httpx.Response(
             status_code=429,
@@ -626,7 +633,7 @@ class TestRefreshToken:
         mock_credential = MagicMock()
         result = await guesty_provider.refresh_token(mock_credential)
 
-        mock_token_manager.invalidate_cache.assert_called_once()
+        mock_token_manager.invalidate_cache.assert_awaited_once()
         assert result.access_token == "test-token"
         assert result.refresh_token is None
 

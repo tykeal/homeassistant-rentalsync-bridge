@@ -482,7 +482,9 @@ class GuestyProvider(PMSProvider):
                 expires_at=expires_at,
             )
 
-        # No token manager — direct client-credentials request
+        # No token manager — direct client-credentials request.
+        # Note: rate-limit tracking is not available here because
+        # credential_repo is only held by the token manager.
         if not credential.client_id or not credential.client_secret:
             msg = "Guesty refresh requires client_id and client_secret"
             raise PMSAuthenticationError(msg)
@@ -619,6 +621,7 @@ class GuestyProvider(PMSProvider):
 # -- module-level helpers ------------------------------------------------------
 
 
+# TODO: consolidate with cloudbeds _parse_date in a shared utility
 def _parse_date(value: str | datetime | None) -> datetime:
     """Parse a date string or pass through a datetime.
 

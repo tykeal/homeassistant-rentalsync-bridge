@@ -92,9 +92,9 @@ class TestTokenCache:
             token = await token_manager.get_token()
 
             assert token == "fresh-token"
-            mock_request.assert_called_once()
-            mock_repo.update_token.assert_called_once()
-            mock_repo.increment_token_request_count.assert_called_once_with(1)
+            mock_request.assert_awaited_once()
+            mock_repo.update_token.assert_awaited_once()
+            mock_repo.increment_token_request_count.assert_awaited_once_with(1)
 
     @pytest.mark.asyncio
     async def test_cache_hit_returns_cached_token(self, token_manager, mock_repo):
@@ -134,7 +134,7 @@ class TestTokenCache:
             token = await token_manager.get_token()
 
             assert token == "new-token"
-            mock_request.assert_called_once()
+            mock_request.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_invalidate_cache_clears_state(self, token_manager, mock_repo):
@@ -330,7 +330,7 @@ class TestTokenRequest:
 
         assert result.access_token == "test-access-token"
         assert result.refresh_token is None
-        mock_http.post.assert_called_once()
+        mock_http.post.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_401_raises_auth_error(self, mock_repo):
