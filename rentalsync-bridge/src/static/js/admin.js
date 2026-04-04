@@ -35,11 +35,15 @@ const elements = {
     oauthConnected: document.getElementById('oauth-connected'),
     oauthStatusText: document.getElementById('oauth-status-text'),
     authTypeDisplay: document.getElementById('auth-type-display'),
-    clientId: document.getElementById('client-id'),
-    clientSecret: document.getElementById('client-secret'),
-    apiKey: document.getElementById('api-key'),
-    accessToken: document.getElementById('access-token'),
-    refreshToken: document.getElementById('refresh-token'),
+    pmsType: document.getElementById('pms-type'),
+    credentialFields: document.getElementById('credential-fields'),
+    oauthFormDescription: document.getElementById('oauth-form-description'),
+    oauthConnectedText: document.getElementById('oauth-connected-text'),
+    tokenRequestsDisplay: document.getElementById('token-requests-display'),
+    appSubtitle: document.getElementById('app-subtitle'),
+    oauthSectionTitle: document.getElementById('oauth-section-title'),
+    statusPms: document.getElementById('status-pms'),
+    listingsDescription: document.getElementById('listings-description'),
     refreshTokenBtn: document.getElementById('refresh-token-btn'),
     replaceCredentialsBtn: document.getElementById('replace-credentials-btn'),
     syncInterval: document.getElementById('sync-interval'),
@@ -58,6 +62,11 @@ const elements = {
 
 let currentListingId = null;
 let selectedListings = new Set();
+
+// Provider state
+let providersData = [];
+let currentPmsType = '';
+let isConfigured = false;
 
 // API Functions
 async function fetchAPI(endpoint, options = {}) {
@@ -105,58 +114,118 @@ async function loadOAuthStatus() {
     try {
         const status = await fetchAPI('/api/oauth/status');
 
+        isConfigured = status.configured;
+        currentPmsType = status.pms_type || '';
+
+        // Sync PMS selector with current type
+        if (currentPmsType && elements.pmsType) {
+            elements.pmsType.value = currentPmsType;
+        }
+
+        const pmsName = getProviderName(currentPmsType);
+
+        // Update PMS status badge
+        if (elements.statusPms) {
+            if (currentPmsType) {
+                elements.statusPms.textContent = pmsName;
+                elements.statusPms.className = 'badge provider';
+            } else {
+                elements.statusPms.textContent = 'Not Set';
+                elements.statusPms.className = 'badge unconfigured';
+            }
+        }
+
         if (status.connected) {
             elements.oauthForm.classList.add('hidden');
             elements.oauthConnected.classList.remove('hidden');
-            elements.oauthStatusText.textContent = 'Connected to Cloudbeds';
+            elements.oauthConnectedText.textContent =
+                `\u2713 Connected to ${escapeHtml(pmsName)}`;
+            elements.oauthStatusText.textContent =
+                `Connected to ${escapeHtml(pmsName)}`;
             if (status.auth_type === 'api_key') {
-                elements.authTypeDisplay.textContent = 'Using API Key authentication';
+                elements.authTypeDisplay.textContent =
+                    'Using API Key authentication';
                 elements.refreshTokenBtn.classList.add('hidden');
             } else {
-                elements.authTypeDisplay.textContent = 'Using OAuth authentication';
+                elements.authTypeDisplay.textContent =
+                    'Using OAuth authentication';
                 elements.refreshTokenBtn.classList.remove('hidden');
             }
+
+            // Show token requests remaining (Guesty)
+            showTokenRequests(status.token_requests_remaining);
         } else if (status.configured) {
             elements.oauthForm.classList.add('hidden');
-            elements.oauthStatusText.textContent = 'Configured but not connected. Please refresh token.';
+            elements.oauthStatusText.textContent =
+                'Configured but not connected. Refresh token.';
             elements.oauthConnected.classList.remove('hidden');
+            showTokenRequests(status.token_requests_remaining);
         } else {
-            elements.oauthForm.classList.remove('hidden');
             elements.oauthConnected.classList.add('hidden');
-            elements.oauthStatusText.textContent = 'Enter your Cloudbeds credentials.';
+            elements.oauthStatusText.textContent =
+                'Select a PMS provider and enter credentials.';
+
+            // Show form if a PMS type is selected
+            if (elements.pmsType.value) {
+                renderCredentialFields(elements.pmsType.value);
+                elements.oauthForm.classList.remove('hidden');
+            }
         }
+
+        updateDynamicTexts(currentPmsType);
     } catch (error) {
         console.error('Failed to load OAuth status:', error);
-        elements.oauthStatusText.textContent = 'Failed to load authentication status';
+        elements.oauthStatusText.textContent =
+            'Failed to load authentication status';
     }
 }
 
 async function saveOAuthCredentials(event) {
     event.preventDefault();
 
-    const apiKey = elements.apiKey.value.trim();
-    const accessToken = elements.accessToken.value.trim();
-
-    // Validate that either API key or access token is provided
-    if (!apiKey && !accessToken) {
-        alert('Please provide either an API Key or OAuth Access Token');
+    const selectedType = elements.pmsType.value;
+    if (!selectedType) {
+        alert('Please select a PMS provider');
         return;
     }
 
+    const provider = providersData.find(
+        p => p.pms_type === selectedType
+    );
+    if (!provider) {
+        alert('Unknown PMS provider selected');
+        return;
+    }
+
+    // Build payload from dynamic credential fields
+    const payload = { pms_type: selectedType };
+    for (const field of provider.credential_fields) {
+        const input = document.getElementById(
+            `cred-${field.name}`
+        );
+        if (input && input.value.trim()) {
+            payload[field.name] = input.value.trim();
+        }
+    }
+
+    // Validate required fields
+    if (!payload.client_id || !payload.client_secret) {
+        alert('Client ID and Client Secret are required');
+        return;
+    }
+
+    // Cloudbeds requires either api_key or access_token
+    if (selectedType === 'cloudbeds') {
+        if (!payload.api_key && !payload.access_token) {
+            alert(
+                'Please provide either an API Key '
+                + 'or OAuth Access Token'
+            );
+            return;
+        }
+    }
+
     try {
-        const payload = {
-            client_id: elements.clientId.value,
-            client_secret: elements.clientSecret.value,
-        };
-
-        if (apiKey) {
-            payload.api_key = apiKey;
-        }
-        if (accessToken) {
-            payload.access_token = accessToken;
-            payload.refresh_token = elements.refreshToken.value.trim() || null;
-        }
-
         await fetchAPI('/api/oauth/configure', {
             method: 'POST',
             body: JSON.stringify(payload),
@@ -190,12 +259,11 @@ async function refreshToken() {
  * Show the credentials form to allow replacing existing credentials.
  */
 function showCredentialsForm() {
-    // Clear the form fields
-    elements.clientId.value = '';
-    elements.clientSecret.value = '';
-    elements.apiKey.value = '';
-    elements.accessToken.value = '';
-    elements.refreshToken.value = '';
+    // Re-render credential fields to clear values
+    const selectedType = elements.pmsType.value;
+    if (selectedType) {
+        renderCredentialFields(selectedType);
+    }
 
     // Show the form and hide the connected state
     elements.oauthForm.classList.remove('hidden');
@@ -584,9 +652,9 @@ async function loadListings() {
 }
 
 /**
- * Sync properties from Cloudbeds to the local database.
+ * Sync properties from the configured PMS to the local database.
  */
-async function syncPropertiesFromCloudbeds() {
+async function syncProperties() {
     const btn = elements.syncPropertiesBtn;
     const originalText = btn.textContent;
 
@@ -615,7 +683,7 @@ async function syncPropertiesFromCloudbeds() {
 
 function renderListings(listings) {
     if (listings.length === 0) {
-        elements.listingsContainer.innerHTML = '<p class="loading">No listings found. Click "Sync Rooms from Cloudbeds" to populate.</p>';
+        elements.listingsContainer.innerHTML = '<p class="loading">No listings found. Click &quot;Sync Properties&quot; to populate.</p>';
         updateBulkButtons();
         return;
     }
@@ -1193,13 +1261,235 @@ function validatePositiveInt(value) {
     return null;
 }
 
+// Provider Functions
+
+/**
+ * Get display name for a PMS type.
+ * @param {string} pmsType - The PMS type identifier
+ * @returns {string} Human-readable provider name
+ */
+function getProviderName(pmsType) {
+    if (!pmsType) return 'PMS';
+    return pmsType.charAt(0).toUpperCase() + pmsType.slice(1);
+}
+
+/**
+ * Load available PMS providers from the API.
+ */
+async function loadProviders() {
+    try {
+        providersData = await fetchAPI('/api/providers');
+        populateProviderDropdown();
+    } catch (error) {
+        console.error('Failed to load providers:', error);
+        elements.pmsType.innerHTML =
+            '<option value="">Failed to load providers</option>';
+    }
+    // Load OAuth status after providers are available
+    await loadOAuthStatus();
+}
+
+/**
+ * Populate the PMS provider dropdown from loaded data.
+ */
+function populateProviderDropdown() {
+    const select = elements.pmsType;
+    select.innerHTML = '';
+
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = '';
+    defaultOpt.textContent = 'Select PMS provider\u2026';
+    select.appendChild(defaultOpt);
+
+    for (const provider of providersData) {
+        if (!provider.registered) continue;
+        const opt = document.createElement('option');
+        opt.value = provider.pms_type;
+        opt.textContent = getProviderName(provider.pms_type);
+        select.appendChild(opt);
+    }
+}
+
+/**
+ * Handle PMS type selection change.
+ */
+function onPmsTypeChange() {
+    const selectedType = elements.pmsType.value;
+    if (!selectedType) {
+        elements.credentialFields.innerHTML = '';
+        elements.oauthForm.classList.add('hidden');
+        return;
+    }
+
+    // T047: Confirm PMS switch when credentials exist
+    if (isConfigured && selectedType !== currentPmsType) {
+        const confirmed = confirm(
+            'Changing PMS provider will not delete existing '
+            + 'synced data, but new syncs will use the new '
+            + 'provider. Continue?'
+        );
+        if (!confirmed) {
+            elements.pmsType.value = currentPmsType;
+            return;
+        }
+    }
+
+    renderCredentialFields(selectedType);
+    updateDynamicTexts(selectedType);
+    elements.oauthForm.classList.remove('hidden');
+    elements.oauthConnected.classList.add('hidden');
+}
+
+/**
+ * Render credential input fields for the selected provider.
+ * @param {string} pmsType - The PMS type to render fields for
+ */
+function renderCredentialFields(pmsType) {
+    const provider = providersData.find(
+        p => p.pms_type === pmsType
+    );
+    if (!provider) return;
+
+    const fields = provider.credential_fields;
+    const container = elements.credentialFields;
+    container.innerHTML = '';
+
+    // Separate token fields for collapsible section
+    const tokenFields = fields.filter(
+        f => f.name === 'access_token'
+            || f.name === 'refresh_token'
+    );
+    const mainFields = fields.filter(
+        f => f.name !== 'access_token'
+            && f.name !== 'refresh_token'
+    );
+
+    // Render main fields
+    for (const field of mainFields) {
+        const isRequired = !field.label.includes('optional');
+        let placeholder = '';
+        if (field.name === 'api_key' && tokenFields.length > 0) {
+            placeholder = 'Use API Key OR OAuth tokens below';
+        }
+        container.appendChild(
+            buildFormField(field, isRequired, placeholder)
+        );
+    }
+
+    // Render token fields in collapsible section
+    if (tokenFields.length > 0) {
+        const details = document.createElement('details');
+        const summary = document.createElement('summary');
+        summary.textContent = 'OAuth Tokens (alternative)';
+        details.appendChild(summary);
+
+        for (const field of tokenFields) {
+            details.appendChild(buildFormField(field, false, ''));
+        }
+        container.appendChild(details);
+    }
+
+    // Update form description
+    const pmsName = getProviderName(pmsType);
+    if (elements.oauthFormDescription) {
+        elements.oauthFormDescription.textContent =
+            `Enter your ${escapeHtml(pmsName)} credentials.`;
+    }
+}
+
+/**
+ * Build a form field DOM element.
+ * @param {Object} field - Field descriptor with name, label, type
+ * @param {boolean} required - Whether the field is required
+ * @param {string} placeholder - Optional placeholder text
+ * @returns {HTMLElement} Form group element
+ */
+function buildFormField(field, required, placeholder) {
+    const group = document.createElement('div');
+    group.className = 'form-group';
+
+    const label = document.createElement('label');
+    label.setAttribute('for', `cred-${field.name}`);
+    label.textContent = field.label + (required ? ' *' : '');
+
+    const input = document.createElement('input');
+    input.type = field.type === 'password' ? 'password' : 'text';
+    input.id = `cred-${field.name}`;
+    input.name = field.name;
+    if (required) input.required = true;
+    if (placeholder) input.placeholder = placeholder;
+
+    group.appendChild(label);
+    group.appendChild(input);
+    return group;
+}
+
+/**
+ * Show or hide the token requests remaining display.
+ * @param {number|null} remaining - Token requests remaining
+ */
+function showTokenRequests(remaining) {
+    if (remaining !== null && remaining !== undefined) {
+        elements.tokenRequestsDisplay.textContent =
+            `Token requests remaining: ${remaining}/5`;
+        elements.tokenRequestsDisplay.classList.remove('hidden');
+        if (remaining <= 1) {
+            elements.tokenRequestsDisplay.classList.add('warning');
+        } else {
+            elements.tokenRequestsDisplay.classList.remove(
+                'warning'
+            );
+        }
+    } else {
+        elements.tokenRequestsDisplay.classList.add('hidden');
+        elements.tokenRequestsDisplay.classList.remove('warning');
+    }
+}
+
+/**
+ * Update dynamic text elements based on selected PMS type.
+ * @param {string} pmsType - The PMS type identifier
+ */
+function updateDynamicTexts(pmsType) {
+    const pmsName = getProviderName(pmsType);
+
+    if (elements.appSubtitle) {
+        elements.appSubtitle.textContent =
+            pmsType
+                ? `${pmsName} to Airbnb iCal Export`
+                : 'PMS to Airbnb iCal Export';
+    }
+
+    if (elements.oauthSectionTitle) {
+        elements.oauthSectionTitle.textContent =
+            pmsType
+                ? `${pmsName} Authentication`
+                : 'PMS Authentication';
+    }
+
+    if (elements.syncPropertiesBtn) {
+        elements.syncPropertiesBtn.textContent =
+            pmsType
+                ? `Sync Properties from ${pmsName}`
+                : 'Sync Properties';
+    }
+
+    if (elements.listingsDescription) {
+        elements.listingsDescription.textContent =
+            pmsType
+                ? `Enable iCal export for your ${pmsName} properties.`
+                : 'Enable iCal export for your properties.';
+    }
+}
+
 // Event Listeners
 function initEventListeners() {
     elements.oauthForm.addEventListener('submit', saveOAuthCredentials);
     elements.refreshTokenBtn.addEventListener('click', refreshToken);
     elements.replaceCredentialsBtn.addEventListener('click', showCredentialsForm);
     elements.saveSyncBtn.addEventListener('click', saveSyncSettings);
-    elements.syncPropertiesBtn.addEventListener('click', syncPropertiesFromCloudbeds);
+    elements.syncPropertiesBtn.addEventListener('click', syncProperties);
+    elements.pmsType.addEventListener('change', onPmsTypeChange);
     elements.addFieldBtn.addEventListener('click', addField);
     elements.addAllFieldsBtn.addEventListener('click', addAllFields);
     elements.saveFieldsBtn.addEventListener('click', saveCustomFields);
@@ -1220,8 +1510,8 @@ function initEventListeners() {
 document.addEventListener('DOMContentLoaded', () => {
     initEventListeners();
     initCustomFieldsEventDelegation();
+    loadProviders();
     loadStatus();
-    loadOAuthStatus();
     loadListings();
     loadSyncSettings();
 
