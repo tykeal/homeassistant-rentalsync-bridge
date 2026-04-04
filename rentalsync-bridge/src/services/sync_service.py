@@ -426,23 +426,24 @@ class SyncService:
         provider: PMSProvider,
         reservations: list[PMSReservation],
     ) -> list[PMSReservation]:
-        """Resolve missing guest names via provider.get_guest().
+        """Enrich reservations with guest details via provider.get_guest().
 
         Batches unique guest_ids to avoid redundant API calls.
-        Also adds ``guest_phone_last4``, ``guest_phone``, and
-        ``guest_email`` to ``custom_data`` when available.
+        Resolves missing guest names and adds ``guest_phone_last4``,
+        ``guest_phone``, and ``guest_email`` to ``custom_data`` when
+        available.
 
         Args:
             provider: Active PMS provider instance.
-            reservations: Reservations that may lack guest_name.
+            reservations: Reservations to enrich.
 
         Returns:
             Updated list of PMSReservation DTOs.
         """
-        # Collect unique guest_ids that need resolution
+        # Collect ALL unique guest_ids for enrichment
         ids_to_resolve: set[str] = set()
         for r in reservations:
-            if r.guest_name is None and r.guest_id is not None:
+            if r.guest_id is not None:
                 ids_to_resolve.add(r.guest_id)
 
         if not ids_to_resolve:
@@ -457,11 +458,11 @@ class SyncService:
                 logger.warning("Failed to resolve guest %s", gid)
                 guest_cache[gid] = None
 
-        # Rebuild reservations with resolved names / phone
+        # Rebuild reservations with enriched data
         updated: list[PMSReservation] = []
         for r in reservations:
             resolved = r
-            if r.guest_name is None and r.guest_id is not None:
+            if r.guest_id is not None:
                 guest = guest_cache.get(r.guest_id)
                 if guest is not None:
                     phone_last4 = self.extract_phone_last4(
@@ -477,7 +478,7 @@ class SyncService:
                     resolved = PMSReservation(
                         pms_booking_id=r.pms_booking_id,
                         listing_pms_id=r.listing_pms_id,
-                        guest_name=guest.full_name,
+                        guest_name=r.guest_name or guest.full_name,
                         guest_id=r.guest_id,
                         check_in=r.check_in,
                         check_out=r.check_out,
