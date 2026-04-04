@@ -614,11 +614,57 @@ class GuestyProvider(PMSProvider):
             check_out=check_out,
             status=status,
             room_ids=(room_id,),
-            custom_data={},
+            custom_data=_extract_custom_data(raw),
         )
 
 
 # -- module-level helpers ------------------------------------------------------
+
+# Keys extracted from top-level reservation data.
+_CUSTOM_KEYS = ("source", "confirmationCode", "nightsCount", "guestsCount")
+
+# Keys extracted from the nested ``money`` object.
+_MONEY_KEYS = ("totalPaid", "balanceDue", "currency")
+
+
+def _extract_custom_data(raw: dict[str, Any]) -> dict[str, Any]:
+    """Build custom_data from a raw Guesty reservation dict.
+
+    Extracts a curated set of reservation-level fields, financial
+    data from the nested ``money`` object, and flattened notes.
+
+    Args:
+        raw: Raw reservation dict from the Guesty API.
+
+    Returns:
+        Flat dict of extracted field values.
+    """
+    custom: dict[str, Any] = {}
+    for key in _CUSTOM_KEYS:
+        val = raw.get(key)
+        if val is not None:
+            custom[key] = val
+
+    money = raw.get("money") or {}
+    if isinstance(money, dict):
+        for mkey in _MONEY_KEYS:
+            val = money.get(mkey)
+            if val is not None:
+                custom[f"money_{mkey}"] = val
+
+    notes = raw.get("notes") or []
+    if isinstance(notes, list) and notes:
+        parts: list[str] = []
+        for n in notes:
+            if isinstance(n, dict):
+                parts.append(n.get("note", ""))
+            elif isinstance(n, str):
+                parts.append(n)
+        joined = "; ".join(t for t in parts if t)
+        if joined:
+            custom["notes"] = joined
+
+    return custom
 
 
 # TODO: consolidate with cloudbeds _parse_date in a shared utility
