@@ -514,6 +514,10 @@ class SyncService:
         # for listings with many reservations.
         enriched: list[PMSReservation] = []
         for r in reservations:
+            if not r.pms_booking_id:
+                enriched.append(r)
+                continue
+
             try:
                 extra = await provider.get_custom_fields(
                     r.pms_booking_id,
@@ -522,6 +526,7 @@ class SyncService:
                 logger.warning(
                     "Failed to fetch custom fields for %s",
                     r.pms_booking_id,
+                    exc_info=True,
                 )
                 extra = {}
 
