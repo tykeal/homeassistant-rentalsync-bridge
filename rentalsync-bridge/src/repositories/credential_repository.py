@@ -61,15 +61,16 @@ class CredentialRepository:
     async def update_token(
         self,
         credential_id: int,
-        access_token: str,
-        expires_at: datetime,
+        access_token: str | None,
+        expires_at: datetime | None,
     ) -> None:
         """Update just the access token and expiry for a credential.
 
         Args:
             credential_id: Primary key of the credential row.
-            access_token: New access token value (will be encrypted).
-            expires_at: New expiry timestamp.
+            access_token: New access token value (will be encrypted),
+                or ``None`` to clear.
+            expires_at: New expiry timestamp, or ``None`` to clear.
         """
         result = await self._session.execute(
             select(OAuthCredential).where(OAuthCredential.id == credential_id)

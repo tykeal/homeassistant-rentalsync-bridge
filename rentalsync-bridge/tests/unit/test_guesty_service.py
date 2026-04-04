@@ -135,7 +135,7 @@ def mock_token_manager():
     """Create a mock GuestyTokenManager with test defaults."""
     mgr = AsyncMock(spec=GuestyTokenManager)
     mgr.get_token = AsyncMock(return_value="test-token")
-    mgr.invalidate_cache = MagicMock()
+    mgr.invalidate_cache = AsyncMock()
     mgr.cached_expires_at = datetime.now(UTC) + timedelta(hours=24)
     return mgr
 
@@ -294,7 +294,7 @@ class TestGetReservations:
         statuses = {r.pms_booking_id: r.status for r in reservations}
 
         assert statuses["R1"] == "confirmed"
-        assert statuses["R2"] == "confirmed"
+        assert statuses["R2"] == "checked_in"
         assert statuses["R4"] == "cancelled"
 
     @pytest.mark.asyncio

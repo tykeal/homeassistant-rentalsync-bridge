@@ -136,15 +136,17 @@ class TestTokenCache:
             assert token == "new-token"
             mock_request.assert_called_once()
 
-    def test_invalidate_cache_clears_state(self, token_manager):
-        """Test that invalidate_cache clears token and expiry."""
+    @pytest.mark.asyncio
+    async def test_invalidate_cache_clears_state(self, token_manager, mock_repo):
+        """Test that invalidate_cache clears token and expiry and DB."""
         token_manager._cached_token = "some-token"
         token_manager._cached_expires_at = datetime.now(UTC) + timedelta(hours=12)
 
-        token_manager.invalidate_cache()
+        await token_manager.invalidate_cache()
 
         assert token_manager.cached_token is None
         assert token_manager.cached_expires_at is None
+        mock_repo.update_token.assert_awaited_once_with(1, None, None)
 
 
 # ---------------------------------------------------------------------------

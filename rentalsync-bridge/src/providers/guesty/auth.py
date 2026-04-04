@@ -177,6 +177,9 @@ class GuestyTokenManager:
                     self._cached_expires_at = expires_at
                     return self._cached_token
 
+            # Note: check+increment is not atomic across processes, but
+            # this add-on runs as a single process. The asyncio.Lock
+            # protects against concurrent coroutines within this process.
             await self._check_rate_limit()
 
             result = await self._request_token()
@@ -262,10 +265,14 @@ class GuestyTokenManager:
             expires_at=expires_at,
         )
 
-    def invalidate_cache(self) -> None:
-        """Clear the in-memory token cache.
+    async def invalidate_cache(self) -> None:
+        """Clear cached token, forcing a new request on next get_token().
 
-        Forces the next ``get_token()`` call to request a fresh token.
+        Clears both the in-memory cache and the persisted DB token so
+        that a subsequent ``get_token()`` call cannot reload a stale
+        token from the database.
         """
         self._cached_token = None
         self._cached_expires_at = None
+        # Also clear persisted token so DB reload doesn't bypass
+        await self._repo.update_token(self._credential_id, None, None)

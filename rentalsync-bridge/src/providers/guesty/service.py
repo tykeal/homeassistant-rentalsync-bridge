@@ -39,7 +39,7 @@ MAX_BACKOFF = 30.0
 # Guesty statuses that map to our normalised reservation statuses.
 _STATUS_MAP: dict[str, str] = {
     "confirmed": "confirmed",
-    "checked_in": "confirmed",
+    "checked_in": "checked_in",
     "checked_out": "checked_out",
     "canceled": "cancelled",
 }
@@ -473,7 +473,7 @@ class GuestyProvider(PMSProvider):
             PMSConnectionError: If unable to reach Guesty API.
         """
         if self._token_manager is not None:
-            self._token_manager.invalidate_cache()
+            await self._token_manager.invalidate_cache()
             token = await self._token_manager.get_token()
             expires_at = self._token_manager.cached_expires_at or datetime.now(UTC)
             return TokenResult(
