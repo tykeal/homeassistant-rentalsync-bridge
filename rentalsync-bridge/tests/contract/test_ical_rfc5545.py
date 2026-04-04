@@ -500,12 +500,14 @@ class TestGuestySourcedCompliance:
         assert "Alice Guesty" in str(evt["summary"])
         assert "dtstamp" in evt
 
-    def test_guesty_booking_uid_stable(
-        self, calendar_service, guesty_listing, guesty_booking
-    ):
+    def test_guesty_booking_uid_stable(self, guesty_listing, guesty_booking):
         """Guesty booking UID is deterministic across generations."""
-        ical1 = calendar_service.generate_ical(guesty_listing, [guesty_booking])
-        ical2 = calendar_service.generate_ical(guesty_listing, [guesty_booking])
+        from src.services.calendar_service import CalendarCache
+
+        service1 = CalendarService(cache=CalendarCache(ttl_seconds=0))
+        service2 = CalendarService(cache=CalendarCache(ttl_seconds=0))
+        ical1 = service1.generate_ical(guesty_listing, [guesty_booking])
+        ical2 = service2.generate_ical(guesty_listing, [guesty_booking])
         cal1 = Calendar.from_ical(ical1)
         cal2 = Calendar.from_ical(ical2)
         uid1 = str(next(iter(cal1.walk("VEVENT")))["uid"])

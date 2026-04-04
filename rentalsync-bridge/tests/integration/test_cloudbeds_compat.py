@@ -7,15 +7,11 @@ through the provider-agnostic pipeline, and that iCal feed URLs remain
 stable after migration.
 """
 
-from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
-import pytest
 from icalendar import Calendar
-from sqlalchemy import event, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from src.database import Base
+from sqlalchemy import select
 from src.models.booking import Booking
 from src.providers.base import PMSReservation
 from src.services.calendar_service import CalendarCache, CalendarService
@@ -24,46 +20,11 @@ from src.services.sync_service import SyncService
 from tests.conftest import make_booking, make_listing, make_room
 
 
-@pytest.fixture
-async def db_engine():
-    """Create async in-memory SQLite engine."""
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        echo=False,
-        connect_args={"check_same_thread": False},
-    )
-
-    @event.listens_for(engine.sync_engine, "connect")
-    def set_sqlite_pragma(dbapi_conn, _rec):
-        """Enable SQLite FK constraints."""
-        cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    yield engine
-    await engine.dispose()
-
-
-@pytest.fixture
-def session_factory(db_engine):
-    """Create async session factory bound to test engine."""
-    return async_sessionmaker(db_engine, class_=AsyncSession, expire_on_commit=False)
-
-
-@pytest.fixture
-async def session(session_factory) -> AsyncGenerator[AsyncSession]:
-    """Yield an async database session for each test."""
-    async with session_factory() as s:
-        yield s
-
-
 class TestCloudbedsBackwardCompat:
     """Verify Cloudbeds continues to work through the new pipeline."""
 
     async def test_existing_cloudbeds_data_survives_sync(
-        self, session, session_factory
+        self, async_session, async_session_factory
     ):
         """Pre-existing data + re-sync produces correct iCal."""
         # Simulate pre-existing Cloudbeds data (no room association)
@@ -72,9 +33,9 @@ class TestCloudbedsBackwardCompat:
             name="Cloudbeds Lodge",
             slug="cloudbeds-lodge",
         )
-        session.add(listing)
-        await session.commit()
-        await session.refresh(listing)
+        async_session.add(listing)
+        await async_session.commit()
+        await async_session.refresh(listing)
 
         now = datetime.now(UTC)
         old_booking = make_booking(
@@ -84,9 +45,9 @@ class TestCloudbedsBackwardCompat:
             check_in_date=now + timedelta(days=14),
             check_out_date=now + timedelta(days=18),
         )
-        session.add(old_booking)
-        await session.commit()
-        await session.refresh(old_booking)
+        async_session.add(old_booking)
+        await async_session.commit()
+        await async_session.refresh(old_booking)
 
         # Generate iCal BEFORE re-sync
         cal_service = CalendarService(cache=CalendarCache(ttl_seconds=0))
@@ -116,9 +77,9 @@ class TestCloudbedsBackwardCompat:
         mock_provider.get_guest = AsyncMock(return_value=None)
 
         sync = SyncService(
-            session,
+            async_session,
             calendar_cache=CalendarCache(ttl_seconds=0),
-            session_factory=session_factory,
+            session_factory=async_session_factory,
         )
         counts = await sync.sync_listing(listing, mock_provider)
 
@@ -128,7 +89,7 @@ class TestCloudbedsBackwardCompat:
         assert counts["cancelled"] == 0
 
         # iCal after sync should have same UID (stable)
-        result = await session.execute(
+        result = await async_session.execute(
             select(Booking).where(Booking.listing_id == listing.id)
         )
         bookings_after = list(result.scalars().all())
@@ -139,7 +100,9 @@ class TestCloudbedsBackwardCompat:
         uid_after = str(next(iter(cal_after.walk("VEVENT")))["uid"])
         assert uid_after == uid_before
 
-    async def test_ical_url_slug_stable_after_migration(self, session, session_factory):
+    async def test_ical_url_slug_stable_after_migration(
+        self, async_session, async_session_factory
+    ):
         """iCal URL slugs remain unchanged after migration."""
         original_slug = "my-cloudbeds-property"
         listing = make_listing(
@@ -147,9 +110,9 @@ class TestCloudbedsBackwardCompat:
             name="CB Property",
             slug=original_slug,
         )
-        session.add(listing)
-        await session.commit()
-        await session.refresh(listing)
+        async_session.add(listing)
+        await async_session.commit()
+        await async_session.refresh(listing)
 
         assert listing.ical_url_slug == original_slug
 
@@ -160,24 +123,26 @@ class TestCloudbedsBackwardCompat:
             room_name="Standard Room",
             slug=room_slug,
         )
-        session.add(room)
-        await session.commit()
-        await session.refresh(room)
+        async_session.add(room)
+        await async_session.commit()
+        await async_session.refresh(room)
 
         # Slug should remain unchanged
         assert listing.ical_url_slug == original_slug
         assert room.ical_url_slug == room_slug
 
-    async def test_cloudbeds_sync_with_new_reservation(self, session, session_factory):
+    async def test_cloudbeds_sync_with_new_reservation(
+        self, async_session, async_session_factory
+    ):
         """New reservations from Cloudbeds sync correctly."""
         listing = make_listing(
             pms_id="cb_prop_300",
             name="CB New Reservation Property",
             slug="cb-new-res",
         )
-        session.add(listing)
-        await session.commit()
-        await session.refresh(listing)
+        async_session.add(listing)
+        await async_session.commit()
+        await async_session.refresh(listing)
 
         room = make_room(
             listing_id=listing.id,
@@ -185,9 +150,9 @@ class TestCloudbedsBackwardCompat:
             room_name="Deluxe Room",
             slug="deluxe-room",
         )
-        session.add(room)
-        await session.commit()
-        await session.refresh(room)
+        async_session.add(room)
+        await async_session.commit()
+        await async_session.refresh(room)
 
         now = datetime.now(UTC)
         mock_provider = AsyncMock()
@@ -210,14 +175,14 @@ class TestCloudbedsBackwardCompat:
         mock_provider.get_guest = AsyncMock(return_value=None)
 
         sync = SyncService(
-            session,
+            async_session,
             calendar_cache=CalendarCache(ttl_seconds=0),
-            session_factory=session_factory,
+            session_factory=async_session_factory,
         )
         counts = await sync.sync_listing(listing, mock_provider)
         assert counts["inserted"] == 1
 
-        result = await session.execute(
+        result = await async_session.execute(
             select(Booking).where(Booking.listing_id == listing.id)
         )
         bookings = list(result.scalars().all())

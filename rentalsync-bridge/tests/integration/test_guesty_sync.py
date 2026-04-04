@@ -8,15 +8,11 @@ verification, using mocked Guesty API responses and a real in-memory
 SQLite database.
 """
 
-from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
-import pytest
 from icalendar import Calendar
-from sqlalchemy import event, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from src.database import Base
+from sqlalchemy import select
 from src.models.booking import Booking
 from src.models.oauth_credential import OAuthCredential
 from src.providers.base import PMSGuest, PMSReservation
@@ -30,45 +26,10 @@ from tests.conftest import (
 )
 
 
-@pytest.fixture
-async def db_engine():
-    """Create async in-memory SQLite engine."""
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        echo=False,
-        connect_args={"check_same_thread": False},
-    )
-
-    @event.listens_for(engine.sync_engine, "connect")
-    def set_sqlite_pragma(dbapi_conn, _rec):
-        """Enable SQLite FK constraints."""
-        cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    yield engine
-    await engine.dispose()
-
-
-@pytest.fixture
-def session_factory(db_engine):
-    """Create async session factory bound to test engine."""
-    return async_sessionmaker(db_engine, class_=AsyncSession, expire_on_commit=False)
-
-
-@pytest.fixture
-async def session(session_factory) -> AsyncGenerator[AsyncSession]:
-    """Yield an async database session for each test."""
-    async with session_factory() as s:
-        yield s
-
-
 class TestGuestyEndToEnd:
     """Full Guesty provider integration flow."""
 
-    async def test_full_guesty_sync_flow(self, session, session_factory):
+    async def test_full_guesty_sync_flow(self, async_session, async_session_factory):
         """Test full Guesty sync flow."""
         # 1. Store Guesty credentials
         cred = OAuthCredential(
@@ -76,11 +37,11 @@ class TestGuestyEndToEnd:
             client_id="guesty_client_id",
             client_secret="guesty_secret",
         )
-        session.add(cred)
-        await session.commit()
-        await session.refresh(cred)
+        async_session.add(cred)
+        await async_session.commit()
+        await async_session.refresh(cred)
 
-        repo = CredentialRepository(session)
+        repo = CredentialRepository(async_session)
         stored = await repo.get_credential("guesty")
         assert stored is not None
         assert stored.client_id == "guesty_client_id"
@@ -92,9 +53,9 @@ class TestGuestyEndToEnd:
             name="Guesty Beach Villa",
             slug="guesty-beach-villa",
         )
-        session.add(listing)
-        await session.commit()
-        await session.refresh(listing)
+        async_session.add(listing)
+        await async_session.commit()
+        await async_session.refresh(listing)
 
         room = make_room(
             listing_id=listing.id,
@@ -102,9 +63,9 @@ class TestGuestyEndToEnd:
             room_name="Ocean Suite",
             slug="ocean-suite",
         )
-        session.add(room)
-        await session.commit()
-        await session.refresh(room)
+        async_session.add(room)
+        await async_session.commit()
+        await async_session.refresh(room)
 
         # 3. Sync reservations with guest resolution
         now = datetime.now(UTC)
@@ -136,9 +97,9 @@ class TestGuestyEndToEnd:
 
         cache = CalendarCache(ttl_seconds=0)
         sync = SyncService(
-            session,
+            async_session,
             calendar_cache=cache,
-            session_factory=session_factory,
+            session_factory=async_session_factory,
         )
         counts = await sync.sync_listing(listing, mock_provider)
 
@@ -146,7 +107,7 @@ class TestGuestyEndToEnd:
         assert counts["updated"] == 0
 
         # Verify guest name was resolved
-        result = await session.execute(select(Booking))
+        result = await async_session.execute(select(Booking))
         bookings = list(result.scalars().all())
         assert len(bookings) == 1
         assert bookings[0].guest_name == "Alice Wonderland"
@@ -171,16 +132,18 @@ class TestGuestyEndToEnd:
         assert "summary" in evt
         assert "Alice Wonderland" in str(evt["summary"])
 
-    async def test_guesty_multiple_reservations(self, session, session_factory):
+    async def test_guesty_multiple_reservations(
+        self, async_session, async_session_factory
+    ):
         """Test syncing multiple reservations produces distinct iCal events."""
         listing = make_listing(
             pms_id="guesty_multi",
             name="Multi-Booking Villa",
             slug="guesty-multi-villa",
         )
-        session.add(listing)
-        await session.commit()
-        await session.refresh(listing)
+        async_session.add(listing)
+        await async_session.commit()
+        await async_session.refresh(listing)
 
         room = make_room(
             listing_id=listing.id,
@@ -188,9 +151,9 @@ class TestGuestyEndToEnd:
             room_name="Suite A",
             slug="suite-a",
         )
-        session.add(room)
-        await session.commit()
-        await session.refresh(room)
+        async_session.add(room)
+        await async_session.commit()
+        await async_session.refresh(room)
 
         now = datetime.now(UTC)
         mock_provider = AsyncMock()
@@ -215,14 +178,14 @@ class TestGuestyEndToEnd:
 
         cache = CalendarCache(ttl_seconds=0)
         sync = SyncService(
-            session,
+            async_session,
             calendar_cache=cache,
-            session_factory=session_factory,
+            session_factory=async_session_factory,
         )
         counts = await sync.sync_listing(listing, mock_provider)
         assert counts["inserted"] == 3
 
-        result = await session.execute(
+        result = await async_session.execute(
             select(Booking).where(Booking.listing_id == listing.id)
         )
         bookings = list(result.scalars().all())

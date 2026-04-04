@@ -7,15 +7,12 @@ exhaustion and deferral, paginated multi-page results, and cancelled
 reservation handling.
 """
 
-from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-from sqlalchemy import event, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from src.database import Base
+from sqlalchemy import select
 from src.models.booking import Booking
 from src.providers.base import (
     PMSReservation,
@@ -29,54 +26,21 @@ from src.services.sync_service import SyncService
 from tests.conftest import make_listing
 
 
-@pytest.fixture
-async def db_engine():
-    """Create async in-memory SQLite engine."""
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        echo=False,
-        connect_args={"check_same_thread": False},
-    )
-
-    @event.listens_for(engine.sync_engine, "connect")
-    def set_sqlite_pragma(dbapi_conn, _rec):
-        """Enable SQLite FK constraints."""
-        cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    yield engine
-    await engine.dispose()
-
-
-@pytest.fixture
-def session_factory(db_engine):
-    """Create async session factory bound to test engine."""
-    return async_sessionmaker(db_engine, class_=AsyncSession, expire_on_commit=False)
-
-
-@pytest.fixture
-async def session(session_factory) -> AsyncGenerator[AsyncSession]:
-    """Yield an async database session for each test."""
-    async with session_factory() as s:
-        yield s
-
-
 class TestGuest404Fallback:
     """When get_guest returns None, booking uses fallback name."""
 
-    async def test_guest_not_found_uses_booking_id(self, session, session_factory):
+    async def test_guest_not_found_uses_booking_id(
+        self, async_session, async_session_factory
+    ):
         """Test guest 404 falls back to booking ID as event title."""
         listing = make_listing(
             pms_id="edge_prop_1",
             name="Edge Property",
             slug="edge-prop-1",
         )
-        session.add(listing)
-        await session.commit()
-        await session.refresh(listing)
+        async_session.add(listing)
+        await async_session.commit()
+        await async_session.refresh(listing)
 
         now = datetime.now(UTC)
         mock_provider = AsyncMock()
@@ -100,14 +64,14 @@ class TestGuest404Fallback:
         mock_provider.get_guest = AsyncMock(return_value=None)
 
         sync = SyncService(
-            session,
+            async_session,
             calendar_cache=CalendarCache(ttl_seconds=0),
-            session_factory=session_factory,
+            session_factory=async_session_factory,
         )
         counts = await sync.sync_listing(listing, mock_provider)
         assert counts["inserted"] == 1
 
-        result = await session.execute(
+        result = await async_session.execute(
             select(Booking).where(Booking.listing_id == listing.id)
         )
         booking = result.scalars().first()
@@ -121,16 +85,18 @@ class TestGuest404Fallback:
 class TestListingWithNoRooms:
     """Listing with no rooms uses implicit room handling."""
 
-    async def test_reservation_without_room_ids(self, session, session_factory):
+    async def test_reservation_without_room_ids(
+        self, async_session, async_session_factory
+    ):
         """Test reservation with no room IDs stores NULL room."""
         listing = make_listing(
             pms_id="no_rooms_prop",
             name="No Rooms Property",
             slug="no-rooms-prop",
         )
-        session.add(listing)
-        await session.commit()
-        await session.refresh(listing)
+        async_session.add(listing)
+        await async_session.commit()
+        await async_session.refresh(listing)
 
         now = datetime.now(UTC)
         mock_provider = AsyncMock()
@@ -153,14 +119,14 @@ class TestListingWithNoRooms:
         mock_provider.get_guest = AsyncMock(return_value=None)
 
         sync = SyncService(
-            session,
+            async_session,
             calendar_cache=CalendarCache(ttl_seconds=0),
-            session_factory=session_factory,
+            session_factory=async_session_factory,
         )
         counts = await sync.sync_listing(listing, mock_provider)
         assert counts["inserted"] == 1
 
-        result = await session.execute(
+        result = await async_session.execute(
             select(Booking).where(Booking.listing_id == listing.id)
         )
         booking = result.scalars().first()
@@ -190,8 +156,7 @@ class TestTokenLimitExhaustion:
             credential_id=1,
         )
         # Clear cache to force rate check
-        tm._cached_token = None
-        tm._cached_expires_at = None
+        await tm.invalidate_cache()
 
         with pytest.raises(TokenRateLimitError):
             await tm.get_token()
@@ -272,7 +237,7 @@ class TestCancelledReservation:
     """Cancelled reservations are handled correctly."""
 
     async def test_disappearing_reservation_marked_cancelled(
-        self, session, session_factory
+        self, async_session, async_session_factory
     ):
         """Test missing reservation on re-sync is marked cancelled."""
         listing = make_listing(
@@ -280,9 +245,9 @@ class TestCancelledReservation:
             name="Cancel Property",
             slug="cancel-prop",
         )
-        session.add(listing)
-        await session.commit()
-        await session.refresh(listing)
+        async_session.add(listing)
+        await async_session.commit()
+        await async_session.refresh(listing)
 
         now = datetime.now(UTC)
 
@@ -308,9 +273,9 @@ class TestCancelledReservation:
         mock_provider.get_guest = AsyncMock(return_value=None)
 
         sync = SyncService(
-            session,
+            async_session,
             calendar_cache=CalendarCache(ttl_seconds=0),
-            session_factory=session_factory,
+            session_factory=async_session_factory,
         )
         counts1 = await sync.sync_listing(listing, mock_provider)
         assert counts1["inserted"] == 2
@@ -335,7 +300,7 @@ class TestCancelledReservation:
         counts2 = await sync.sync_listing(listing, mock_provider)
         assert counts2["cancelled"] == 1
 
-        result = await session.execute(
+        result = await async_session.execute(
             select(Booking)
             .where(Booking.listing_id == listing.id)
             .where(Booking.status == "cancelled")
@@ -345,7 +310,7 @@ class TestCancelledReservation:
         assert cancelled[0].pms_booking_id == "CAN_BK002"
 
     async def test_explicitly_cancelled_status_persisted(
-        self, session, session_factory
+        self, async_session, async_session_factory
     ):
         """Test explicitly cancelled reservation persists cancelled status."""
         listing = make_listing(
@@ -353,9 +318,9 @@ class TestCancelledReservation:
             name="Explicit Cancel Property",
             slug="explicit-cancel",
         )
-        session.add(listing)
-        await session.commit()
-        await session.refresh(listing)
+        async_session.add(listing)
+        await async_session.commit()
+        await async_session.refresh(listing)
 
         now = datetime.now(UTC)
         mock_provider = AsyncMock()
@@ -378,14 +343,14 @@ class TestCancelledReservation:
         mock_provider.get_guest = AsyncMock(return_value=None)
 
         sync = SyncService(
-            session,
+            async_session,
             calendar_cache=CalendarCache(ttl_seconds=0),
-            session_factory=session_factory,
+            session_factory=async_session_factory,
         )
         counts = await sync.sync_listing(listing, mock_provider)
         assert counts["inserted"] == 1
 
-        result = await session.execute(
+        result = await async_session.execute(
             select(Booking).where(Booking.listing_id == listing.id)
         )
         booking = result.scalars().first()

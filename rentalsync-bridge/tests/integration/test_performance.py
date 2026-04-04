@@ -8,14 +8,11 @@ run with ``pytest -m slow`` to include them.
 """
 
 import time
-from collections.abc import AsyncGenerator
+import warnings
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import event
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from src.database import Base
 from src.models.oauth_credential import OAuthCredential
 from src.providers.base import PMSReservation, TokenRateLimitError
 from src.providers.guesty.auth import TOKEN_REQUEST_LIMIT, GuestyTokenManager
@@ -26,45 +23,10 @@ from src.services.sync_service import SyncService
 from tests.conftest import make_booking, make_listing
 
 
-@pytest.fixture
-async def db_engine():
-    """Create async in-memory SQLite engine."""
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        echo=False,
-        connect_args={"check_same_thread": False},
-    )
-
-    @event.listens_for(engine.sync_engine, "connect")
-    def set_sqlite_pragma(dbapi_conn, _rec):
-        """Enable SQLite FK constraints."""
-        cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    yield engine
-    await engine.dispose()
-
-
-@pytest.fixture
-def session_factory(db_engine):
-    """Create async session factory bound to test engine."""
-    return async_sessionmaker(db_engine, class_=AsyncSession, expire_on_commit=False)
-
-
-@pytest.fixture
-async def session(session_factory) -> AsyncGenerator[AsyncSession]:
-    """Yield an async database session for each test."""
-    async with session_factory() as s:
-        yield s
-
-
 class TestTokenRequestDeterminism:
     """Token requests stay within the 5/day budget."""
 
-    async def test_token_requests_at_most_two_per_cycle(self, session):
+    async def test_token_requests_at_most_two_per_cycle(self, async_session):
         """Simulated 24h cycle should use <= 2 token requests.
 
         One request for the initial token, possibly one more if the
@@ -76,11 +38,11 @@ class TestTokenRequestDeterminism:
             client_id="perf_cid",
             client_secret="perf_csec",
         )
-        session.add(cred)
-        await session.commit()
-        await session.refresh(cred)
+        async_session.add(cred)
+        await async_session.commit()
+        await async_session.refresh(cred)
 
-        repo = CredentialRepository(session)
+        repo = CredentialRepository(async_session)
 
         mock_http = AsyncMock()
         mock_http.post = AsyncMock(
@@ -117,18 +79,18 @@ class TestTokenRequestDeterminism:
         count = await repo.get_token_request_count(cred.id)
         assert count <= 2
 
-    async def test_rate_limit_prevents_excess(self, session):
+    async def test_rate_limit_prevents_excess(self, async_session):
         """After 5 requests in a window, a 6th raises error."""
         cred = OAuthCredential(
             pms_type="guesty",
             client_id="rl_cid",
             client_secret="rl_csec",
         )
-        session.add(cred)
-        await session.commit()
-        await session.refresh(cred)
+        async_session.add(cred)
+        await async_session.commit()
+        await async_session.refresh(cred)
 
-        repo = CredentialRepository(session)
+        repo = CredentialRepository(async_session)
 
         # Simulate 5 increments
         for _ in range(TOKEN_REQUEST_LIMIT):
@@ -141,8 +103,7 @@ class TestTokenRequestDeterminism:
             credential_id=cred.id,
         )
         # Clear cache to force rate check
-        tm._cached_token = None
-        tm._cached_expires_at = None
+        await tm.invalidate_cache()
 
         with pytest.raises(TokenRateLimitError):
             await tm.get_token()
@@ -152,16 +113,16 @@ class TestTokenRequestDeterminism:
 class TestSyncCycleBenchmark:
     """Measure sync-cycle duration (informational, not gated)."""
 
-    async def test_sync_cycle_latency(self, session, session_factory):
+    async def test_sync_cycle_latency(self, async_session, async_session_factory):
         """Test sync cycle completes within acceptable latency."""
         listing = make_listing(
             pms_id="bench_prop",
             name="Benchmark Property",
             slug="bench-prop",
         )
-        session.add(listing)
-        await session.commit()
-        await session.refresh(listing)
+        async_session.add(listing)
+        await async_session.commit()
+        await async_session.refresh(listing)
 
         now = datetime.now(UTC)
         reservations = [
@@ -185,9 +146,9 @@ class TestSyncCycleBenchmark:
         mock_provider.get_guest = AsyncMock(return_value=None)
 
         sync = SyncService(
-            session,
+            async_session,
             calendar_cache=CalendarCache(ttl_seconds=0),
-            session_factory=session_factory,
+            session_factory=async_session_factory,
         )
 
         start = time.monotonic()
@@ -196,23 +157,24 @@ class TestSyncCycleBenchmark:
 
         assert counts["inserted"] == 50
         # Informational — not a hard gate
-        assert elapsed < 30.0, f"Sync took {elapsed:.2f}s (expected <30s)"
+        if elapsed > 30.0:
+            warnings.warn(f"Sync took {elapsed:.2f}s (expected <30s)", stacklevel=1)
 
 
 @pytest.mark.slow
 class TestICalGenerationBenchmark:
     """Measure iCal feed generation latency (informational)."""
 
-    async def test_ical_generation_latency(self, session):
+    async def test_ical_generation_latency(self, async_session):
         """Test iCal generation completes within acceptable latency."""
         listing = make_listing(
             pms_id="ical_bench",
             name="iCal Bench Property",
             slug="ical-bench",
         )
-        session.add(listing)
-        await session.commit()
-        await session.refresh(listing)
+        async_session.add(listing)
+        await async_session.commit()
+        await async_session.refresh(listing)
 
         now = datetime.now(UTC)
         bookings = []
@@ -224,9 +186,9 @@ class TestICalGenerationBenchmark:
                 check_in_date=now + timedelta(days=i),
                 check_out_date=now + timedelta(days=i + 3),
             )
-            session.add(bk)
+            async_session.add(bk)
             bookings.append(bk)
-        await session.commit()
+        await async_session.commit()
 
         cal_service = CalendarService(cache=CalendarCache(ttl_seconds=0))
 
@@ -237,4 +199,5 @@ class TestICalGenerationBenchmark:
         assert "BEGIN:VCALENDAR" in ical_str
         assert ical_str.count("BEGIN:VEVENT") == 100
         # Informational — not a hard gate
-        assert elapsed < 5.0, f"iCal gen took {elapsed:.2f}s (expected <5s)"
+        if elapsed > 5.0:
+            warnings.warn(f"iCal gen took {elapsed:.2f}s (expected <5s)", stacklevel=1)

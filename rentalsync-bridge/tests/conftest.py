@@ -103,6 +103,16 @@ async def async_session(async_engine) -> AsyncGenerator[AsyncSession]:
 
 
 @pytest.fixture
+def async_session_factory(async_engine):
+    """Create an async session factory for tests needing session_factory."""
+    return async_sessionmaker(
+        async_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
+
+@pytest.fixture
 def app() -> FastAPI:
     """Create a test FastAPI application."""
     from src.main import create_app
