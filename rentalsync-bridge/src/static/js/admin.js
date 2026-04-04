@@ -139,9 +139,9 @@ async function loadOAuthStatus() {
             elements.oauthForm.classList.add('hidden');
             elements.oauthConnected.classList.remove('hidden');
             elements.oauthConnectedText.textContent =
-                `\u2713 Connected to ${escapeHtml(pmsName)}`;
+                `\u2713 Connected to ${pmsName}`;
             elements.oauthStatusText.textContent =
-                `Connected to ${escapeHtml(pmsName)}`;
+                `Connected to ${pmsName}`;
             if (status.auth_type === 'api_key') {
                 elements.authTypeDisplay.textContent =
                     'Using API Key authentication';
@@ -1364,9 +1364,12 @@ function renderCredentialFields(pmsType) {
             && f.name !== 'refresh_token'
     );
 
+    // Required fields by name (avoids coupling to label text)
+    const REQUIRED_FIELDS = new Set(['client_id', 'client_secret']);
+
     // Render main fields
     for (const field of mainFields) {
-        const isRequired = !field.label.includes('optional');
+        const isRequired = REQUIRED_FIELDS.has(field.name);
         let placeholder = '';
         if (field.name === 'api_key' && tokenFields.length > 0) {
             placeholder = 'Use API Key OR OAuth tokens below';
@@ -1393,7 +1396,7 @@ function renderCredentialFields(pmsType) {
     const pmsName = getProviderName(pmsType);
     if (elements.oauthFormDescription) {
         elements.oauthFormDescription.textContent =
-            `Enter your ${escapeHtml(pmsName)} credentials.`;
+            `Enter your ${pmsName} credentials.`;
     }
 }
 
@@ -1427,11 +1430,16 @@ function buildFormField(field, required, placeholder) {
 /**
  * Show or hide the token requests remaining display.
  * @param {number|null} remaining - Token requests remaining
+ * @param {number|null} limit - Token request limit for window
  */
-function showTokenRequests(remaining) {
+function showTokenRequests(remaining, limit) {
     if (remaining !== null && remaining !== undefined) {
+        const remainingText =
+            limit !== null && limit !== undefined
+                ? `${remaining}/${limit}`
+                : `${remaining}`;
         elements.tokenRequestsDisplay.textContent =
-            `Token requests remaining: ${remaining}/5`;
+            `Token requests remaining: ${remainingText}`;
         elements.tokenRequestsDisplay.classList.remove('hidden');
         if (remaining <= 1) {
             elements.tokenRequestsDisplay.classList.add('warning');
