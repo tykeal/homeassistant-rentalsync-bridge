@@ -182,13 +182,20 @@ async def _auto_fetch_guesty_token(
         db: Async database session.
         credential: Newly saved Guesty credential.
     """
-    await db.refresh(credential)
     try:
+        await db.refresh(credential)
         oauth_service = OAuthService(db)
         await oauth_service.refresh_and_save(credential)
         logger.info("Auto-fetched initial Guesty access token")
-    except OAuthServiceError:
-        logger.warning("Could not auto-fetch Guesty token; will retry on next sync")
+    except OAuthServiceError as exc:
+        logger.warning(
+            "Could not auto-fetch Guesty token; will retry on next sync: %s",
+            exc,
+        )
+    except Exception:
+        logger.exception(
+            "Unexpected error auto-fetching Guesty token; will retry on next sync"
+        )
 
 
 @router.post("/configure", response_model=OAuthConfigureResponse)

@@ -72,6 +72,11 @@ class OAuthService:
         """
         pms_type = credential.pms_type or "cloudbeds"
 
+        # Ensure pms_type is set on the credential so the factory
+        # gets a valid value even for legacy rows with NULL pms_type.
+        if not credential.pms_type:
+            credential.pms_type = pms_type
+
         try:
             provider_inst = create_provider_for_credential(credential, self._session)
         except ValueError:
@@ -103,7 +108,13 @@ class OAuthService:
             raise OAuthServiceError(msg) from e
         finally:
             if hasattr(provider_inst, "aclose"):
-                await provider_inst.aclose()
+                try:
+                    await provider_inst.aclose()
+                except Exception:
+                    logger.exception(
+                        "Failed to close provider instance for %s",
+                        pms_type,
+                    )
 
     async def _cloudbeds_refresh(
         self, credential: OAuthCredential
