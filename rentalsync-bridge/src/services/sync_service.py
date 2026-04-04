@@ -1,8 +1,9 @@
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
-"""Sync service for synchronizing bookings from Cloudbeds."""
+"""Sync service for synchronizing bookings via PMS providers."""
 
 import logging
+import re
 from datetime import UTC, datetime
 
 from sqlalchemy import update
@@ -11,7 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from src.database import get_session_factory
 from src.models.booking import Booking
 from src.models.listing import Listing
-from src.models.oauth_credential import OAuthCredential
+from src.providers.base import (
+    PMSGuest,
+    PMSProvider,
+    PMSProviderError,
+    PMSReservation,
+)
 from src.repositories.available_field_repository import (
     AvailableFieldRepository,
     should_exclude_field,
@@ -19,9 +25,10 @@ from src.repositories.available_field_repository import (
 from src.repositories.booking_repository import BookingRepository
 from src.repositories.room_repository import RoomRepository
 from src.services.calendar_service import CalendarCache
-from src.services.cloudbeds_service import CloudbedsService, CloudbedsServiceError
 
 logger = logging.getLogger(__name__)
+
+PHONE_LAST_DIGITS = 4
 
 
 class SyncServiceError(Exception):
@@ -31,9 +38,9 @@ class SyncServiceError(Exception):
 
 
 class SyncService:
-    """Service for synchronizing bookings from Cloudbeds.
+    """Service for synchronizing bookings from any PMS provider.
 
-    Handles periodic fetching of reservations from Cloudbeds API and
+    Handles periodic fetching of reservations via PMSProvider and
     updating local booking cache with INSERT/UPDATE/cancelled logic.
     """
 
@@ -61,13 +68,13 @@ class SyncService:
     async def sync_listing(
         self,
         listing: Listing,
-        credential: OAuthCredential,
+        provider: PMSProvider,
     ) -> dict[str, int]:
         """Sync bookings for a single listing.
 
         Args:
             listing: Listing to sync bookings for.
-            credential: OAuth credential for API access.
+            provider: PMSProvider instance for API access.
 
         Returns:
             Dict with counts: inserted, updated, cancelled.
@@ -80,15 +87,10 @@ class SyncService:
             return {"inserted": 0, "updated": 0, "cancelled": 0}
 
         try:
-            # Initialize Cloudbeds service with tokens or API key
-            cloudbeds = CloudbedsService(
-                access_token=credential.access_token,
-                refresh_token=credential.refresh_token,
-                api_key=credential.api_key,
-            )
+            reservations = await provider.get_reservations(listing.pms_id)
 
-            # Fetch reservations from Cloudbeds
-            reservations = await cloudbeds.get_reservations(listing.pms_id)
+            # Resolve guest names for reservations that lack them
+            reservations = await self._resolve_guest_names(provider, reservations)
 
             counts = await self._process_reservations(listing, reservations)
 
@@ -98,7 +100,7 @@ class SyncService:
 
             return counts
 
-        except CloudbedsServiceError as e:
+        except PMSProviderError as e:
             # Update sync error status using a separate session to avoid
             # affecting any pending changes in the caller's transaction
             error_msg = str(e)
@@ -132,51 +134,50 @@ class SyncService:
     async def _process_reservations(
         self,
         listing: Listing,
-        reservations: list[dict],
+        reservations: list[PMSReservation],
     ) -> dict[str, int]:
         """Process reservations and update local bookings.
 
         Args:
             listing: Listing being synced.
-            reservations: List of reservation dicts from Cloudbeds.
+            reservations: List of PMSReservation DTOs from provider.
 
         Returns:
             Dict with counts: inserted, updated, cancelled.
         """
         counts = {"inserted": 0, "updated": 0, "cancelled": 0}
         seen_booking_ids: set[str] = set()
-        seen_reservation_ids: set[str] = set()  # Track base reservation IDs
+        seen_reservation_ids: set[str] = set()
 
-        # Batch discover fields from all reservations in a single operation
-        # This does one DB fetch and one flush instead of per-reservation
-        await self._available_field_repo.discover_fields_from_reservations(
-            listing.id, reservations
-        )
+        # Batch discover fields from reservation custom_data
+        raw_dicts = [r.custom_data for r in reservations if r.custom_data]
+        if raw_dicts:
+            await self._available_field_repo.discover_fields_from_reservations(
+                listing.id, raw_dicts
+            )
 
         for reservation in reservations:
-            cloudbeds_booking_id = reservation.get("id") or reservation.get(
-                "reservationID"
-            )
-            if not cloudbeds_booking_id:
+            if not reservation.pms_booking_id:
                 logger.warning("Skipping reservation with no ID")
                 continue
 
-            # Track the reservation ID from API for cancellation detection
-            seen_reservation_ids.add(str(cloudbeds_booking_id))
+            seen_reservation_ids.add(reservation.pms_booking_id)
 
-            # Extract booking data
-            booking_data = self._extract_booking_data(reservation)
+            booking_data = self._extract_booking_data_from_dto(
+                reservation,
+            )
 
-            # Skip reservations with invalid dates (T088)
             if not booking_data["check_in_date"] or not booking_data["check_out_date"]:
                 logger.warning(
-                    "Skipping reservation %s with invalid dates", cloudbeds_booking_id
+                    "Skipping reservation %s with invalid dates",
+                    reservation.pms_booking_id,
                 )
                 continue
 
-            # Create bookings for this reservation
             inserted, updated, new_ids = await self._create_bookings_for_reservation(
-                listing, cloudbeds_booking_id, booking_data
+                listing,
+                reservation.pms_booking_id,
+                booking_data,
             )
             counts["inserted"] += inserted
             counts["updated"] += updated
@@ -227,7 +228,7 @@ class SyncService:
     async def _create_bookings_for_reservation(
         self,
         listing: Listing,
-        cloudbeds_booking_id: str,
+        pms_booking_id: str,
         booking_data: dict,
     ) -> tuple[int, int, set[str]]:
         """Create booking records for a reservation.
@@ -236,23 +237,19 @@ class SyncService:
 
         Args:
             listing: The listing being synced.
-            cloudbeds_booking_id: The Cloudbeds reservation ID.
-            booking_data: Extracted booking data from _extract_booking_data.
+            pms_booking_id: The PMS reservation ID.
+            booking_data: Extracted booking data.
 
         Returns:
-            Tuple of (inserted_count, updated_count, set of booking IDs created).
+            Tuple of (inserted_count, updated_count, set of IDs).
         """
         inserted = 0
         updated = 0
         booking_ids: set[str] = set()
 
         # Extract transient keys that are only used locally, not passed to upsert
-        cloudbeds_room_ids = booking_data.get("cloudbeds_room_ids", [])
-        rooms_data = booking_data.get("rooms_data", [])
+        room_ids = booking_data.get("room_ids", [])
         base_custom_data = booking_data.get("base_custom_data", {})
-
-        # Build a lookup from room ID to room data for merging
-        room_data_by_id = self._build_room_data_lookup(rooms_data)
 
         # Build the base booking dict with only ORM-expected fields
         base_booking = {
@@ -264,8 +261,8 @@ class SyncService:
         }
 
         # If no rooms specified, create booking without room association
-        if not cloudbeds_room_ids:
-            booking_id = str(cloudbeds_booking_id)
+        if not room_ids:
+            booking_id = str(pms_booking_id)
             booking_ids.add(booking_id)
             # Use base custom data as-is (no room-specific data to merge)
             final_booking_data = {
@@ -281,33 +278,25 @@ class SyncService:
                 updated += 1
         else:
             # Create a booking for EACH room in the reservation
-            for cloudbeds_room_id in cloudbeds_room_ids:
+            for pms_room_id in room_ids:
                 # Always use composite booking ID when room ID is present
-                # This ensures consistent ID format regardless of room count changes
-                # Use "::" delimiter to avoid ambiguity with IDs containing hyphens
-                booking_id = f"{cloudbeds_booking_id}::{cloudbeds_room_id}"
+                # Use "::" delimiter to avoid ambiguity with IDs
+                booking_id = f"{pms_booking_id}::{pms_room_id}"
                 booking_ids.add(booking_id)
 
-                room = await self._room_repo.get_by_pms_id(
-                    listing.id, cloudbeds_room_id
-                )
+                room = await self._room_repo.get_by_pms_id(listing.id, pms_room_id)
                 db_room_id: int | None = room.id if room else None
                 if not room:
                     logger.warning(
-                        "Room %s not found for booking %s - booking will not "
-                        "appear in room calendars. Sync rooms first.",
-                        cloudbeds_room_id,
-                        cloudbeds_booking_id,
+                        "Room %s not found for booking %s - booking will "
+                        "not appear in room calendars. Sync rooms first.",
+                        pms_room_id,
+                        pms_booking_id,
                     )
 
-                # Merge room-specific data into custom_data
-                room_specific_data = room_data_by_id.get(cloudbeds_room_id)
-                custom_data = self._merge_room_custom_data(
-                    base_custom_data, room_specific_data
-                )
                 final_booking_data = {
                     **base_booking,
-                    "custom_data": custom_data if custom_data else None,
+                    "custom_data": (base_custom_data if base_custom_data else None),
                 }
 
                 was_created = await self._upsert_single_booking(
@@ -320,54 +309,6 @@ class SyncService:
 
         return inserted, updated, booking_ids
 
-    @staticmethod
-    def _build_room_data_lookup(rooms_data: list) -> dict[str, dict]:
-        """Build a lookup dict from room ID to room data.
-
-        Args:
-            rooms_data: List of room dicts from Cloudbeds API.
-
-        Returns:
-            Dict mapping room ID strings to their room data dicts.
-        """
-        room_data_by_id: dict[str, dict] = {}
-        if rooms_data and isinstance(rooms_data, list):
-            for room in rooms_data:
-                if isinstance(room, dict):
-                    cb_room_id = room.get("roomID") or room.get("roomId")
-                    if cb_room_id:
-                        room_data_by_id[str(cb_room_id)] = room
-        return room_data_by_id
-
-    @staticmethod
-    def _merge_room_custom_data(
-        base_custom_data: dict,
-        room_data: dict | None,
-    ) -> dict:
-        """Merge room-specific data into base custom data.
-
-        Args:
-            base_custom_data: Custom data from reservation level.
-            room_data: Room-specific data dict from rooms array.
-
-        Returns:
-            Merged custom data with room-specific values taking precedence.
-        """
-        merged = base_custom_data.copy()
-
-        if room_data and isinstance(room_data, dict):
-            for key, value in room_data.items():
-                # Skip None, empty, and complex values
-                if value is None or value == "" or isinstance(value, (dict, list)):
-                    continue
-                # Skip ID fields using shared exclusion logic
-                if should_exclude_field(key):
-                    continue
-                # Room data overrides reservation-level data
-                merged[key] = str(value)
-
-        return merged
-
     async def _upsert_single_booking(
         self,
         listing: Listing,
@@ -379,7 +320,7 @@ class SyncService:
 
         Args:
             listing: The listing for this booking.
-            booking_id: The unique booking ID (may be composite for multi-room).
+            booking_id: The unique booking ID (may be composite).
             room_id: The room ID (None if no room association).
             booking_data: Extracted booking data.
 
@@ -402,10 +343,10 @@ class SyncService:
 
     @staticmethod
     def _extract_base_reservation_id(booking_id: str) -> str:
-        """Extract the base Cloudbeds reservation ID from a booking ID.
+        """Extract the base reservation ID from a booking ID.
 
-        For multi-room bookings, the ID format is "{reservationID}::{roomID}".
-        This extracts just the reservation ID portion.
+        For multi-room bookings, the ID format is
+        ``{reservationID}::{roomID}``.
 
         Args:
             booking_id: The booking ID (may be composite).
@@ -413,173 +354,128 @@ class SyncService:
         Returns:
             The base reservation ID.
         """
-        # Multi-room booking IDs use "::" delimiter to separate reservation and room
-        # rsplit with maxsplit=1 splits at the last "::", returning original if none
         return booking_id.rsplit("::", 1)[0]
 
-    def _extract_booking_data(self, reservation: dict) -> dict:
-        """Extract booking data from Cloudbeds reservation.
+    @staticmethod
+    def _extract_booking_data_from_dto(
+        reservation: PMSReservation,
+    ) -> dict:
+        """Extract booking data from a PMSReservation DTO.
 
         Args:
-            reservation: Reservation dict from Cloudbeds API.
+            reservation: Normalized reservation DTO from provider.
 
         Returns:
             Dict with booking fields for database.
         """
-        # Extract guest name
-        guest_name = reservation.get("guestName")
-        if not guest_name:
-            first = reservation.get("guestFirstName", "")
-            last = reservation.get("guestLastName", "")
-            guest_name = f"{first} {last}".strip() or None
-
-        # Extract phone from guestList (requires includeGuestsDetails=true in API call)
-        # guestList is a dict keyed by guestID, not a list
-        phone = None
-        guest_list = reservation.get("guestList", {})
-        if guest_list and isinstance(guest_list, dict):
-            # Get primary guest by guestID from reservation, or first guest
-            primary_guest_id = reservation.get("guestID")
-            if primary_guest_id and primary_guest_id in guest_list:
-                guest = guest_list[primary_guest_id]
-            else:
-                # Fallback to first guest in the list
-                guest = next(iter(guest_list.values()), {})
-
-            if isinstance(guest, dict):
-                # Prefer mobile (guestCellPhone), fallback to generic (guestPhone)
-                phone = guest.get("guestCellPhone") or guest.get("guestPhone")
-
-        phone_last4 = CloudbedsService.extract_phone_last4(phone)
-
-        # Parse dates
-        check_in = self._parse_date(reservation.get("startDate"))
-        check_out = self._parse_date(reservation.get("endDate"))
-
-        # Extract status
-        status = reservation.get("status", "confirmed").lower()
-        if status not in ("confirmed", "checked_in", "checked_out", "cancelled"):
+        status = reservation.status or "confirmed"
+        if status not in (
+            "confirmed",
+            "checked_in",
+            "checked_out",
+            "cancelled",
+        ):
             status = "confirmed"
 
-        # Extract room IDs and rooms data
-        cloudbeds_room_ids = self._extract_room_ids(reservation)
-        rooms_data = reservation.get("rooms", [])
+        # Build base custom data — include phone_last4 if available
+        base_custom_data: dict = {}
+        if reservation.custom_data:
+            for key, value in reservation.custom_data.items():
+                if value is None or value == "":
+                    continue
+                if isinstance(value, (dict, list)):
+                    continue
+                if should_exclude_field(key):
+                    continue
+                base_custom_data[key] = str(value)
 
-        # Build base custom data from reservation (without room-specific data)
-        # Room-specific data will be merged in _create_bookings_for_reservation
-        base_custom_data = self._extract_custom_data(reservation, phone_last4)
+        phone_last4 = base_custom_data.get("guest_phone_last4")
 
-        # Note: phone_last4 is stored in two places for different use cases:
-        # - guest_phone_last4: direct booking attribute for legacy/default iCal display
-        # - custom_data["guest_phone_last4"]: for configurable custom field output
-        #   (added in _extract_custom_data method)
         return {
-            "guest_name": guest_name,
+            "guest_name": reservation.guest_name,
             "guest_phone_last4": phone_last4,
-            "check_in_date": check_in,
-            "check_out_date": check_out,
+            "check_in_date": reservation.check_in,
+            "check_out_date": reservation.check_out,
             "status": status,
-            "cloudbeds_room_ids": cloudbeds_room_ids,
-            "rooms_data": rooms_data,  # Keep rooms for per-booking custom data
-            "base_custom_data": base_custom_data if base_custom_data else {},
+            "room_ids": list(reservation.room_ids),
+            "base_custom_data": base_custom_data,
         }
 
     @staticmethod
-    def _extract_room_ids(reservation: dict) -> list[str]:
-        """Extract room IDs from Cloudbeds reservation.
-
-        Prefers nested rooms array (authoritative), falls back to top-level roomID.
+    def extract_phone_last4(phone: str | None) -> str | None:
+        """Extract last 4 digits from a phone number.
 
         Args:
-            reservation: Reservation dict from Cloudbeds API.
+            phone: Full phone number string.
 
         Returns:
-            List of room ID strings.
+            Last 4 digits of phone number, or None.
         """
-        cloudbeds_room_ids: list[str] = []
-        seen_room_ids: set[str] = set()
-        rooms = reservation.get("rooms", [])
-
-        if rooms and isinstance(rooms, list):
-            for room in rooms:
-                if isinstance(room, dict):
-                    room_id = room.get("roomID") or room.get("roomId")
-                    if room_id:
-                        room_id_str = str(room_id)
-                        if room_id_str not in seen_room_ids:
-                            seen_room_ids.add(room_id_str)
-                            cloudbeds_room_ids.append(room_id_str)
-
-        if not cloudbeds_room_ids:
-            top_level_room_id = reservation.get("roomID") or reservation.get("roomId")
-            if top_level_room_id:
-                cloudbeds_room_ids.append(str(top_level_room_id))
-
-        return cloudbeds_room_ids
-
-    @staticmethod
-    def _extract_custom_data(
-        reservation: dict,
-        phone_last4: str | None,
-        room_data: dict | None = None,
-    ) -> dict:
-        """Extract custom field data from Cloudbeds reservation.
-
-        Dynamically extracts all scalar (non-dict, non-list) values from
-        the reservation and optionally from room-specific data, making
-        them available for custom field configuration.
-
-        Args:
-            reservation: Reservation dict from Cloudbeds API.
-            phone_last4: Extracted phone last 4 digits.
-            room_data: Optional room-specific data dict from rooms array.
-
-        Returns:
-            Dict of custom field values keyed by original Cloudbeds field name.
-        """
-        custom_data: dict[str, str] = {}
-
-        for key, value in reservation.items():
-            # Skip None, empty, and complex values (dicts, lists)
-            if value is None or value == "" or isinstance(value, (dict, list)):
-                continue
-            # Skip ID fields using shared exclusion logic
-            if should_exclude_field(key):
-                continue
-            # Store the value as string
-            custom_data[key] = str(value)
-
-        # Merge room-specific data using shared helper to avoid duplication
-        if room_data:
-            custom_data = SyncService._merge_room_custom_data(custom_data, room_data)
-
-        # Add guest_phone_last4 as a special computed field
-        if phone_last4:
-            custom_data["guest_phone_last4"] = phone_last4
-
-        return custom_data
-
-    @staticmethod
-    def _parse_date(date_str: str | None) -> datetime | None:
-        """Parse date string to datetime.
-
-        Args:
-            date_str: Date string in various formats.
-
-        Returns:
-            Datetime object or None.
-        """
-        if not date_str:
+        if not phone:
             return None
-
-        # Try common formats
-        for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
-            try:
-                dt = datetime.strptime(date_str, fmt)
-                # Assume UTC if no timezone
-                return dt.replace(tzinfo=UTC)
-            except ValueError:
-                continue
-
-        logger.warning("Could not parse date: %s", date_str)
+        digits = re.sub(r"\D", "", phone)
+        if len(digits) >= PHONE_LAST_DIGITS:
+            return digits[-PHONE_LAST_DIGITS:]
         return None
+
+    async def _resolve_guest_names(
+        self,
+        provider: PMSProvider,
+        reservations: list[PMSReservation],
+    ) -> list[PMSReservation]:
+        """Resolve missing guest names via provider.get_guest().
+
+        Batches unique guest_ids to avoid redundant API calls.
+        Also extracts ``guest_phone_last4`` from the guest phone.
+
+        Args:
+            provider: Active PMS provider instance.
+            reservations: Reservations that may lack guest_name.
+
+        Returns:
+            Updated list of PMSReservation DTOs.
+        """
+        # Collect unique guest_ids that need resolution
+        ids_to_resolve: set[str] = set()
+        for r in reservations:
+            if r.guest_name is None and r.guest_id is not None:
+                ids_to_resolve.add(r.guest_id)
+
+        if not ids_to_resolve:
+            return reservations
+
+        # Batch resolve guests
+        guest_cache: dict[str, PMSGuest | None] = {}
+        for gid in ids_to_resolve:
+            try:
+                guest_cache[gid] = await provider.get_guest(gid)
+            except PMSProviderError:
+                logger.warning("Failed to resolve guest %s", gid)
+                guest_cache[gid] = None
+
+        # Rebuild reservations with resolved names / phone
+        updated: list[PMSReservation] = []
+        for r in reservations:
+            resolved = r
+            if r.guest_name is None and r.guest_id is not None:
+                guest = guest_cache.get(r.guest_id)
+                if guest is not None:
+                    phone_last4 = self.extract_phone_last4(
+                        guest.phone,
+                    )
+                    new_custom = dict(r.custom_data)
+                    if phone_last4:
+                        new_custom["guest_phone_last4"] = phone_last4
+                    resolved = PMSReservation(
+                        pms_booking_id=r.pms_booking_id,
+                        listing_pms_id=r.listing_pms_id,
+                        guest_name=guest.full_name,
+                        guest_id=r.guest_id,
+                        check_in=r.check_in,
+                        check_out=r.check_out,
+                        status=r.status,
+                        room_ids=r.room_ids,
+                        custom_data=new_custom,
+                    )
+            updated.append(resolved)
+        return updated

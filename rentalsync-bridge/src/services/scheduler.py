@@ -13,9 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from src.models.listing import Listing
 from src.models.oauth_credential import OAuthCredential
 from src.models.system_settings import DEFAULT_SYNC_INTERVAL_MINUTES, SystemSettings
+from src.providers.base import PMSProviderError, TokenResult
+from src.providers.factory import create_provider_for_credential
 from src.repositories.booking_repository import BookingRepository
 from src.services.calendar_service import CalendarCache
-from src.services.cloudbeds_service import CloudbedsService, CloudbedsServiceError
 from src.services.sync_service import SyncService
 
 # Data retention settings
@@ -192,18 +193,26 @@ class SyncScheduler:
                     return
 
                 # Get OAuth credentials
-                cred_result = await session.execute(select(OAuthCredential).limit(1))
+                cred_result = await session.execute(
+                    select(OAuthCredential).limit(1),
+                )
                 credential = cred_result.scalar_one_or_none()
 
                 if not credential:
-                    logger.warning("No OAuth credentials configured, skipping sync")
+                    logger.warning(
+                        "No OAuth credentials configured, skipping sync",
+                    )
                     return
 
                 # Check token expiry
                 if credential.is_token_expired():
-                    logger.warning("OAuth token expired, attempting refresh")
+                    logger.warning(
+                        "OAuth token expired, attempting refresh",
+                    )
                     await self._refresh_token(session, credential)
 
+                # Create provider from credential
+                provider = create_provider_for_credential(credential, session)
                 # Sync each listing
                 sync_service = SyncService(
                     session=session,
@@ -214,15 +223,23 @@ class SyncScheduler:
                 total_updated = 0
                 total_cancelled = 0
 
-                for listing in listings:
-                    try:
-                        counts = await sync_service.sync_listing(listing, credential)
-                        total_inserted += counts["inserted"]
-                        total_updated += counts["updated"]
-                        total_cancelled += counts["cancelled"]
-                    except Exception:
-                        logger.exception("Failed to sync listing %s", listing.pms_id)
-                        continue
+                try:
+                    for listing in listings:
+                        try:
+                            counts = await sync_service.sync_listing(listing, provider)
+                            total_inserted += counts["inserted"]
+                            total_updated += counts["updated"]
+                            total_cancelled += counts["cancelled"]
+                        except Exception:
+                            logger.exception(
+                                "Failed to sync listing %s",
+                                listing.pms_id,
+                            )
+                            continue
+                finally:
+                    # Clean up Guesty provider's httpx client
+                    if hasattr(provider, "aclose"):
+                        await provider.aclose()
 
                 logger.info(
                     "Scheduled sync complete: %d inserted, %d updated, %d cancelled",
@@ -237,30 +254,36 @@ class SyncScheduler:
     async def _refresh_token(
         self, session: AsyncSession, credential: OAuthCredential
     ) -> None:
-        """Refresh OAuth token.
+        """Refresh OAuth token via the active provider.
 
         Args:
             session: Database session.
             credential: OAuth credential to refresh.
         """
+        provider = create_provider_for_credential(credential, session)
         try:
-            cloudbeds = CloudbedsService(
-                access_token=credential.access_token,
-                refresh_token=credential.refresh_token,
-            )
+            result: TokenResult = await provider.refresh_token(credential)
 
-            new_access, new_refresh, expires_at = await cloudbeds.refresh_access_token()
-
-            credential.access_token = new_access
-            credential.refresh_token = new_refresh
-            credential.token_expires_at = expires_at
+            credential.access_token = result.access_token
+            if result.refresh_token is not None:
+                credential.refresh_token = result.refresh_token
+            credential.token_expires_at = result.expires_at
 
             await session.commit()
             logger.info("OAuth token refreshed successfully")
 
-        except CloudbedsServiceError as e:
+        except NotImplementedError:
+            # Cloudbeds token refresh is handled externally
+            logger.debug(
+                "Provider %s does not support direct token refresh",
+                credential.pms_type,
+            )
+        except PMSProviderError as e:
             logger.error("Failed to refresh OAuth token: %s", e)
             raise
+        finally:
+            if hasattr(provider, "aclose"):
+                await provider.aclose()
 
     async def _purge_old_bookings(self) -> None:
         """Purge old and cancelled bookings from the database.

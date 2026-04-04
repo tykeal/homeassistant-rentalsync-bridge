@@ -14,6 +14,7 @@ from src.main import create_app
 from src.models.listing import Listing
 from src.models.oauth_credential import OAuthCredential
 from src.models.room import Room
+from src.providers.base import PMSListing, PMSRoom
 
 
 @pytest.fixture
@@ -96,32 +97,33 @@ class TestSyncPropertiesWithRooms:
         room_sync_session.add(credential)
         await room_sync_session.commit()
 
-        # Mock Cloudbeds responses
-        mock_properties = [
-            {
-                "propertyID": "PROP123",
-                "propertyName": "Beach House",
-                "propertyTimezone": "America/New_York",
-            }
-        ]
-        mock_rooms = [
-            {
-                "roomID": "ROOM001",
-                "roomName": "Suite 101",
-                "roomTypeName": "Deluxe Suite",
-            },
-            {
-                "roomID": "ROOM002",
-                "roomName": "Suite 102",
-                "roomTypeName": "Standard Room",
-            },
-        ]
-
-        with patch("src.api.listings.CloudbedsService") as mock_cloudbeds:
-            mock_instance = AsyncMock()
-            mock_instance.get_properties = AsyncMock(return_value=mock_properties)
-            mock_instance.get_rooms = AsyncMock(return_value=mock_rooms)
-            mock_cloudbeds.return_value = mock_instance
+        with patch("src.api.listings.create_provider_for_credential") as mock_create:
+            mock_provider = AsyncMock()
+            mock_provider.get_listings = AsyncMock(
+                return_value=[
+                    PMSListing(
+                        pms_id="PROP123",
+                        name="Beach House",
+                        timezone="America/New_York",
+                    ),
+                ]
+            )
+            mock_provider.get_rooms = AsyncMock(
+                return_value=[
+                    PMSRoom(
+                        pms_room_id="ROOM001",
+                        name="Suite 101",
+                        room_type="Deluxe Suite",
+                    ),
+                    PMSRoom(
+                        pms_room_id="ROOM002",
+                        name="Suite 102",
+                        room_type="Standard Room",
+                    ),
+                ]
+            )
+            mock_provider.aclose = AsyncMock()
+            mock_create.return_value = mock_provider
 
             async with AsyncClient(
                 transport=ASGITransport(app=room_sync_app), base_url="http://test"
@@ -180,27 +182,26 @@ class TestSyncPropertiesWithRooms:
         room_sync_session.add(credential)
         await room_sync_session.commit()
 
-        # Mock Cloudbeds with updated room name
-        mock_properties = [
-            {
-                "propertyID": "PROP123",
-                "propertyName": "Beach House",
-                "propertyTimezone": "America/New_York",
-            }
-        ]
-        mock_rooms = [
-            {
-                "roomID": "ROOM001",
-                "roomName": "New Name",  # Updated name
-                "roomTypeName": "New Type",
-            },
-        ]
-
-        with patch("src.api.listings.CloudbedsService") as mock_cloudbeds:
-            mock_instance = AsyncMock()
-            mock_instance.get_properties = AsyncMock(return_value=mock_properties)
-            mock_instance.get_rooms = AsyncMock(return_value=mock_rooms)
-            mock_cloudbeds.return_value = mock_instance
+        with patch("src.api.listings.create_provider_for_credential") as mock_create:
+            mock_provider = AsyncMock()
+            mock_provider.get_listings = AsyncMock(
+                return_value=[
+                    PMSListing(
+                        pms_id="PROP123",
+                        name="Beach House",
+                        timezone="America/New_York",
+                    ),
+                ]
+            )
+            mock_provider.get_rooms = AsyncMock(
+                return_value=[
+                    PMSRoom(
+                        pms_room_id="ROOM001", name="New Name", room_type="New Type"
+                    ),
+                ]
+            )
+            mock_provider.aclose = AsyncMock()
+            mock_create.return_value = mock_provider
 
             async with AsyncClient(
                 transport=ASGITransport(app=room_sync_app), base_url="http://test"
@@ -231,19 +232,18 @@ class TestSyncPropertiesWithRooms:
         room_sync_session.add(credential)
         await room_sync_session.commit()
 
-        mock_properties = [
-            {
-                "propertyID": "PROP_EMPTY",
-                "propertyName": "Empty Property",
-                "propertyTimezone": "UTC",
-            }
-        ]
-
-        with patch("src.api.listings.CloudbedsService") as mock_cloudbeds:
-            mock_instance = AsyncMock()
-            mock_instance.get_properties = AsyncMock(return_value=mock_properties)
-            mock_instance.get_rooms = AsyncMock(return_value=[])  # No rooms
-            mock_cloudbeds.return_value = mock_instance
+        with patch("src.api.listings.create_provider_for_credential") as mock_create:
+            mock_provider = AsyncMock()
+            mock_provider.get_listings = AsyncMock(
+                return_value=[
+                    PMSListing(
+                        pms_id="PROP_EMPTY", name="Empty Property", timezone="UTC"
+                    ),
+                ]
+            )
+            mock_provider.get_rooms = AsyncMock(return_value=[])  # No rooms
+            mock_provider.aclose = AsyncMock()
+            mock_create.return_value = mock_provider
 
             async with AsyncClient(
                 transport=ASGITransport(app=room_sync_app), base_url="http://test"
@@ -298,16 +298,24 @@ class TestSyncPropertiesWithRooms:
         room_sync_session.add(credential)
         await room_sync_session.commit()
 
-        mock_properties = [{"propertyID": "PROP123", "propertyName": "Beach House"}]
-        mock_rooms = [
-            {"roomID": "ROOM001", "roomName": "Room 1 Updated"},
-        ]
-
-        with patch("src.api.listings.CloudbedsService") as mock_cloudbeds:
-            mock_instance = AsyncMock()
-            mock_instance.get_properties = AsyncMock(return_value=mock_properties)
-            mock_instance.get_rooms = AsyncMock(return_value=mock_rooms)
-            mock_cloudbeds.return_value = mock_instance
+        with patch("src.api.listings.create_provider_for_credential") as mock_create:
+            mock_provider = AsyncMock()
+            mock_provider.get_listings = AsyncMock(
+                return_value=[
+                    PMSListing(
+                        pms_id="PROP123",
+                        name="Beach House",
+                        timezone="UTC",
+                    ),
+                ]
+            )
+            mock_provider.get_rooms = AsyncMock(
+                return_value=[
+                    PMSRoom(pms_room_id="ROOM001", name="Room 1 Updated"),
+                ]
+            )
+            mock_provider.aclose = AsyncMock()
+            mock_create.return_value = mock_provider
 
             async with AsyncClient(
                 transport=ASGITransport(app=room_sync_app), base_url="http://test"
@@ -340,25 +348,34 @@ class TestRoomSyncResponse:
         room_sync_session.add(credential)
         await room_sync_session.commit()
 
-        mock_properties = [
-            {"propertyID": "PROP1", "propertyName": "Property 1"},
-            {"propertyID": "PROP2", "propertyName": "Property 2"},
-        ]
-
         def get_rooms_for_property(property_id):
             """Return mock rooms based on property."""
             if property_id == "PROP1":
                 return [
-                    {"roomID": "R1", "roomName": "Room 1"},
-                    {"roomID": "R2", "roomName": "Room 2"},
+                    PMSRoom(pms_room_id="R1", name="Room 1"),
+                    PMSRoom(pms_room_id="R2", name="Room 2"),
                 ]
-            return [{"roomID": "R3", "roomName": "Room 3"}]
+            return [PMSRoom(pms_room_id="R3", name="Room 3")]
 
-        with patch("src.api.listings.CloudbedsService") as mock_cloudbeds:
-            mock_instance = AsyncMock()
-            mock_instance.get_properties = AsyncMock(return_value=mock_properties)
-            mock_instance.get_rooms = AsyncMock(side_effect=get_rooms_for_property)
-            mock_cloudbeds.return_value = mock_instance
+        with patch("src.api.listings.create_provider_for_credential") as mock_create:
+            mock_provider = AsyncMock()
+            mock_provider.get_listings = AsyncMock(
+                return_value=[
+                    PMSListing(
+                        pms_id="PROP1",
+                        name="Property 1",
+                        timezone="UTC",
+                    ),
+                    PMSListing(
+                        pms_id="PROP2",
+                        name="Property 2",
+                        timezone="UTC",
+                    ),
+                ]
+            )
+            mock_provider.get_rooms = AsyncMock(side_effect=get_rooms_for_property)
+            mock_provider.aclose = AsyncMock()
+            mock_create.return_value = mock_provider
 
             async with AsyncClient(
                 transport=ASGITransport(app=room_sync_app), base_url="http://test"

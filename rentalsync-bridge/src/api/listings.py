@@ -4,7 +4,7 @@
 
 import logging
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -16,11 +16,15 @@ from src.database import get_db
 from src.models.booking import Booking
 from src.models.listing import Listing
 from src.models.oauth_credential import OAuthCredential
+from src.providers.base import PMSProviderError, PMSRoom
+from src.providers.factory import create_provider_for_credential
 from src.repositories.listing_repository import MAX_LISTINGS, ListingRepository
 from src.repositories.room_repository import RoomRepository
 from src.services.calendar_service import get_calendar_cache
-from src.services.cloudbeds_service import CloudbedsService, CloudbedsServiceError
 from src.services.sync_service import SyncService, SyncServiceError
+
+if TYPE_CHECKING:
+    from src.providers.base import PMSProvider
 
 logger = logging.getLogger(__name__)
 
@@ -169,15 +173,15 @@ async def list_listings(
 
 
 async def _sync_rooms_for_listing(
-    service: CloudbedsService,
+    provider: "PMSProvider",
     room_repo: RoomRepository,
     listing: Listing,
     property_pms_id: str,
 ) -> tuple[int, int]:
-    """Sync rooms for a single listing from Cloudbeds.
+    """Sync rooms for a single listing from PMS provider.
 
     Args:
-        service: CloudbedsService instance.
+        provider: PMSProvider instance.
         room_repo: RoomRepository instance.
         listing: Listing to sync rooms for.
         property_pms_id: PMS property identifier.
@@ -189,26 +193,25 @@ async def _sync_rooms_for_listing(
     rooms_updated = 0
 
     try:
-        rooms = await service.get_rooms(property_pms_id)
-        for room_data in rooms:
-            room_id_raw = room_data.get("roomID")
-            if room_id_raw is None:
+        rooms: list[PMSRoom] = await provider.get_rooms(property_pms_id)
+        for pms_room in rooms:
+            room_id = pms_room.pms_room_id
+            if not room_id:
                 continue
-            room_id = str(room_id_raw)
 
-            room_name = room_data.get("roomName", f"Room {room_id}")
-            room_type = room_data.get("roomTypeName")
+            room_name = pms_room.name or f"Room {room_id}"
+            room_type = pms_room.room_type
 
-            # Check if room exists
-            existing_room = await room_repo.get_by_pms_id(listing.id, room_id)
+            existing_room = await room_repo.get_by_pms_id(
+                listing.id,
+                room_id,
+            )
 
             if existing_room:
-                # Update existing room (preserve enabled state and slug)
                 existing_room.room_name = room_name
                 existing_room.room_type_name = room_type
                 rooms_updated += 1
             else:
-                # Create new room (use create_room to avoid redundant query)
                 await room_repo.create_room(
                     listing_id=listing.id,
                     pms_room_id=room_id,
@@ -217,8 +220,12 @@ async def _sync_rooms_for_listing(
                 )
                 rooms_created += 1
 
-    except CloudbedsServiceError as e:
-        logger.warning("Failed to fetch rooms for property %s: %s", property_pms_id, e)
+    except PMSProviderError as e:
+        logger.warning(
+            "Failed to fetch rooms for property %s: %s",
+            property_pms_id,
+            e,
+        )
 
     return rooms_created, rooms_updated
 
@@ -227,11 +234,10 @@ async def _sync_rooms_for_listing(
 async def sync_properties(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, Any]:
-    """Sync properties from Cloudbeds to the database.
+    """Sync properties from PMS provider to the database.
 
-    Fetches all properties from Cloudbeds API and creates or updates
-    corresponding listings in the database. This populates the listings
-    that can then be enabled for iCal export.
+    Fetches all properties from the configured PMS provider and creates
+    or updates corresponding listings in the database.
 
     Returns:
         Summary of created and updated listings.
@@ -243,100 +249,98 @@ async def sync_properties(
     result = await db.execute(select(OAuthCredential).limit(1))
     credential = result.scalar_one_or_none()
 
-    # Check for either access_token or api_key
     if not credential or (not credential.access_token and not credential.api_key):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Cloudbeds credentials not configured. Configure OAuth or API key.",
+            detail="PMS credentials not configured. Configure OAuth or API key.",
         )
 
-    # Fetch properties from Cloudbeds
+    # Create provider from credential
+    provider = create_provider_for_credential(credential, db)
+
     try:
-        service = CloudbedsService(
-            access_token=credential.access_token,
-            api_key=credential.api_key,
-        )
-        properties = await service.get_properties()
-    except CloudbedsServiceError as e:
-        logger.error("Failed to fetch properties from Cloudbeds: %s", e)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to fetch properties from Cloudbeds: {e}",
-        ) from e
+        pms_listings = await provider.get_listings()
 
-    if not properties:
+        if not pms_listings:
+            return {
+                "success": True,
+                "created": 0,
+                "updated": 0,
+                "rooms_created": 0,
+                "rooms_updated": 0,
+                "message": "No properties found in PMS account",
+            }
+
+        # Create or update listings
+        repo = ListingRepository(db)
+        room_repo = RoomRepository(db)
+        created = 0
+        updated = 0
+        rooms_created = 0
+        rooms_updated = 0
+
+        for pms_listing in pms_listings:
+            property_pms_id = pms_listing.pms_id
+            if not property_pms_id:
+                continue
+
+            existing = await repo.get_by_pms_id(property_pms_id)
+            listing: Listing
+
+            if existing:
+                existing.name = pms_listing.name or existing.name
+                existing.timezone = pms_listing.timezone or existing.timezone
+                listing = existing
+                updated += 1
+            else:
+                name = pms_listing.name or f"Property {property_pms_id}"
+                slug = await repo.generate_unique_slug(name)
+                listing = Listing(
+                    pms_id=property_pms_id,
+                    name=name,
+                    ical_url_slug=slug,
+                    timezone=pms_listing.timezone or "UTC",
+                    enabled=False,
+                    sync_enabled=False,
+                )
+                db.add(listing)
+                created += 1
+
+            await db.flush()
+            if not existing:
+                await db.refresh(listing)
+
+            r_created, r_updated = await _sync_rooms_for_listing(
+                provider, room_repo, listing, property_pms_id
+            )
+            rooms_created += r_created
+            rooms_updated += r_updated
+
+        await db.commit()
+
+        total_props = created + updated
+        total_rooms = rooms_created + rooms_updated
+        msg = f"Synced {total_props} properties and {total_rooms} rooms from PMS"
         return {
             "success": True,
-            "created": 0,
-            "updated": 0,
-            "rooms_created": 0,
-            "rooms_updated": 0,
-            "message": "No properties found in Cloudbeds account",
+            "created": created,
+            "updated": updated,
+            "rooms_created": rooms_created,
+            "rooms_updated": rooms_updated,
+            "message": msg,
         }
-
-    # Create or update listings
-    repo = ListingRepository(db)
-    room_repo = RoomRepository(db)
-    created = 0
-    updated = 0
-    rooms_created = 0
-    rooms_updated = 0
-
-    for prop in properties:
-        property_id_raw = prop.get("propertyID")
-        if property_id_raw is None:
-            continue
-        property_pms_id = str(property_id_raw)
-
-        existing = await repo.get_by_pms_id(property_pms_id)
-        listing: Listing
-
-        if existing:
-            # Update existing listing
-            existing.name = prop.get("propertyName", existing.name)
-            existing.timezone = prop.get("propertyTimezone", existing.timezone)
-            listing = existing
-            updated += 1
-        else:
-            # Create new listing with generated slug
-            name = prop.get("propertyName", f"Property {property_pms_id}")
-            slug = await repo.generate_unique_slug(name)
-            listing = Listing(
-                pms_id=property_pms_id,
-                name=name,
-                ical_url_slug=slug,
-                timezone=prop.get("propertyTimezone", "UTC"),
-                enabled=False,
-                sync_enabled=False,
-            )
-            db.add(listing)
-            created += 1
-
-        # Commit to get listing ID if new
-        await db.flush()
-        if not existing:
-            await db.refresh(listing)
-
-        # Fetch and sync rooms for this property
-        r_created, r_updated = await _sync_rooms_for_listing(
-            service, room_repo, listing, property_pms_id
+    except PMSProviderError as e:
+        logger.error(
+            "Failed to fetch properties from PMS: %s",
+            e,
         )
-        rooms_created += r_created
-        rooms_updated += r_updated
-
-    await db.commit()
-
-    total_props = created + updated
-    total_rooms = rooms_created + rooms_updated
-    msg = f"Synced {total_props} properties and {total_rooms} rooms from Cloudbeds"
-    return {
-        "success": True,
-        "created": created,
-        "updated": updated,
-        "rooms_created": rooms_created,
-        "rooms_updated": rooms_updated,
-        "message": msg,
-    }
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to fetch properties from PMS: {e}",
+        ) from e
+    finally:
+        if hasattr(provider, "aclose"):
+            await provider.aclose()
 
 
 @router.get("/{listing_id}", response_model=ListingResponse)
@@ -712,13 +716,18 @@ async def sync_listing(
     if not credential or (not credential.access_token and not credential.api_key):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Cloudbeds credentials not configured. Configure OAuth or API key.",
+            detail="PMS credentials not configured. Configure OAuth or API key.",
         )
 
-    # Run sync
+    # Run sync via provider
     try:
-        sync_service = SyncService(db, get_calendar_cache())
-        counts = await sync_service.sync_listing(listing, credential)
+        provider = create_provider_for_credential(credential, db)
+        try:
+            sync_service = SyncService(db, get_calendar_cache())
+            counts = await sync_service.sync_listing(listing, provider)
+        finally:
+            if hasattr(provider, "aclose"):
+                await provider.aclose()
 
         return {
             "success": True,
