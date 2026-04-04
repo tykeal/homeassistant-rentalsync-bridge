@@ -140,6 +140,7 @@ async function loadOAuthStatus() {
             elements.oauthConnected.classList.remove('hidden');
             elements.oauthConnectedText.textContent =
                 `\u2713 Connected to ${pmsName}`;
+            elements.oauthConnectedText.className = 'success';
             elements.oauthStatusText.textContent =
                 `Connected to ${pmsName}`;
             if (status.auth_type === 'api_key') {
@@ -159,6 +160,9 @@ async function loadOAuthStatus() {
             elements.oauthStatusText.textContent =
                 'Configured but not connected. Refresh token.';
             elements.oauthConnected.classList.remove('hidden');
+            elements.oauthConnectedText.textContent =
+                `\u26A0 ${pmsName} — not connected`;
+            elements.oauthConnectedText.className = 'warning';
             showTokenRequests(status.token_requests_remaining);
         } else {
             elements.oauthConnected.classList.add('hidden');
