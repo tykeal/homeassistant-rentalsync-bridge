@@ -421,6 +421,16 @@ class SyncService:
             return digits[-PHONE_LAST_DIGITS:]
         return None
 
+    @staticmethod
+    def _needs_guest_enrichment(r: PMSReservation) -> bool:
+        """Return True when a reservation still needs guest data."""
+        if r.guest_id is None:
+            return False
+        if r.guest_name is None:
+            return True
+        cd = r.custom_data
+        return not (cd.get("guest_phone") and cd.get("guest_email"))
+
     async def _resolve_guest_names(
         self,
         provider: PMSProvider,
@@ -431,7 +441,10 @@ class SyncService:
         Batches unique guest_ids to avoid redundant API calls.
         Resolves missing guest names and adds ``guest_phone_last4``,
         ``guest_phone``, and ``guest_email`` to ``custom_data`` when
-        available.
+        the data is not already present.  Skips the lookup entirely
+        when all contact fields are already populated (avoids
+        expensive cross-property searches on providers like
+        Cloudbeds).
 
         Args:
             provider: Active PMS provider instance.
@@ -440,11 +453,11 @@ class SyncService:
         Returns:
             Updated list of PMSReservation DTOs.
         """
-        # Collect ALL unique guest_ids for enrichment
+        # Collect guest_ids that still need enrichment
         ids_to_resolve: set[str] = set()
         for r in reservations:
-            if r.guest_id is not None:
-                ids_to_resolve.add(r.guest_id)
+            if self._needs_guest_enrichment(r):
+                ids_to_resolve.add(r.guest_id)  # type: ignore[arg-type]
 
         if not ids_to_resolve:
             return reservations
@@ -455,7 +468,11 @@ class SyncService:
             try:
                 guest_cache[gid] = await provider.get_guest(gid)
             except PMSProviderError:
-                logger.warning("Failed to resolve guest %s", gid)
+                logger.warning(
+                    "Failed to resolve guest %s",
+                    gid,
+                    exc_info=True,
+                )
                 guest_cache[gid] = None
 
         # Rebuild reservations with enriched data
@@ -469,11 +486,11 @@ class SyncService:
                         guest.phone,
                     )
                     new_custom = dict(r.custom_data)
-                    if phone_last4:
+                    if phone_last4 and "guest_phone_last4" not in new_custom:
                         new_custom["guest_phone_last4"] = phone_last4
-                    if guest.phone:
+                    if guest.phone and "guest_phone" not in new_custom:
                         new_custom["guest_phone"] = guest.phone
-                    if guest.email:
+                    if guest.email and "guest_email" not in new_custom:
                         new_custom["guest_email"] = guest.email
                     resolved = PMSReservation(
                         pms_booking_id=r.pms_booking_id,
