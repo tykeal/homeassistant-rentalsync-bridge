@@ -494,11 +494,10 @@ class SyncService:
     ) -> list[PMSReservation]:
         """Fetch and merge provider custom fields into reservations.
 
-        For providers that expose a separate custom-fields endpoint
-        (e.g. Guesty v3), this retrieves extra field values and
-        merges them into each reservation's ``custom_data``.
-        Providers that return an empty dict (e.g. Cloudbeds) are
-        effectively a no-op.
+        Only invoked when the provider exposes custom fields via a
+        dedicated endpoint (``has_separate_custom_fields`` is True).
+        Providers that embed custom fields directly in reservation
+        payloads (e.g. Cloudbeds) are skipped entirely.
 
         Args:
             provider: Active PMS provider instance.
@@ -507,6 +506,9 @@ class SyncService:
         Returns:
             Updated list of PMSReservation DTOs.
         """
+        if not provider.has_separate_custom_fields:
+            return reservations
+
         enriched: list[PMSReservation] = []
         for r in reservations:
             try:

@@ -72,6 +72,7 @@ class TestGuestyEndToEnd:
         now = datetime.now(UTC)
         mock_provider = AsyncMock()
         mock_provider.provider_type = "guesty"
+        mock_provider.has_separate_custom_fields = True
         mock_provider.get_reservations = AsyncMock(
             return_value=[
                 PMSReservation(
@@ -165,6 +166,7 @@ class TestGuestyEndToEnd:
         now = datetime.now(UTC)
         mock_provider = AsyncMock()
         mock_provider.provider_type = "guesty"
+        mock_provider.has_separate_custom_fields = True
         mock_provider.get_reservations = AsyncMock(
             return_value=[
                 PMSReservation(
@@ -222,6 +224,7 @@ class TestGuestyEndToEnd:
         now = datetime.now(UTC)
         mock_provider = AsyncMock()
         mock_provider.provider_type = "guesty"
+        mock_provider.has_separate_custom_fields = True
         mock_provider.get_reservations = AsyncMock(
             return_value=[
                 PMSReservation(

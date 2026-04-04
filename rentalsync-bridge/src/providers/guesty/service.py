@@ -236,6 +236,11 @@ class GuestyProvider(PMSProvider):
         """
         return "guesty"
 
+    @property
+    def has_separate_custom_fields(self) -> bool:
+        """Guesty exposes custom fields via a dedicated v3 endpoint."""
+        return True
+
     async def get_listings(self) -> list[PMSListing]:
         """Fetch all listings from the Guesty API.
 

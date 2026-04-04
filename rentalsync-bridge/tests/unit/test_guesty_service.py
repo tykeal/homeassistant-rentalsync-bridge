@@ -191,6 +191,10 @@ class TestProviderType:
         """Test that provider_type returns guesty."""
         assert guesty_provider.provider_type == "guesty"
 
+    def test_has_separate_custom_fields(self, guesty_provider):
+        """Test Guesty reports separate custom fields."""
+        assert guesty_provider.has_separate_custom_fields is True
+
 
 # ---------------------------------------------------------------------------
 # get_listings

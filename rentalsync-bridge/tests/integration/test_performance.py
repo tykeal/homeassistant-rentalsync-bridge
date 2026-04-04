@@ -142,6 +142,7 @@ class TestSyncCycleBenchmark:
 
         mock_provider = AsyncMock()
         mock_provider.provider_type = "guesty"
+        mock_provider.has_separate_custom_fields = True
         mock_provider.get_reservations = AsyncMock(return_value=reservations)
         mock_provider.get_guest = AsyncMock(return_value=None)
         mock_provider.get_custom_fields = AsyncMock(return_value={})

@@ -265,3 +265,15 @@ class PMSProvider(ABC):
             Provider type (e.g., "cloudbeds", "guesty").
         """
         ...
+
+    @property
+    def has_separate_custom_fields(self) -> bool:
+        """Whether custom fields require a separate API call.
+
+        Providers that expose custom fields via a dedicated endpoint
+        (e.g. Guesty v3) should return ``True``.  Providers that
+        embed custom fields directly in reservation payloads (e.g.
+        Cloudbeds) should leave this as ``False`` to avoid redundant
+        and expensive API calls during enrichment.
+        """
+        return False

@@ -45,6 +45,7 @@ class TestGuest404Fallback:
         now = datetime.now(UTC)
         mock_provider = AsyncMock()
         mock_provider.provider_type = "guesty"
+        mock_provider.has_separate_custom_fields = True
         mock_provider.get_reservations = AsyncMock(
             return_value=[
                 PMSReservation(
@@ -102,6 +103,7 @@ class TestListingWithNoRooms:
         now = datetime.now(UTC)
         mock_provider = AsyncMock()
         mock_provider.provider_type = "guesty"
+        mock_provider.has_separate_custom_fields = True
         mock_provider.get_reservations = AsyncMock(
             return_value=[
                 PMSReservation(
@@ -256,6 +258,7 @@ class TestCancelledReservation:
         # First sync: two bookings
         mock_provider = AsyncMock()
         mock_provider.provider_type = "guesty"
+        mock_provider.has_separate_custom_fields = True
         mock_provider.get_reservations = AsyncMock(
             return_value=[
                 PMSReservation(
@@ -328,6 +331,7 @@ class TestCancelledReservation:
         now = datetime.now(UTC)
         mock_provider = AsyncMock()
         mock_provider.provider_type = "guesty"
+        mock_provider.has_separate_custom_fields = True
         mock_provider.get_reservations = AsyncMock(
             return_value=[
                 PMSReservation(
