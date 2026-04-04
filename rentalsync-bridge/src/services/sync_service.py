@@ -466,6 +466,10 @@ class SyncService:
                     new_custom = dict(r.custom_data)
                     if phone_last4:
                         new_custom["guest_phone_last4"] = phone_last4
+                    if guest.phone:
+                        new_custom["guest_phone"] = guest.phone
+                    if guest.email:
+                        new_custom["guest_email"] = guest.email
                     resolved = PMSReservation(
                         pms_booking_id=r.pms_booking_id,
                         listing_pms_id=r.listing_pms_id,
