@@ -429,7 +429,8 @@ class SyncService:
         """Resolve missing guest names via provider.get_guest().
 
         Batches unique guest_ids to avoid redundant API calls.
-        Also extracts ``guest_phone_last4`` from the guest phone.
+        Also adds ``guest_phone_last4``, ``guest_phone``, and
+        ``guest_email`` to ``custom_data`` when available.
 
         Args:
             provider: Active PMS provider instance.
@@ -509,6 +510,8 @@ class SyncService:
         if not provider.has_separate_custom_fields:
             return reservations
 
+        # TODO: add bounded concurrency (asyncio.gather + semaphore)
+        # for listings with many reservations.
         enriched: list[PMSReservation] = []
         for r in reservations:
             try:

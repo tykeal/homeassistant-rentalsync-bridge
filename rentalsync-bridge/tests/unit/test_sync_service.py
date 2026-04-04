@@ -79,6 +79,7 @@ def mock_provider():
     provider.get_reservations = AsyncMock(return_value=[])
     provider.get_guest = AsyncMock(return_value=None)
     provider.get_custom_fields = AsyncMock(return_value={})
+    provider.has_separate_custom_fields = False
     provider.provider_type = "cloudbeds"
     return provider
 
