@@ -92,6 +92,9 @@ class SyncService:
             # Resolve guest names for reservations that lack them
             reservations = await self._resolve_guest_names(provider, reservations)
 
+            # Enrich with provider custom fields (e.g. Guesty v3)
+            reservations = await self._enrich_custom_fields(provider, reservations)
+
             counts = await self._process_reservations(listing, reservations)
 
             # Update sync status on success
@@ -483,3 +486,55 @@ class SyncService:
                     )
             updated.append(resolved)
         return updated
+
+    async def _enrich_custom_fields(
+        self,
+        provider: PMSProvider,
+        reservations: list[PMSReservation],
+    ) -> list[PMSReservation]:
+        """Fetch and merge provider custom fields into reservations.
+
+        For providers that expose a separate custom-fields endpoint
+        (e.g. Guesty v3), this retrieves extra field values and
+        merges them into each reservation's ``custom_data``.
+        Providers that return an empty dict (e.g. Cloudbeds) are
+        effectively a no-op.
+
+        Args:
+            provider: Active PMS provider instance.
+            reservations: Reservations to enrich.
+
+        Returns:
+            Updated list of PMSReservation DTOs.
+        """
+        enriched: list[PMSReservation] = []
+        for r in reservations:
+            try:
+                extra = await provider.get_custom_fields(
+                    r.pms_booking_id,
+                )
+            except PMSProviderError:
+                logger.warning(
+                    "Failed to fetch custom fields for %s",
+                    r.pms_booking_id,
+                )
+                extra = {}
+
+            if extra:
+                merged = {**r.custom_data, **extra}
+                enriched.append(
+                    PMSReservation(
+                        pms_booking_id=r.pms_booking_id,
+                        listing_pms_id=r.listing_pms_id,
+                        guest_name=r.guest_name,
+                        guest_id=r.guest_id,
+                        check_in=r.check_in,
+                        check_out=r.check_out,
+                        status=r.status,
+                        room_ids=r.room_ids,
+                        custom_data=merged,
+                    )
+                )
+            else:
+                enriched.append(r)
+        return enriched
