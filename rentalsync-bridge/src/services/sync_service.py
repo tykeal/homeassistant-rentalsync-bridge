@@ -92,6 +92,9 @@ class SyncService:
             # Resolve guest names for reservations that lack them
             reservations = await self._resolve_guest_names(provider, reservations)
 
+            # Enrich with provider custom fields (e.g. Guesty v3)
+            reservations = await self._enrich_custom_fields(provider, reservations)
+
             counts = await self._process_reservations(listing, reservations)
 
             # Update sync status on success
@@ -426,7 +429,8 @@ class SyncService:
         """Resolve missing guest names via provider.get_guest().
 
         Batches unique guest_ids to avoid redundant API calls.
-        Also extracts ``guest_phone_last4`` from the guest phone.
+        Also adds ``guest_phone_last4``, ``guest_phone``, and
+        ``guest_email`` to ``custom_data`` when available.
 
         Args:
             provider: Active PMS provider instance.
@@ -466,6 +470,10 @@ class SyncService:
                     new_custom = dict(r.custom_data)
                     if phone_last4:
                         new_custom["guest_phone_last4"] = phone_last4
+                    if guest.phone:
+                        new_custom["guest_phone"] = guest.phone
+                    if guest.email:
+                        new_custom["guest_email"] = guest.email
                     resolved = PMSReservation(
                         pms_booking_id=r.pms_booking_id,
                         listing_pms_id=r.listing_pms_id,
@@ -479,3 +487,64 @@ class SyncService:
                     )
             updated.append(resolved)
         return updated
+
+    async def _enrich_custom_fields(
+        self,
+        provider: PMSProvider,
+        reservations: list[PMSReservation],
+    ) -> list[PMSReservation]:
+        """Fetch and merge provider custom fields into reservations.
+
+        Only invoked when the provider exposes custom fields via a
+        dedicated endpoint (``has_separate_custom_fields`` is True).
+        Providers that embed custom fields directly in reservation
+        payloads (e.g. Cloudbeds) are skipped entirely.
+
+        Args:
+            provider: Active PMS provider instance.
+            reservations: Reservations to enrich.
+
+        Returns:
+            Updated list of PMSReservation DTOs.
+        """
+        if not provider.has_separate_custom_fields:
+            return reservations
+
+        # TODO: add bounded concurrency (asyncio.gather + semaphore)
+        # for listings with many reservations.
+        enriched: list[PMSReservation] = []
+        for r in reservations:
+            if not r.pms_booking_id:
+                enriched.append(r)
+                continue
+
+            try:
+                extra = await provider.get_custom_fields(
+                    r.pms_booking_id,
+                )
+            except PMSProviderError:
+                logger.warning(
+                    "Failed to fetch custom fields for %s",
+                    r.pms_booking_id,
+                    exc_info=True,
+                )
+                extra = {}
+
+            if extra:
+                merged = {**extra, **r.custom_data}
+                enriched.append(
+                    PMSReservation(
+                        pms_booking_id=r.pms_booking_id,
+                        listing_pms_id=r.listing_pms_id,
+                        guest_name=r.guest_name,
+                        guest_id=r.guest_id,
+                        check_in=r.check_in,
+                        check_out=r.check_out,
+                        status=r.status,
+                        room_ids=r.room_ids,
+                        custom_data=merged,
+                    )
+                )
+            else:
+                enriched.append(r)
+        return enriched

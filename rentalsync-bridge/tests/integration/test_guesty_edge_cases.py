@@ -45,6 +45,7 @@ class TestGuest404Fallback:
         now = datetime.now(UTC)
         mock_provider = AsyncMock()
         mock_provider.provider_type = "guesty"
+        mock_provider.has_separate_custom_fields = True
         mock_provider.get_reservations = AsyncMock(
             return_value=[
                 PMSReservation(
@@ -62,6 +63,7 @@ class TestGuest404Fallback:
         )
         # get_guest returns None (404 scenario)
         mock_provider.get_guest = AsyncMock(return_value=None)
+        mock_provider.get_custom_fields = AsyncMock(return_value={})
 
         sync = SyncService(
             async_session,
@@ -101,6 +103,7 @@ class TestListingWithNoRooms:
         now = datetime.now(UTC)
         mock_provider = AsyncMock()
         mock_provider.provider_type = "guesty"
+        mock_provider.has_separate_custom_fields = True
         mock_provider.get_reservations = AsyncMock(
             return_value=[
                 PMSReservation(
@@ -117,6 +120,7 @@ class TestListingWithNoRooms:
             ]
         )
         mock_provider.get_guest = AsyncMock(return_value=None)
+        mock_provider.get_custom_fields = AsyncMock(return_value={})
 
         sync = SyncService(
             async_session,
@@ -254,6 +258,7 @@ class TestCancelledReservation:
         # First sync: two bookings
         mock_provider = AsyncMock()
         mock_provider.provider_type = "guesty"
+        mock_provider.has_separate_custom_fields = True
         mock_provider.get_reservations = AsyncMock(
             return_value=[
                 PMSReservation(
@@ -271,6 +276,7 @@ class TestCancelledReservation:
             ]
         )
         mock_provider.get_guest = AsyncMock(return_value=None)
+        mock_provider.get_custom_fields = AsyncMock(return_value={})
 
         sync = SyncService(
             async_session,
@@ -325,6 +331,7 @@ class TestCancelledReservation:
         now = datetime.now(UTC)
         mock_provider = AsyncMock()
         mock_provider.provider_type = "guesty"
+        mock_provider.has_separate_custom_fields = True
         mock_provider.get_reservations = AsyncMock(
             return_value=[
                 PMSReservation(
@@ -341,6 +348,7 @@ class TestCancelledReservation:
             ]
         )
         mock_provider.get_guest = AsyncMock(return_value=None)
+        mock_provider.get_custom_fields = AsyncMock(return_value={})
 
         sync = SyncService(
             async_session,

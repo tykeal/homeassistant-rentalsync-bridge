@@ -59,6 +59,7 @@ class TestCloudbedsBackwardCompat:
         # Use empty room_ids so booking ID stays "CB_BK001"
         mock_provider = AsyncMock()
         mock_provider.provider_type = "cloudbeds"
+        mock_provider.has_separate_custom_fields = False
         mock_provider.get_reservations = AsyncMock(
             return_value=[
                 PMSReservation(
@@ -75,6 +76,7 @@ class TestCloudbedsBackwardCompat:
             ]
         )
         mock_provider.get_guest = AsyncMock(return_value=None)
+        mock_provider.get_custom_fields = AsyncMock(return_value={})
 
         sync = SyncService(
             async_session,
@@ -157,6 +159,7 @@ class TestCloudbedsBackwardCompat:
         now = datetime.now(UTC)
         mock_provider = AsyncMock()
         mock_provider.provider_type = "cloudbeds"
+        mock_provider.has_separate_custom_fields = False
         mock_provider.get_reservations = AsyncMock(
             return_value=[
                 PMSReservation(
@@ -173,6 +176,7 @@ class TestCloudbedsBackwardCompat:
             ]
         )
         mock_provider.get_guest = AsyncMock(return_value=None)
+        mock_provider.get_custom_fields = AsyncMock(return_value={})
 
         sync = SyncService(
             async_session,

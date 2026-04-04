@@ -78,6 +78,8 @@ def mock_provider():
     provider = AsyncMock(spec=PMSProvider)
     provider.get_reservations = AsyncMock(return_value=[])
     provider.get_guest = AsyncMock(return_value=None)
+    provider.get_custom_fields = AsyncMock(return_value={})
+    provider.has_separate_custom_fields = False
     provider.provider_type = "cloudbeds"
     return provider
 
@@ -1101,6 +1103,7 @@ class TestGuestResolution:
                 guest_id="G123",
                 full_name="Resolved Name",
                 phone="+1-555-999-1234",
+                email="resolved@example.com",
             )
         )
 
@@ -1203,3 +1206,127 @@ class TestGuestResolution:
         assert SyncService.extract_phone_last4(None) is None
         assert SyncService.extract_phone_last4("") is None
         assert SyncService.extract_phone_last4("12") is None
+
+    @pytest.mark.asyncio
+    async def test_guest_email_added_to_custom_data(self, sync_session, mock_provider):
+        """Test guest email is added to custom_data during resolution."""
+        listing = Listing(
+            pms_id="GUEST_EMAIL",
+            name="Guest Email Test",
+            ical_url_slug="guest-email",
+            enabled=True,
+            sync_enabled=True,
+        )
+        sync_session.add(listing)
+        await sync_session.commit()
+        await sync_session.refresh(listing)
+
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_EMAIL",
+                    guest_name=None,
+                    guest_id="GE1",
+                ),
+            ]
+        )
+        mock_provider.get_guest = AsyncMock(
+            return_value=PMSGuest(
+                guest_id="GE1",
+                full_name="Email Guest",
+                phone="+15559990000",
+                email="guest@example.com",
+            )
+        )
+
+        service = SyncService(sync_session)
+        reservations = [
+            _make_reservation(
+                pms_booking_id="RES_EMAIL",
+                guest_name=None,
+                guest_id="GE1",
+            ),
+        ]
+        resolved = await service._resolve_guest_names(mock_provider, reservations)
+
+        r = resolved[0]
+        assert r.custom_data["guest_email"] == "guest@example.com"
+        assert r.custom_data["guest_phone"] == "+15559990000"
+        assert r.custom_data["guest_phone_last4"] == "0000"
+
+
+class TestCustomFieldEnrichment:
+    """Tests for custom field enrichment step."""
+
+    @pytest.mark.asyncio
+    async def test_enrichment_merges_custom_fields(self, sync_session, mock_provider):
+        """Test custom fields are merged into custom_data."""
+        mock_provider.has_separate_custom_fields = True
+        mock_provider.get_custom_fields = AsyncMock(
+            return_value={"cf_1": "val1", "cf_2": "val2", "source": "api"},
+        )
+
+        service = SyncService(sync_session)
+        reservations = [
+            _make_reservation(
+                pms_booking_id="RES_CF",
+                custom_data={"source": "airbnb"},
+            ),
+        ]
+        enriched = await service._enrich_custom_fields(mock_provider, reservations)
+
+        assert len(enriched) == 1
+        assert enriched[0].custom_data["cf_1"] == "val1"
+        assert enriched[0].custom_data["cf_2"] == "val2"
+        # Existing custom_data wins on key conflicts
+        assert enriched[0].custom_data["source"] == "airbnb"
+
+    @pytest.mark.asyncio
+    async def test_enrichment_noop_when_empty(self, sync_session, mock_provider):
+        """Test enrichment is a no-op when provider returns empty."""
+        mock_provider.has_separate_custom_fields = True
+        mock_provider.get_custom_fields = AsyncMock(return_value={})
+
+        service = SyncService(sync_session)
+        reservations = [
+            _make_reservation(
+                pms_booking_id="RES_NOOP",
+                custom_data={"existing": "data"},
+            ),
+        ]
+        enriched = await service._enrich_custom_fields(mock_provider, reservations)
+
+        assert enriched[0].custom_data == {"existing": "data"}
+
+    @pytest.mark.asyncio
+    async def test_enrichment_handles_provider_error(self, sync_session, mock_provider):
+        """Test enrichment handles provider errors gracefully."""
+        mock_provider.has_separate_custom_fields = True
+        mock_provider.get_custom_fields = AsyncMock(
+            side_effect=PMSProviderError("API error")
+        )
+
+        service = SyncService(sync_session)
+        reservations = [
+            _make_reservation(pms_booking_id="RES_ERR"),
+        ]
+        enriched = await service._enrich_custom_fields(mock_provider, reservations)
+
+        assert len(enriched) == 1
+        assert enriched[0].pms_booking_id == "RES_ERR"
+
+    @pytest.mark.asyncio
+    async def test_enrichment_skipped_when_not_supported(
+        self, sync_session, mock_provider
+    ):
+        """Test enrichment is skipped for providers without separate fields."""
+        mock_provider.has_separate_custom_fields = False
+
+        service = SyncService(sync_session)
+        reservations = [
+            _make_reservation(pms_booking_id="RES_SKIP"),
+        ]
+        enriched = await service._enrich_custom_fields(mock_provider, reservations)
+
+        assert enriched is reservations
+        mock_provider.get_custom_fields.assert_not_called()

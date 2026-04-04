@@ -22,6 +22,7 @@ from src.providers.guesty.auth import GuestyTokenManager
 from src.providers.guesty.service import (
     GUESTY_BASE_URL,
     GuestyProvider,
+    _extract_custom_data,
     _format_address,
     _parse_date,
     _parse_retry_after,
@@ -68,6 +69,15 @@ SAMPLE_RESERVATIONS = {
             "checkIn": "2026-03-01T14:00:00Z",
             "checkOut": "2026-03-05T11:00:00Z",
             "listingId": "L1",
+            "source": "airbnb",
+            "confirmationCode": "ABC123",
+            "nightsCount": 4,
+            "guestsCount": 2,
+            "money": {
+                "totalPaid": 500,
+                "balanceDue": 0,
+                "currency": "USD",
+            },
         },
         {
             "_id": "R2",
@@ -181,6 +191,10 @@ class TestProviderType:
         """Test that provider_type returns guesty."""
         assert guesty_provider.provider_type == "guesty"
 
+    def test_has_separate_custom_fields(self, guesty_provider):
+        """Test Guesty reports separate custom fields."""
+        assert guesty_provider.has_separate_custom_fields is True
+
 
 # ---------------------------------------------------------------------------
 # get_listings
@@ -282,6 +296,38 @@ class TestGetReservations:
         assert confirmed[0].status == "confirmed"
         assert confirmed[0].guest_name == "Alice Smith"
         assert confirmed[0].guest_id == "G1"
+
+    @pytest.mark.asyncio
+    async def test_custom_data_populated(self, guesty_provider, mock_http_client):
+        """Test that custom_data is populated from reservation fields."""
+        mock_http_client.request = AsyncMock(
+            return_value=_make_response(SAMPLE_RESERVATIONS)
+        )
+
+        reservations = await guesty_provider.get_reservations("L1")
+        r1 = next(r for r in reservations if r.pms_booking_id == "R1")
+
+        assert r1.custom_data["source"] == "airbnb"
+        assert r1.custom_data["confirmationCode"] == "ABC123"
+        assert r1.custom_data["nightsCount"] == 4
+        assert r1.custom_data["guestsCount"] == 2
+        assert r1.custom_data["money_totalPaid"] == 500
+        assert r1.custom_data["money_balanceDue"] == 0
+        assert r1.custom_data["money_currency"] == "USD"
+
+    @pytest.mark.asyncio
+    async def test_empty_custom_data_when_no_extra_fields(
+        self, guesty_provider, mock_http_client
+    ):
+        """Test custom_data is empty when reservation has no extra fields."""
+        mock_http_client.request = AsyncMock(
+            return_value=_make_response(SAMPLE_RESERVATIONS)
+        )
+
+        reservations = await guesty_provider.get_reservations("L1")
+        r2 = next(r for r in reservations if r.pms_booking_id == "R2")
+
+        assert r2.custom_data == {}
 
     @pytest.mark.asyncio
     async def test_status_mapping(self, guesty_provider, mock_http_client):
@@ -865,3 +911,74 @@ class TestFormatAddress:
     def test_empty_address(self):
         """Test that empty dict returns None."""
         assert _format_address({}) is None
+
+
+class TestExtractCustomData:
+    """Tests for _extract_custom_data helper."""
+
+    def test_top_level_keys(self):
+        """Test extraction of top-level reservation fields."""
+        raw = {
+            "source": "booking.com",
+            "confirmationCode": "XYZ",
+            "nightsCount": 3,
+            "guestsCount": 1,
+        }
+        result = _extract_custom_data(raw)
+        assert result == {
+            "source": "booking.com",
+            "confirmationCode": "XYZ",
+            "nightsCount": 3,
+            "guestsCount": 1,
+        }
+
+    def test_money_fields(self):
+        """Test extraction of nested money fields."""
+        raw = {
+            "money": {
+                "totalPaid": 250.50,
+                "balanceDue": 0,
+                "currency": "EUR",
+            },
+        }
+        result = _extract_custom_data(raw)
+        assert result["money_totalPaid"] == 250.50
+        assert result["money_balanceDue"] == 0
+        assert result["money_currency"] == "EUR"
+
+    def test_notes_from_dict_objects(self):
+        """Test notes extraction from dict note objects."""
+        raw = {
+            "notes": [
+                {"note": "Early check-in"},
+                {"note": "Allergic to cats"},
+            ],
+        }
+        result = _extract_custom_data(raw)
+        assert result["notes"] == "Early check-in; Allergic to cats"
+
+    def test_notes_from_strings(self):
+        """Test notes extraction from string entries."""
+        raw = {"notes": ["First note", "Second note"]}
+        result = _extract_custom_data(raw)
+        assert result["notes"] == "First note; Second note"
+
+    def test_empty_notes_not_included(self):
+        """Test that empty notes list produces no key."""
+        assert "notes" not in _extract_custom_data({"notes": []})
+        assert "notes" not in _extract_custom_data({"notes": [{"note": ""}]})
+
+    def test_none_values_skipped(self):
+        """Test that None field values are not included."""
+        raw = {"source": None, "confirmationCode": "OK"}
+        result = _extract_custom_data(raw)
+        assert "source" not in result
+        assert result["confirmationCode"] == "OK"
+
+    def test_empty_raw_returns_empty(self):
+        """Test that empty raw dict returns empty custom_data."""
+        assert _extract_custom_data({}) == {}
+
+    def test_non_dict_money_ignored(self):
+        """Test that non-dict money value is ignored."""
+        assert _extract_custom_data({"money": "invalid"}) == {}
