@@ -3,7 +3,6 @@
 """Background task scheduler for periodic sync operations."""
 
 import logging
-from typing import TYPE_CHECKING
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -15,14 +14,10 @@ from src.models.listing import Listing
 from src.models.oauth_credential import OAuthCredential
 from src.models.system_settings import DEFAULT_SYNC_INTERVAL_MINUTES, SystemSettings
 from src.providers.base import PMSProviderError, TokenResult
-from src.providers.registry import create_provider
+from src.providers.factory import create_provider_for_credential
 from src.repositories.booking_repository import BookingRepository
-from src.repositories.credential_repository import CredentialRepository
 from src.services.calendar_service import CalendarCache
 from src.services.sync_service import SyncService
-
-if TYPE_CHECKING:
-    from src.providers.base import PMSProvider
 
 # Data retention settings
 OLD_BOOKING_RETENTION_DAYS = 90
@@ -217,8 +212,7 @@ class SyncScheduler:
                     await self._refresh_token(session, credential)
 
                 # Create provider from credential
-                provider = _create_provider_for_credential(credential, session)
-
+                provider = create_provider_for_credential(credential, session)
                 # Sync each listing
                 sync_service = SyncService(
                     session=session,
@@ -266,7 +260,7 @@ class SyncScheduler:
             session: Database session.
             credential: OAuth credential to refresh.
         """
-        provider = _create_provider_for_credential(credential, session)
+        provider = create_provider_for_credential(credential, session)
         try:
             result: TokenResult = await provider.refresh_token(credential)
 
@@ -324,40 +318,6 @@ class SyncScheduler:
 
             except Exception:
                 logger.exception("Error during data purge")
-
-
-def _create_provider_for_credential(
-    credential: OAuthCredential,
-    session: AsyncSession,
-) -> "PMSProvider":
-    """Create a PMSProvider for the given credential.
-
-    Args:
-        credential: OAuth credential with ``pms_type``.
-        session: Database session (needed for Guesty credential repo).
-
-    Returns:
-        Configured PMSProvider instance.
-    """
-    pms_type = credential.pms_type
-
-    if pms_type == "guesty":
-        cred_repo = CredentialRepository(session)
-        return create_provider(
-            pms_type,
-            credential_repo=cred_repo,
-            credential_id=credential.id,
-            client_id=credential.client_id,
-            client_secret=credential.client_secret,
-        )
-
-    # Cloudbeds and any other provider
-    return create_provider(
-        pms_type,
-        access_token=credential.access_token,
-        refresh_token=credential.refresh_token,
-        api_key=credential.api_key,
-    )
 
 
 # Global scheduler instance

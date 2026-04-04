@@ -17,8 +17,7 @@ from src.models.booking import Booking
 from src.models.listing import Listing
 from src.models.oauth_credential import OAuthCredential
 from src.providers.base import PMSProviderError, PMSRoom
-from src.providers.registry import create_provider
-from src.repositories.credential_repository import CredentialRepository
+from src.providers.factory import create_provider_for_credential
 from src.repositories.listing_repository import MAX_LISTINGS, ListingRepository
 from src.repositories.room_repository import RoomRepository
 from src.services.calendar_service import get_calendar_cache
@@ -30,39 +29,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/listings", tags=["Listings"])
-
-
-def _create_provider_for_credential(
-    credential: OAuthCredential,
-    session: AsyncSession,
-) -> "PMSProvider":
-    """Create a PMSProvider for the given credential.
-
-    Args:
-        credential: OAuth credential with ``pms_type``.
-        session: Database session (for Guesty credential repo).
-
-    Returns:
-        Configured PMSProvider instance.
-    """
-    pms_type = credential.pms_type
-
-    if pms_type == "guesty":
-        cred_repo = CredentialRepository(session)
-        return create_provider(
-            pms_type,
-            credential_repo=cred_repo,
-            credential_id=credential.id,
-            client_id=credential.client_id,
-            client_secret=credential.client_secret,
-        )
-
-    return create_provider(
-        pms_type,
-        access_token=credential.access_token,
-        refresh_token=credential.refresh_token,
-        api_key=credential.api_key,
-    )
 
 
 class ListingResponse(BaseModel):
@@ -290,89 +256,91 @@ async def sync_properties(
         )
 
     # Create provider from credential
-    provider = _create_provider_for_credential(credential, db)
+    provider = create_provider_for_credential(credential, db)
 
     try:
         pms_listings = await provider.get_listings()
+
+        if not pms_listings:
+            return {
+                "success": True,
+                "created": 0,
+                "updated": 0,
+                "rooms_created": 0,
+                "rooms_updated": 0,
+                "message": "No properties found in PMS account",
+            }
+
+        # Create or update listings
+        repo = ListingRepository(db)
+        room_repo = RoomRepository(db)
+        created = 0
+        updated = 0
+        rooms_created = 0
+        rooms_updated = 0
+
+        for pms_listing in pms_listings:
+            property_pms_id = pms_listing.pms_id
+            if not property_pms_id:
+                continue
+
+            existing = await repo.get_by_pms_id(property_pms_id)
+            listing: Listing
+
+            if existing:
+                existing.name = pms_listing.name or existing.name
+                existing.timezone = pms_listing.timezone or existing.timezone
+                listing = existing
+                updated += 1
+            else:
+                name = pms_listing.name or f"Property {property_pms_id}"
+                slug = await repo.generate_unique_slug(name)
+                listing = Listing(
+                    pms_id=property_pms_id,
+                    name=name,
+                    ical_url_slug=slug,
+                    timezone=pms_listing.timezone or "UTC",
+                    enabled=False,
+                    sync_enabled=False,
+                )
+                db.add(listing)
+                created += 1
+
+            await db.flush()
+            if not existing:
+                await db.refresh(listing)
+
+            r_created, r_updated = await _sync_rooms_for_listing(
+                provider, room_repo, listing, property_pms_id
+            )
+            rooms_created += r_created
+            rooms_updated += r_updated
+
+        await db.commit()
+
+        total_props = created + updated
+        total_rooms = rooms_created + rooms_updated
+        msg = f"Synced {total_props} properties and {total_rooms} rooms from PMS"
+        return {
+            "success": True,
+            "created": created,
+            "updated": updated,
+            "rooms_created": rooms_created,
+            "rooms_updated": rooms_updated,
+            "message": msg,
+        }
     except PMSProviderError as e:
-        logger.error("Failed to fetch properties from PMS: %s", e)
+        logger.error(
+            "Failed to fetch properties from PMS: %s",
+            e,
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Failed to fetch properties from PMS: {e}",
         ) from e
-
-    if not pms_listings:
-        return {
-            "success": True,
-            "created": 0,
-            "updated": 0,
-            "rooms_created": 0,
-            "rooms_updated": 0,
-            "message": "No properties found in PMS account",
-        }
-
-    # Create or update listings
-    repo = ListingRepository(db)
-    room_repo = RoomRepository(db)
-    created = 0
-    updated = 0
-    rooms_created = 0
-    rooms_updated = 0
-
-    for pms_listing in pms_listings:
-        property_pms_id = pms_listing.pms_id
-        if not property_pms_id:
-            continue
-
-        existing = await repo.get_by_pms_id(property_pms_id)
-        listing: Listing
-
-        if existing:
-            existing.name = pms_listing.name or existing.name
-            existing.timezone = pms_listing.timezone or existing.timezone
-            listing = existing
-            updated += 1
-        else:
-            name = pms_listing.name or f"Property {property_pms_id}"
-            slug = await repo.generate_unique_slug(name)
-            listing = Listing(
-                pms_id=property_pms_id,
-                name=name,
-                ical_url_slug=slug,
-                timezone=pms_listing.timezone or "UTC",
-                enabled=False,
-                sync_enabled=False,
-            )
-            db.add(listing)
-            created += 1
-
-        await db.flush()
-        if not existing:
-            await db.refresh(listing)
-
-        r_created, r_updated = await _sync_rooms_for_listing(
-            provider, room_repo, listing, property_pms_id
-        )
-        rooms_created += r_created
-        rooms_updated += r_updated
-
-    await db.commit()
-
-    # Clean up provider resources
-    if hasattr(provider, "aclose"):
-        await provider.aclose()
-
-    total_props = created + updated
-    total_rooms = rooms_created + rooms_updated
-    msg = f"Synced {total_props} properties and {total_rooms} rooms from PMS"
-    return {
-        "success": True,
-        "created": created,
-        "updated": updated,
-        "rooms_created": rooms_created,
-        "rooms_updated": rooms_updated,
-        "message": msg,
-    }
+    finally:
+        if hasattr(provider, "aclose"):
+            await provider.aclose()
 
 
 @router.get("/{listing_id}", response_model=ListingResponse)
@@ -753,7 +721,7 @@ async def sync_listing(
 
     # Run sync via provider
     try:
-        provider = _create_provider_for_credential(credential, db)
+        provider = create_provider_for_credential(credential, db)
         try:
             sync_service = SyncService(db, get_calendar_cache())
             counts = await sync_service.sync_listing(listing, provider)

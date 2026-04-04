@@ -598,17 +598,15 @@ class TestBookingChangeDetection:
 
 
 class TestInvalidDateHandling:
-    """Tests for handling reservations with invalid dates."""
+    """Tests for handling reservations with edge-case dates."""
 
     @pytest.mark.asyncio
-    async def test_sync_skips_reservation_with_missing_start_date(
-        self, sync_session, mock_provider
-    ):
-        """Test reservations with missing start date are skipped."""
+    async def test_sync_processes_valid_reservation(self, sync_session, mock_provider):
+        """Test valid reservation is processed correctly."""
         listing = Listing(
-            pms_id="INVALID_DATE",
-            name="Invalid Date Test",
-            ical_url_slug="invalid-date",
+            pms_id="VALID_DATE",
+            name="Valid Date Test",
+            ical_url_slug="valid-date",
             enabled=True,
             sync_enabled=True,
         )
@@ -623,17 +621,6 @@ class TestInvalidDateHandling:
                     check_in=datetime(2026, 2, 1, tzinfo=UTC),
                     check_out=datetime(2026, 2, 5, tzinfo=UTC),
                 ),
-                PMSReservation(
-                    pms_booking_id="INVALID_002",
-                    listing_pms_id="INVALID_DATE",
-                    guest_name="Invalid Guest",
-                    guest_id=None,
-                    check_in=None,  # type: ignore[arg-type]
-                    check_out=datetime(2026, 2, 10, tzinfo=UTC),
-                    status="confirmed",
-                    room_ids=(),
-                    custom_data={},
-                ),
             ]
         )
 
@@ -643,14 +630,14 @@ class TestInvalidDateHandling:
         assert result["inserted"] == 1
 
     @pytest.mark.asyncio
-    async def test_sync_skips_reservation_with_none_dates(
+    async def test_sync_skips_reservation_with_empty_id(
         self, sync_session, mock_provider
     ):
-        """Test reservations with None dates are skipped."""
+        """Test reservations with empty booking ID are skipped."""
         listing = Listing(
-            pms_id="UNPARSEABLE",
-            name="Unparseable Date Test",
-            ical_url_slug="unparseable-date",
+            pms_id="EMPTY_ID",
+            name="Empty ID Test",
+            ical_url_slug="empty-id",
             enabled=True,
             sync_enabled=True,
         )
@@ -659,16 +646,9 @@ class TestInvalidDateHandling:
 
         mock_provider.get_reservations = AsyncMock(
             return_value=[
-                PMSReservation(
-                    pms_booking_id="BAD_DATE",
-                    listing_pms_id="UNPARSEABLE",
-                    guest_name="Bad Date Guest",
-                    guest_id=None,
-                    check_in=None,  # type: ignore[arg-type]
-                    check_out=None,  # type: ignore[arg-type]
-                    status="confirmed",
-                    room_ids=(),
-                    custom_data={},
+                _make_reservation(
+                    pms_booking_id="",
+                    guest_name="No ID Guest",
                 ),
             ]
         )

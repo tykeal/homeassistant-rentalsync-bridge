@@ -97,7 +97,7 @@ class TestSyncPropertiesWithRooms:
         room_sync_session.add(credential)
         await room_sync_session.commit()
 
-        with patch("src.api.listings._create_provider_for_credential") as mock_create:
+        with patch("src.api.listings.create_provider_for_credential") as mock_create:
             mock_provider = AsyncMock()
             mock_provider.get_listings = AsyncMock(
                 return_value=[
@@ -182,7 +182,7 @@ class TestSyncPropertiesWithRooms:
         room_sync_session.add(credential)
         await room_sync_session.commit()
 
-        with patch("src.api.listings._create_provider_for_credential") as mock_create:
+        with patch("src.api.listings.create_provider_for_credential") as mock_create:
             mock_provider = AsyncMock()
             mock_provider.get_listings = AsyncMock(
                 return_value=[
@@ -232,7 +232,7 @@ class TestSyncPropertiesWithRooms:
         room_sync_session.add(credential)
         await room_sync_session.commit()
 
-        with patch("src.api.listings._create_provider_for_credential") as mock_create:
+        with patch("src.api.listings.create_provider_for_credential") as mock_create:
             mock_provider = AsyncMock()
             mock_provider.get_listings = AsyncMock(
                 return_value=[
@@ -298,7 +298,7 @@ class TestSyncPropertiesWithRooms:
         room_sync_session.add(credential)
         await room_sync_session.commit()
 
-        with patch("src.api.listings._create_provider_for_credential") as mock_create:
+        with patch("src.api.listings.create_provider_for_credential") as mock_create:
             mock_provider = AsyncMock()
             mock_provider.get_listings = AsyncMock(
                 return_value=[
@@ -357,7 +357,7 @@ class TestRoomSyncResponse:
                 ]
             return [PMSRoom(pms_room_id="R3", name="Room 3")]
 
-        with patch("src.api.listings._create_provider_for_credential") as mock_create:
+        with patch("src.api.listings.create_provider_for_credential") as mock_create:
             mock_provider = AsyncMock()
             mock_provider.get_listings = AsyncMock(
                 return_value=[
