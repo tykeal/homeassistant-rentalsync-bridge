@@ -122,7 +122,8 @@ class GuestyTokenManager:
         if count >= TOKEN_REQUEST_LIMIT:
             reset_at = None
             if window_start is not None:
-                reset_at = window_start + TOKEN_REQUEST_WINDOW
+                # Use UTC-aware datetime for consistent serialization
+                reset_at = window_start.replace(tzinfo=UTC) + TOKEN_REQUEST_WINDOW
             msg = (
                 f"Token request rate limit exceeded "
                 f"({count}/{TOKEN_REQUEST_LIMIT} in current window). "
