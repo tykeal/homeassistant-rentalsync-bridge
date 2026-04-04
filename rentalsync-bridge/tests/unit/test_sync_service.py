@@ -1122,7 +1122,7 @@ class TestGuestResolution:
 
     @pytest.mark.asyncio
     async def test_inline_guest_name_not_overridden(self, sync_session, mock_provider):
-        """Test inline guest_name is used without API call."""
+        """Test inline guest_name is preserved after enrichment."""
         listing = Listing(
             pms_id="GUEST_INLINE",
             name="Guest Inline Test",
@@ -1143,13 +1143,33 @@ class TestGuestResolution:
                 ),
             ]
         )
+        mock_provider.get_guest = AsyncMock(
+            return_value=PMSGuest(
+                guest_id="G456",
+                full_name="API Name",
+                phone="+15551110000",
+                email="inline@example.com",
+            )
+        )
 
         service = SyncService(sync_session)
         result = await service.sync_listing(listing, mock_provider)
 
         assert result["inserted"] == 1
-        # get_guest should not be called
-        mock_provider.get_guest.assert_not_called()
+        # get_guest IS called for enrichment
+        mock_provider.get_guest.assert_called_once_with("G456")
+
+        stmt = select(Booking).where(
+            Booking.pms_booking_id == "RES_INLINE",
+        )
+        db_result = await sync_session.execute(stmt)
+        booking = db_result.scalar_one()
+        # Inline name kept, not overwritten by API name
+        assert booking.guest_name == "Inline Name"
+        # Phone and email enriched from get_guest()
+        assert booking.guest_phone_last4 == "0000"
+        assert booking.custom_data["guest_phone"] == "+15551110000"
+        assert booking.custom_data["guest_email"] == "inline@example.com"
 
     @pytest.mark.asyncio
     async def test_guest_resolution_batches_unique_ids(
@@ -1253,6 +1273,107 @@ class TestGuestResolution:
         assert r.custom_data["guest_email"] == "guest@example.com"
         assert r.custom_data["guest_phone"] == "+15559990000"
         assert r.custom_data["guest_phone_last4"] == "0000"
+
+    @pytest.mark.asyncio
+    async def test_enrichment_with_existing_name(self, sync_session, mock_provider):
+        """Enrichment adds phone/email even when name is present."""
+        service = SyncService(sync_session)
+        mock_provider.get_guest = AsyncMock(
+            return_value=PMSGuest(
+                guest_id="G1",
+                full_name="API Name",
+                phone="+15551234567",
+                email="alice@example.com",
+            )
+        )
+        reservations = [
+            _make_reservation(
+                pms_booking_id="RES_NAMED",
+                guest_name="Alice",
+                guest_id="G1",
+            ),
+        ]
+        resolved = await service._resolve_guest_names(mock_provider, reservations)
+
+        r = resolved[0]
+        # Original name kept
+        assert r.guest_name == "Alice"
+        # Phone and email enriched
+        assert r.custom_data["guest_phone"] == "+15551234567"
+        assert r.custom_data["guest_email"] == "alice@example.com"
+        assert r.custom_data["guest_phone_last4"] == "4567"
+        mock_provider.get_guest.assert_called_once_with("G1")
+
+    @pytest.mark.asyncio
+    async def test_no_guest_id_skips_enrichment(self, sync_session, mock_provider):
+        """Reservation without guest_id is returned unchanged."""
+        service = SyncService(sync_session)
+        reservations = [
+            _make_reservation(
+                pms_booking_id="RES_NOID",
+                guest_name="Bob",
+                guest_id=None,
+            ),
+        ]
+        resolved = await service._resolve_guest_names(mock_provider, reservations)
+
+        r = resolved[0]
+        assert r.guest_name == "Bob"
+        assert "guest_phone" not in r.custom_data
+        assert "guest_email" not in r.custom_data
+        mock_provider.get_guest.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_already_enriched_skips_get_guest(self, sync_session, mock_provider):
+        """Skip get_guest() when phone and email already present."""
+        service = SyncService(sync_session)
+        reservations = [
+            _make_reservation(
+                pms_booking_id="RES_FULL",
+                guest_name="Carol",
+                guest_id="G9",
+                custom_data={
+                    "guest_phone": "+15550001111",
+                    "guest_email": "carol@example.com",
+                },
+            ),
+        ]
+        resolved = await service._resolve_guest_names(mock_provider, reservations)
+
+        r = resolved[0]
+        assert r.guest_name == "Carol"
+        assert r.custom_data["guest_phone"] == "+15550001111"
+        assert r.custom_data["guest_email"] == "carol@example.com"
+        mock_provider.get_guest.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_enrichment_preserves_existing_custom_data(
+        self, sync_session, mock_provider
+    ):
+        """Existing custom_data values are not overwritten."""
+        service = SyncService(sync_session)
+        mock_provider.get_guest = AsyncMock(
+            return_value=PMSGuest(
+                guest_id="G7",
+                full_name="API Name",
+                phone="+15559999999",
+                email="api@example.com",
+            )
+        )
+        reservations = [
+            _make_reservation(
+                pms_booking_id="RES_PARTIAL",
+                guest_name="Dave",
+                guest_id="G7",
+                custom_data={"guest_phone": "+15550001111"},
+            ),
+        ]
+        resolved = await service._resolve_guest_names(mock_provider, reservations)
+
+        r = resolved[0]
+        # Existing phone kept, API email filled in
+        assert r.custom_data["guest_phone"] == "+15550001111"
+        assert r.custom_data["guest_email"] == "api@example.com"
 
 
 class TestCustomFieldEnrichment:
