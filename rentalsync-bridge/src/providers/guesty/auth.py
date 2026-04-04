@@ -114,6 +114,7 @@ class GuestyTokenManager:
         # If the window has expired, the next increment will reset the count,
         # so treat this as an allowed request regardless of the stored count.
         if window_start is not None:
+            # SQLite stores naive datetimes; all are UTC by convention
             window_age = datetime.now(UTC) - window_start.replace(tzinfo=UTC)
             if window_age >= TOKEN_REQUEST_WINDOW:
                 return
@@ -181,6 +182,9 @@ class GuestyTokenManager:
             # this add-on runs as a single process. The asyncio.Lock
             # protects against concurrent coroutines within this process.
             await self._check_rate_limit()
+            await self._repo.increment_token_request_count(
+                self._credential_id,
+            )
 
             result = await self._request_token()
 
@@ -189,9 +193,6 @@ class GuestyTokenManager:
                 self._credential_id,
                 result.access_token,
                 result.expires_at,
-            )
-            await self._repo.increment_token_request_count(
-                self._credential_id,
             )
 
             # Update in-memory cache
