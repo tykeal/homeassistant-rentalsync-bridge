@@ -405,7 +405,6 @@ jobs:
           image: ${{ matrix.image }}
           image-tags: |
             ${{ needs.tag-validate.outputs.tag }}
-            latest
           push: 'true'
           version: ${{ needs.tag-validate.outputs.tag }}
           build-args: |
@@ -440,7 +439,6 @@ jobs:
           image-name: 'homeassistant-rentalsync-bridge'
           image-tags: |
             ${{ needs.tag-validate.outputs.tag }}
-            latest
           cosign: 'true'
 
   attach-artefacts:
