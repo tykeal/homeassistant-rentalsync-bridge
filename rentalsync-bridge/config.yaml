@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: RentalSync Bridge
-version: "0.1.0"
+version: "0.0.0"
 slug: rentalsync_bridge
-description: Cloudbeds to Airbnb iCal export bridge
+description: Multi-PMS iCal export bridge
 url: https://github.com/tykeal/homeassistant-rentalsync-bridge
 arch:
   - aarch64

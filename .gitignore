@@ -29,5 +29,8 @@ data/*.db-journal
 # Secrets
 data/.encryption_key
 
+# Generated version file (hatch-vcs)
+rentalsync-bridge/src/_version.py
+
 # Environment files
 .env
