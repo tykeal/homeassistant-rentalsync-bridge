@@ -9,7 +9,6 @@ url: https://github.com/tykeal/homeassistant-rentalsync-bridge
 arch:
   - aarch64
   - amd64
-  - armv7
 startup: application
 boot: auto
 init: false
