@@ -5,56 +5,85 @@ SPDX-License-Identifier: Apache-2.0
 
 # RentalSync Bridge
 
-Cloudbeds to Airbnb iCal export bridge for Home Assistant.
+Multi-PMS booking sync and iCal export bridge for Home Assistant.
 
 ## Overview
 
-RentalSync Bridge transforms Cloudbeds booking data into Airbnb-compatible iCal
-feeds. It provides an administrative web interface for configuring which
-listings to export and serves publicly accessible iCal URLs for calendar
-subscription.
+RentalSync Bridge syncs booking data from property management systems (PMS) and
+exports it as RFC 5545 compliant iCal feeds. It provides a web-based admin
+interface for managing PMS connections, selecting which properties and rooms to
+export, and serves publicly accessible iCal URLs for calendar subscription.
+
+## Supported PMS Providers
+
+| Provider | Auth Method | Notes |
+|----------|------------|-------|
+| **Cloudbeds** | OAuth 2.0 or API Key | Full support for listings, rooms, bookings, and guest data |
+| **Guesty** | OAuth 2.0 (client credentials) | Token rate limiting (5 requests/24h), custom fields via v3 API |
+
+The provider abstraction layer makes it straightforward to add additional PMS
+backends in the future.
 
 ## Features
 
-- Export Cloudbeds bookings as RFC 5545 compliant iCal feeds
-- **Room-level calendar feeds** for multi-unit properties
-- Web-based administrative interface
-- Home Assistant addon integration with Ingress authentication
-- Multi-listing support with independent configurations
-- Automatic background sync with configurable intervals
-- Custom field selection for event descriptions
-- Privacy-focused: only phone last 4 digits exposed
+- **Multi-PMS support** — Cloudbeds and Guesty with a pluggable provider
+  architecture
+- **Room-level iCal feeds** — individual calendar URLs per room for multi-unit
+  properties
+- **RFC 5545 compliant** iCal output compatible with Airbnb, Google Calendar,
+  and other OTAs
+- **Web admin interface** — PMS selection, dynamic credential forms,
+  property/room management, custom field picker
+- **Home Assistant add-on** with Ingress authentication and sidebar integration
+- **Automatic background sync** with configurable intervals (1–60 minutes)
+- **Custom field discovery** — automatically detects available fields from
+  synced data (guest email, phone, notes, financial data, etc.)
+- **Guest data enrichment** — resolves guest details (name, phone, email) from
+  separate API endpoints when needed
+- **Privacy-focused** — only phone last 4 digits stored on bookings by default;
+  full phone and email are optional custom fields
+- **Token management** — encrypted credential storage, automatic token refresh,
+  Guesty token request rate limiting with 24-hour window tracking
+- **Database migrations** — Alembic-managed schema evolution for safe upgrades
 
 ## Documentation
 
-- [Quick Start](specs/001-cloudbeds-ical-export/quickstart.md) - Standalone
+- [Quick Start](specs/001-cloudbeds-ical-export/quickstart.md) — Standalone
   deployment
-- [Home Assistant Add-on Setup](docs/homeassistant-addon-setup.md) - HA
+- [Home Assistant Add-on Setup](docs/homeassistant-addon-setup.md) — HA
   installation guide
-- [API Usage](docs/api-usage.md) - REST API reference
-- [Deployment Guide](docs/deployment.md) - Production deployment and HTTPS
+- [API Usage](docs/api-usage.md) — REST API reference
+- [Deployment Guide](docs/deployment.md) — Production deployment and HTTPS
 
 ## Room-Level Calendars
 
-RentalSync Bridge exports **room-level** iCal feeds for properties with multiple rooms or units. Each room gets its own calendar URL, allowing you to sync individual room availability to Airbnb and other OTAs.
+RentalSync Bridge exports **room-level** iCal feeds for properties with
+multiple rooms or units. Each room gets its own calendar URL, allowing you to
+sync individual room availability to Airbnb and other OTAs.
 
 ### How It Works
 
-1. **Sync Rooms**: Click "Sync Rooms from Cloudbeds" in the admin UI to import all rooms for your properties
-2. **Get Room URLs**: Expand a listing to see all rooms with their individual iCal URLs
-3. **Subscribe**: Copy each room's iCal URL and add it to Airbnb, Google Calendar, or other calendar services
-4. **Manage**: Enable/disable rooms individually and customize their URL slugs
+1. **Sync Properties** — Click "Sync Properties" in the admin UI to import
+   listings and rooms from your PMS
+2. **Get Room URLs** — Expand a listing to see all rooms with their individual
+   iCal URLs
+3. **Subscribe** — Copy each room's iCal URL and add it to Airbnb, Google
+   Calendar, or other calendar services
+4. **Manage** — Enable/disable rooms individually and customize their URL slugs
 
 ### URL Format
 
 Room-level iCal URLs follow the pattern:
+
 ```
 /ical/{listing-slug}/{room-slug}.ics
 ```
 
 Example: `/ical/beach-house/master-bedroom.ics`
 
-**Note**: Property-level calendar URLs (`/ical/{listing-slug}.ics`) are no longer supported. Each room must be configured separately for multi-room properties.
+**Note**: Property-level calendar URLs (`/ical/{listing-slug}.ics`) are no
+longer supported. Each room must be configured separately for multi-room
+properties.
 
 ## Quick Start
 
@@ -64,25 +93,55 @@ Example: `/ical/beach-house/master-bedroom.ics`
 # Create data directory
 mkdir -p ./data
 
-# Run container
+# Run with Cloudbeds (API key auth)
 docker run -d \
   --name rentalsync-bridge \
   -p 8099:8099 \
   -v ./data:/data \
   -e STANDALONE_MODE=true \
   -e DATABASE_URL=sqlite:///data/rentalsync.db \
-  -e CLOUDBEDS_API_KEY=your-api-key \
   ghcr.io/tykeal/rentalsync-bridge:latest
 
 # Access admin UI at http://localhost:8099/admin
+```
+
+PMS credentials are configured through the admin UI — select your provider,
+enter credentials, and save. Alternatively, set environment variables:
+
+```bash
+# Cloudbeds (auto-detected as default)
+-e CLOUDBEDS_CLIENT_ID=your-client-id \
+-e CLOUDBEDS_CLIENT_SECRET=your-secret
+
+# Guesty (auto-detected when GUESTY_CLIENT_ID is set)
+-e GUESTY_CLIENT_ID=your-client-id \
+-e GUESTY_CLIENT_SECRET=your-secret
+
+# Or explicitly set the provider type
+-e PMS_TYPE=guesty
 ```
 
 ### Home Assistant Add-on
 
 1. Add repository: `https://github.com/tykeal/homeassistant-rentalsync-bridge`
 2. Install "RentalSync Bridge" add-on
-3. Configure API key and start
-4. Access via Home Assistant sidebar
+3. Start the add-on and open the web UI from the sidebar
+4. Select your PMS provider, enter credentials, and sync properties
+
+## Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PMS_TYPE` | auto-detect | PMS provider: `cloudbeds` or `guesty` |
+| `DATABASE_URL` | `sqlite:///./data/rentalsync.db` | SQLite database URL |
+| `SYNC_INTERVAL_MINUTES` | `5` | Background sync interval (1–60) |
+| `ENCRYPTION_KEY` | (generated) | Fernet key for credential encryption |
+| `STANDALONE_MODE` | `false` | Disable HA auth for standalone use |
+| `ICAL_BASE_URL` | (empty) | External base URL for iCal feeds |
+| `LOG_LEVEL` | `INFO` | Logging level |
+
+PMS type is auto-detected: explicit `PMS_TYPE` wins, then `GUESTY_CLIENT_ID`
+implies Guesty, otherwise defaults to Cloudbeds.
 
 ## Database Backup
 
@@ -163,22 +222,29 @@ docker run -d \
 ### Project Structure
 
 ```
-rentalsync-bridge/    # Add-on folder (contains all source)
-├── src/              # Application source code
-│   ├── api/          # FastAPI route handlers
-│   ├── middleware/   # Authentication and error handling
-│   ├── models/       # SQLAlchemy ORM models
-│   ├── repositories/ # Database access layer
-│   ├── services/     # Business logic
-│   └── templates/    # HTML templates for admin UI
-├── tests/            # Test suite
-├── alembic/          # Database migrations
-├── scripts/          # Startup scripts
-├── Dockerfile        # HA add-on Dockerfile
-├── config.yaml       # HA add-on configuration
-└── pyproject.toml    # Python dependencies
-Dockerfile            # Standalone/Podman Dockerfile (at repo root)
-repository.json       # HA add-on repository metadata
+rentalsync-bridge/          # Add-on folder (contains all source)
+├── src/                    # Application source code
+│   ├── api/                # FastAPI route handlers
+│   ├── middleware/          # Authentication and error handling
+│   ├── models/             # SQLAlchemy ORM models
+│   ├── providers/          # PMS provider abstraction layer
+│   │   ├── base.py         # PMSProvider ABC and DTOs
+│   │   ├── registry.py     # Provider registry and factory
+│   │   ├── cloudbeds/      # Cloudbeds provider implementation
+│   │   └── guesty/         # Guesty provider implementation
+│   ├── repositories/       # Database access layer
+│   ├── services/           # Business logic (sync, calendar, scheduler)
+│   ├── static/             # CSS and JavaScript assets
+│   └── templates/          # HTML templates for admin UI
+├── tests/                  # Test suite (unit, integration, contract)
+├── alembic/                # Database migrations
+├── scripts/                # Startup scripts
+├── Dockerfile              # HA add-on Dockerfile
+├── config.yaml             # HA add-on configuration
+└── pyproject.toml          # Python dependencies
+specs/                      # Feature specifications
+Dockerfile                  # Standalone/Podman Dockerfile (at repo root)
+repository.json             # HA add-on repository metadata
 ```
 
 ## License
