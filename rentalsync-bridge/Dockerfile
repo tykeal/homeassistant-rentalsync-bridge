@@ -7,6 +7,9 @@
 ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-python:3.13-alpine3.21
 FROM ${BUILD_FROM}
 
+# Build version passed by HA builder for hatch-vcs fallback
+ARG BUILD_VERSION=0.0.0
+
 # Install uv for dependency management
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
@@ -30,7 +33,8 @@ COPY src/ ./src/
 COPY README.md ./
 
 # Install the project itself
-RUN uv sync --frozen --no-dev
+RUN SETUPTOOLS_SCM_PRETEND_VERSION="${BUILD_VERSION}" \
+    uv sync --frozen --no-dev
 
 # Copy alembic for database migrations
 COPY alembic/ ./alembic/

@@ -8,6 +8,9 @@
 # Stage 1: Build stage
 FROM python:3.13-slim AS builder
 
+# Build version for hatch-vcs fallback (no .git in container)
+ARG BUILD_VERSION=0.0.0
+
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
@@ -24,7 +27,8 @@ COPY rentalsync-bridge/src/ ./src/
 COPY rentalsync-bridge/README.md ./
 
 # Install the project itself
-RUN uv sync --frozen --no-dev
+RUN SETUPTOOLS_SCM_PRETEND_VERSION="${BUILD_VERSION}" \
+    uv sync --frozen --no-dev
 
 # Stage 2: Runtime stage
 FROM python:3.13-slim AS runtime
