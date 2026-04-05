@@ -3,8 +3,8 @@
 
 [project]
 name = "rentalsync-bridge"
-version = "0.1.0"
-description = "Cloudbeds to Airbnb iCal export bridge for Home Assistant"
+dynamic = ["version"]
+description = "Multi-PMS booking sync and iCal export bridge for Home Assistant"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.13"
@@ -53,8 +53,15 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+raw-options.root = ".."
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
