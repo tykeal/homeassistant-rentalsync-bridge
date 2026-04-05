@@ -449,7 +449,8 @@ jobs:
         shell: bash
         run: |
           # Inspect published manifest for digest
-          IMAGE="ghcr.io/tykeal/homeassistant-rentalsync-bridge"
+          # yamllint disable-line rule:line-length
+          IMAGE="ghcr.io/${{ github.repository_owner }}/homeassistant-rentalsync-bridge"
           TAG="${{ needs.tag-validate.outputs.tag }}"
           DIGEST=$(docker buildx imagetools inspect \
             "${IMAGE}:${TAG}" \
@@ -566,6 +567,11 @@ jobs:
 
           BODY=$(gh release view "$TAG" \
             --json body --jq '.body')
+
+          # Strip existing container section for idempotency
+          BODY=$(echo "$BODY" | sed '/^## Container Image$/,$d')
+          # Remove trailing blank lines
+          BODY=$(echo "$BODY" | sed -e :a -e '/^\n*$/{$d;N;ba}')
 
           # Append container section
           BODY="${BODY}
