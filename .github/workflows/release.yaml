@@ -690,6 +690,8 @@ jobs:
           RELEASE_URL="${{ needs.promote-release.outputs.release_url }}"
           # yamllint disable-line rule:line-length
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          # yamllint disable-line rule:line-length
+          WORKFLOW_URL="${{ github.server_url }}/${{ github.repository }}/blob/main/.github/workflows/release.yaml"
           BOT_NAME="github-actions[bot]"
           # yamllint disable-line rule:line-length
           BOT_EMAIL="41898282+github-actions[bot]@users.noreply.github.com"
@@ -765,11 +767,14 @@ jobs:
             -f "author[email]=${BOT_EMAIL}"
 
           # Create pull request
+          # yamllint disable rule:line-length
           PR_BODY=$(printf \
-            'Update rentalsync-bridge add-on to version %s.\n\nRelease: %s\nWorkflow run: %s' \
+            'Update rentalsync-bridge add-on to version %s.\n\nRelease: %s\nWorkflow run: %s\nWorkflow source: %s' \
             "$VERSION" \
             "$RELEASE_URL" \
-            "$RUN_URL")
+            "$RUN_URL" \
+            "$WORKFLOW_URL")
+          # yamllint enable rule:line-length
           PR_URL=$(gh pr create \
             --repo "$STORE_REPO" \
             --base "$DEFAULT_BRANCH" \
