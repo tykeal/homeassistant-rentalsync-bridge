@@ -452,10 +452,26 @@ jobs:
           # yamllint disable-line rule:line-length
           IMAGE="ghcr.io/${{ github.repository_owner }}/homeassistant-rentalsync-bridge"
           TAG="${{ needs.tag-validate.outputs.tag }}"
-          DIGEST=$(docker buildx imagetools inspect \
-            "${IMAGE}:${TAG}" | \
-            awk '/^Digest:/{print $2; exit}')
-          if [[ -z "${DIGEST}" ]]; then
+          # Use docker manifest inspect (works without buildx
+          # builder context)
+          DIGEST=$(docker manifest inspect \
+            "${IMAGE}:${TAG}" -v 2>/dev/null | \
+            jq -r 'if type == "array" then .[0].Descriptor.digest else .Descriptor.digest end')
+          if [[ -z "${DIGEST}" || "${DIGEST}" == "null" ]]; then
+            # Fallback: HEAD request to OCI registry API
+            REPO="${{ github.repository_owner }}"
+            REPO="${REPO}/homeassistant-rentalsync-bridge"
+            TOKEN=$(curl -s \
+              "https://ghcr.io/token?scope=repository:${REPO}:pull" | \
+              jq -r '.token')
+            DIGEST=$(curl -sI \
+              -H "Authorization: Bearer ${TOKEN}" \
+              -H "Accept: application/vnd.oci.image.index.v1+json" \
+              "https://ghcr.io/v2/${REPO}/manifests/${TAG}" | \
+              grep -i 'docker-content-digest' | \
+              awk '{print $2}' | tr -d '\r')
+          fi
+          if [[ -z "${DIGEST}" || "${DIGEST}" == "null" ]]; then
             echo "::error::Failed to capture manifest digest"
             exit 1
           fi
