@@ -454,7 +454,7 @@ jobs:
           TAG="${{ needs.tag-validate.outputs.tag }}"
           DIGEST=$(docker buildx imagetools inspect \
             "${IMAGE}:${TAG}" \
-            --format '{{.Manifest.Digest}}')
+            --format '{{.Digest}}')
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
           echo "Manifest digest: ${DIGEST}"
