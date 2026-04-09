@@ -688,6 +688,13 @@ jobs:
           BRANCH="update/rentalsync-bridge-${VERSION}"
           # yamllint disable-line rule:line-length
           RELEASE_URL="${{ needs.promote-release.outputs.release_url }}"
+          # yamllint disable-line rule:line-length
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          # yamllint disable-line rule:line-length
+          WORKFLOW_URL="${{ github.server_url }}/${{ github.repository }}/blob/main/.github/workflows/release.yaml"
+          BOT_NAME="github-actions[bot]"
+          # yamllint disable-line rule:line-length
+          BOT_EMAIL="41898282+github-actions[bot]@users.noreply.github.com"
 
           # Check if PR already exists for this version
           EXISTING=$(gh pr list \
@@ -742,21 +749,32 @@ jobs:
           sed -i "s/^version: .*/version: \"${VERSION}\"/" \
             "$TMPFILE"
 
-          # Push updated config.yaml
+          # Push updated config.yaml with bot identity
           CONTENT_B64=$(base64 -w 0 < "$TMPFILE")
+          COMMIT_MSG=$(printf \
+            'Chore: bump rentalsync-bridge to %s\n\nSigned-off-by: %s <%s>' \
+            "$VERSION" "$BOT_NAME" "$BOT_EMAIL")
           gh api \
             "repos/${STORE_REPO}/contents/${ADDON_PATH}" \
             -X PUT \
-            -f "message=Chore: update rentalsync-bridge to ${VERSION}" \
+            -f "message=${COMMIT_MSG}" \
             -f "content=${CONTENT_B64}" \
             -f "sha=${SHA}" \
-            -f "branch=${BRANCH}"
+            -f "branch=${BRANCH}" \
+            -f "committer[name]=${BOT_NAME}" \
+            -f "committer[email]=${BOT_EMAIL}" \
+            -f "author[name]=${BOT_NAME}" \
+            -f "author[email]=${BOT_EMAIL}"
 
           # Create pull request
+          # yamllint disable rule:line-length
           PR_BODY=$(printf \
-            'Update rentalsync-bridge add-on to version %s.\n\nRelease: %s' \
+            'Update rentalsync-bridge add-on to version %s.\n\nRelease: %s\nWorkflow run: %s\nWorkflow source: %s' \
             "$VERSION" \
-            "$RELEASE_URL")
+            "$RELEASE_URL" \
+            "$RUN_URL" \
+            "$WORKFLOW_URL")
+          # yamllint enable rule:line-length
           PR_URL=$(gh pr create \
             --repo "$STORE_REPO" \
             --base "$DEFAULT_BRANCH" \
