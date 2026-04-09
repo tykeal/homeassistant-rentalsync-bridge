@@ -659,3 +659,93 @@ jobs:
           RELEASE_URL=$(gh release view "$TAG" \
             --json url --jq '.url')
           echo "release_url=$RELEASE_URL" >> "$GITHUB_OUTPUT"
+
+  update-addon-store:
+    name: 'Update Add-on Store'
+    needs:
+      - 'tag-validate'
+      - 'promote-release'
+    runs-on: 'ubuntu-latest'
+    environment: 'release'
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    steps:
+      # yamllint disable-line rule:line-length
+      - uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d  # v2.16.1
+        with:
+          egress-policy: 'audit'
+
+      - name: 'Create add-on store update PR'
+        shell: bash
+        env:
+          GH_TOKEN: "${{ secrets.ADDONS_REPO_TOKEN }}"
+        run: |
+          # Update rentalsync-bridge version in add-on store
+          STORE_REPO="tykeal/homeassistant-addons"
+          ADDON_PATH="rentalsync-bridge/config.yaml"
+          VERSION="${{ needs.tag-validate.outputs.version }}"
+          BRANCH="update/rentalsync-bridge-${VERSION}"
+          # yamllint disable-line rule:line-length
+          RELEASE_URL="${{ needs.promote-release.outputs.release_url }}"
+
+          # Check if PR already exists for this version
+          EXISTING=$(gh pr list \
+            --repo "$STORE_REPO" \
+            --head "$BRANCH" \
+            --json number --jq '.[0].number' \
+            2>/dev/null || true)
+          if [[ -n "$EXISTING" ]]; then
+            echo "PR #${EXISTING} already exists"
+            echo "::notice::Add-on store PR already exists: #${EXISTING}"
+            exit 0
+          fi
+
+          # Fetch current config.yaml content and SHA
+          CONFIG=$(gh api \
+            "repos/${STORE_REPO}/contents/${ADDON_PATH}" \
+            --jq '.content' | base64 -d)
+          SHA=$(gh api \
+            "repos/${STORE_REPO}/contents/${ADDON_PATH}" \
+            --jq '.sha')
+
+          # Update the version field
+          # shellcheck disable=SC2001
+          UPDATED=$(echo "$CONFIG" | \
+            sed "s/^version: .*/version: \"${VERSION}\"/")
+
+          # Get default branch
+          DEFAULT_BRANCH=$(gh api \
+            "repos/${STORE_REPO}" \
+            --jq '.default_branch')
+
+          # Create branch from default branch
+          DEFAULT_SHA=$(gh api \
+            "repos/${STORE_REPO}/git/ref/heads/${DEFAULT_BRANCH}" \
+            --jq '.object.sha')
+          gh api \
+            "repos/${STORE_REPO}/git/refs" \
+            -f "ref=refs/heads/${BRANCH}" \
+            -f "sha=${DEFAULT_SHA}"
+
+          # Push updated config.yaml
+          CONTENT_B64=$(echo "$UPDATED" | base64 -w 0)
+          gh api \
+            "repos/${STORE_REPO}/contents/${ADDON_PATH}" \
+            -X PUT \
+            -f "message=Chore: update rentalsync-bridge to ${VERSION}" \
+            -f "content=${CONTENT_B64}" \
+            -f "sha=${SHA}" \
+            -f "branch=${BRANCH}"
+
+          # Create pull request
+          PR_URL=$(gh pr create \
+            --repo "$STORE_REPO" \
+            --base "$DEFAULT_BRANCH" \
+            --head "$BRANCH" \
+            --title "Chore: update rentalsync-bridge to ${VERSION}" \
+            --body "Update rentalsync-bridge add-on to version ${VERSION}.
+
+          Release: ${RELEASE_URL}")
+
+          echo "::notice::Add-on store PR created: ${PR_URL}"
