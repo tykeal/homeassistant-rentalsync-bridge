@@ -694,7 +694,7 @@ jobs:
             --repo "$STORE_REPO" \
             --head "$BRANCH" \
             --state all \
-            --json number --jq '.[0].number' \
+            --json number --jq '.[0].number // empty' \
             2>/dev/null || true)
           if [[ -n "$EXISTING" ]]; then
             echo "PR #${EXISTING} already exists"
@@ -702,41 +702,45 @@ jobs:
             exit 0
           fi
 
-          # Fetch current config.yaml to a temp file to preserve
-          # exact content (no trailing newline issues)
-          TMPFILE=$(mktemp)
-          trap 'rm -f "$TMPFILE"' EXIT
-          gh api \
-            "repos/${STORE_REPO}/contents/${ADDON_PATH}" \
-            --jq '.content' | base64 -d > "$TMPFILE"
-          SHA=$(gh api \
-            "repos/${STORE_REPO}/contents/${ADDON_PATH}" \
-            --jq '.sha')
-
-          # Update the version field in-place
-          # shellcheck disable=SC2001
-          sed -i "s/^version: .*/version: \"${VERSION}\"/" \
-            "$TMPFILE"
-
           # Get default branch
           DEFAULT_BRANCH=$(gh api \
             "repos/${STORE_REPO}" \
             --jq '.default_branch')
 
-          # Create branch if it does not already exist
+          # Create or reset branch from default branch
           DEFAULT_SHA=$(gh api \
             "repos/${STORE_REPO}/git/ref/heads/${DEFAULT_BRANCH}" \
             --jq '.object.sha')
           if gh api \
             "repos/${STORE_REPO}/git/ref/heads/${BRANCH}" \
             >/dev/null 2>&1; then
-            echo "::notice::Branch ${BRANCH} already exists; reusing"
+            echo "::notice::Branch ${BRANCH} exists; resetting"
+            gh api \
+              "repos/${STORE_REPO}/git/refs/heads/${BRANCH}" \
+              -X PATCH \
+              -f "sha=${DEFAULT_SHA}" \
+              -F "force=true"
           else
             gh api \
               "repos/${STORE_REPO}/git/refs" \
               -f "ref=refs/heads/${BRANCH}" \
               -f "sha=${DEFAULT_SHA}"
           fi
+
+          # Fetch config.yaml from the branch to get correct SHA
+          TMPFILE=$(mktemp)
+          trap 'rm -f "$TMPFILE"' EXIT
+          gh api \
+            "repos/${STORE_REPO}/contents/${ADDON_PATH}?ref=${BRANCH}" \
+            --jq '.content' | base64 -d > "$TMPFILE"
+          SHA=$(gh api \
+            "repos/${STORE_REPO}/contents/${ADDON_PATH}?ref=${BRANCH}" \
+            --jq '.sha')
+
+          # Update the version field in-place
+          # shellcheck disable=SC2001
+          sed -i "s/^version: .*/version: \"${VERSION}\"/" \
+            "$TMPFILE"
 
           # Push updated config.yaml
           CONTENT_B64=$(base64 -w 0 < "$TMPFILE")
