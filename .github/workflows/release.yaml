@@ -300,8 +300,7 @@ jobs:
         shell: bash
         run: |
           # Update config.yaml version from tag
-          TAG="${{ needs.tag-validate.outputs.tag }}"
-          VERSION="${TAG#v}"
+          VERSION="${{ needs.tag-validate.outputs.version }}"
           echo "Setting add-on version to: $VERSION"
           sed -i "s/^version: .*/version: \"$VERSION\"/" \
             rentalsync-bridge/config.yaml
