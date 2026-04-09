@@ -54,6 +54,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       tag: "${{ steps.tag-validate.outputs.tag_name }}"
+      version: "${{ steps.strip-v.outputs.version }}"
     steps:
       # yamllint disable-line rule:line-length
       - uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d  # v2.16.1
@@ -78,6 +79,14 @@ jobs:
           require_github: 'true'
           # yamllint disable-line rule:line-length
           require_signed: 'ssh,gpg-unverifiable'
+
+      - name: 'Strip v prefix for image tags'
+        id: 'strip-v'
+        shell: bash
+        run: |
+          # Strip v prefix for image tags
+          TAG="${{ steps.tag-validate.outputs.tag_name }}"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: 'Ensure draft release exists'
         id: 'ensure-release'
@@ -291,8 +300,7 @@ jobs:
         shell: bash
         run: |
           # Update config.yaml version from tag
-          TAG="${{ needs.tag-validate.outputs.tag }}"
-          VERSION="${TAG#v}"
+          VERSION="${{ needs.tag-validate.outputs.version }}"
           echo "Setting add-on version to: $VERSION"
           sed -i "s/^version: .*/version: \"$VERSION\"/" \
             rentalsync-bridge/config.yaml
@@ -404,9 +412,9 @@ jobs:
           context: 'rentalsync-bridge'
           image: ${{ matrix.image }}
           image-tags: |
-            ${{ needs.tag-validate.outputs.tag }}
+            ${{ needs.tag-validate.outputs.version }}
           push: 'true'
-          version: ${{ needs.tag-validate.outputs.tag }}
+          version: ${{ needs.tag-validate.outputs.version }}
           build-args: |
             BUILD_FROM=${{ steps.base-image.outputs.build_from }}
           cosign: 'true'
@@ -441,7 +449,7 @@ jobs:
           container-registry-password: ${{ secrets.GITHUB_TOKEN }}
           image-name: 'homeassistant-rentalsync-bridge'
           image-tags: |
-            ${{ needs.tag-validate.outputs.tag }}
+            ${{ needs.tag-validate.outputs.version }}
           cosign: 'true'
 
       - name: 'Capture manifest digest'
@@ -451,7 +459,7 @@ jobs:
           # Inspect published manifest for digest
           # yamllint disable-line rule:line-length
           IMAGE="ghcr.io/${{ github.repository_owner }}/homeassistant-rentalsync-bridge"
-          TAG="${{ needs.tag-validate.outputs.tag }}"
+          TAG="${{ needs.tag-validate.outputs.version }}"
           # Use docker manifest inspect (works without buildx
           # builder context). Tolerate failure so fallback runs.
           DIGEST=$( (docker manifest inspect \
@@ -486,7 +494,7 @@ jobs:
         run: |
           # Generate digest file for release asset
           IMAGE="${{ steps.digest.outputs.image }}"
-          TAG="${{ needs.tag-validate.outputs.tag }}"
+          TAG="${{ needs.tag-validate.outputs.version }}"
           DIGEST="${{ steps.digest.outputs.digest }}"
           cat > container-digest.txt <<EOF
           Image: ${IMAGE}:${TAG}
@@ -584,6 +592,7 @@ jobs:
         run: |
           # Append container pull instructions to release
           TAG="${{ needs.tag-validate.outputs.tag }}"
+          VERSION="${{ needs.tag-validate.outputs.version }}"
           IMAGE="${{ needs.container-publish.outputs.image }}"
           DIGEST="${{ needs.container-publish.outputs.digest }}"
 
@@ -601,7 +610,7 @@ jobs:
           ## Container Image
 
           \`\`\`
-          docker pull ${IMAGE}:${TAG}
+          docker pull ${IMAGE}:${VERSION}
           \`\`\`
 
           **Digest:** \`${DIGEST}\`
