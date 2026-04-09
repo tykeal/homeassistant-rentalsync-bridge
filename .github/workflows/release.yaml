@@ -456,7 +456,7 @@ jobs:
           # builder context). Tolerate failure so fallback runs.
           DIGEST=$( (docker manifest inspect \
             "${IMAGE}:${TAG}" -v 2>/dev/null | \
-            jq -r 'if type == "array" then .[0].Descriptor.digest else .Descriptor.digest end') || true)
+            jq -r 'if type == "array" then null else .Descriptor.digest end') || true)
           if [[ -z "${DIGEST}" || "${DIGEST}" == "null" ]]; then
             # Fallback: HEAD request to OCI registry API
             REPO="${{ github.repository_owner }}"
@@ -465,12 +465,12 @@ jobs:
               "https://ghcr.io/token?scope=repository:${REPO}:pull" | \
               jq -r '.token') || true)
             if [[ -n "${TOKEN}" && "${TOKEN}" != "null" ]]; then
-              DIGEST=$(curl -sI \
+              DIGEST=$( (curl -sI \
                 -H "Authorization: Bearer ${TOKEN}" \
                 -H "Accept: application/vnd.oci.image.index.v1+json" \
                 "https://ghcr.io/v2/${REPO}/manifests/${TAG}" | \
                 (grep -i 'docker-content-digest' || true) | \
-                awk '{print $2}' | tr -d '\r')
+                awk '{print $2}' | tr -d '\r') || true)
             fi
           fi
           if [[ -z "${DIGEST}" || "${DIGEST}" == "null" ]]; then
