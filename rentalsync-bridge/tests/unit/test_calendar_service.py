@@ -466,16 +466,16 @@ class TestHasMeaningfulTimes:
         assert CalendarService._has_meaningful_times(ci, co) is True
 
     def test_only_checkin_has_time(self):
-        """Only check-in non-midnight → meaningful times."""
+        """Only check-in non-midnight → fall back to all-day."""
         ci = datetime(2026, 8, 1, 15, 0, 0, tzinfo=UTC)
         co = datetime(2026, 8, 5, 0, 0, 0, tzinfo=UTC)
-        assert CalendarService._has_meaningful_times(ci, co) is True
+        assert CalendarService._has_meaningful_times(ci, co) is False
 
     def test_only_checkout_has_time(self):
-        """Only check-out non-midnight → meaningful times."""
+        """Only check-out non-midnight → fall back to all-day."""
         ci = datetime(2026, 8, 1, 0, 0, 0, tzinfo=UTC)
         co = datetime(2026, 8, 5, 11, 0, 0, tzinfo=UTC)
-        assert CalendarService._has_meaningful_times(ci, co) is True
+        assert CalendarService._has_meaningful_times(ci, co) is False
 
     def test_naive_midnight_returns_false(self):
         """Naive datetimes at midnight → no meaningful times."""

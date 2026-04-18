@@ -7,7 +7,7 @@ These tests validate that generated iCal feeds comply with RFC 5545
 Includes cross-provider structural equivalence checks.
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from icalendar import Calendar
@@ -611,8 +611,8 @@ class TestTimedVsAllDayEvents:
         ical_str = calendar_service.generate_ical(listing, [booking])
         assert "TZID=America/New_York" in ical_str
 
-    def test_timed_if_only_one_has_time(self, calendar_service, listing):
-        """Use timed format when at least one datetime has a real time."""
+    def test_allday_if_only_one_has_time(self, calendar_service, listing):
+        """Fall back to all-day when only one datetime has a real time."""
         booking = Booking(
             id=1,
             listing_id=1,
@@ -623,8 +623,15 @@ class TestTimedVsAllDayEvents:
             status="confirmed",
         )
         ical_str = calendar_service.generate_ical(listing, [booking])
-        assert "DTSTART;TZID=" in ical_str
-        assert "DTEND;TZID=" in ical_str
+        assert "DTSTART;VALUE=DATE:" in ical_str
+        assert "DTEND;VALUE=DATE:" in ical_str
+        # Verify dates are preserved correctly (no timezone shift)
+        cal = Calendar.from_ical(ical_str)
+        events = list(cal.walk("VEVENT"))
+        dtstart = events[0]["dtstart"].dt
+        dtend = events[0]["dtend"].dt
+        assert dtstart == date(2026, 8, 1)
+        assert dtend == date(2026, 8, 5)
 
     def test_dtend_after_dtstart_timed(self, calendar_service, listing):
         """DTEND is after DTSTART for timed events."""

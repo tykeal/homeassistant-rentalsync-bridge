@@ -330,7 +330,12 @@ class CalendarService:
             # Naive datetime - assume it's in the target timezone
             # Explicitly apply timezone before extracting date
             return dt.replace(tzinfo=tz).date()
-        # Already aware - convert to target timezone, then extract date
+        # When time is midnight UTC the PMS meant a pure date;
+        # converting to a western timezone would shift to previous day.
+        midnight = time(0, 0)
+        if dt.astimezone(UTC).time() == midnight:
+            return dt.astimezone(UTC).date()
+        # Non-midnight aware datetime - convert to listing timezone
         return dt.astimezone(tz).date()
 
     def _to_ical_datetime(self, dt: datetime, tz: ZoneInfo) -> datetime:
@@ -366,12 +371,12 @@ class CalendarService:
             check_out: Check-out datetime (may be naive or aware).
 
         Returns:
-            True if at least one datetime has a non-midnight UTC time.
+            True if both datetimes have a non-midnight UTC time.
         """
         midnight = time(0, 0)
         ci = check_in if check_in.tzinfo is None else check_in.astimezone(UTC)
         co = check_out if check_out.tzinfo is None else check_out.astimezone(UTC)
-        return ci.time() != midnight or co.time() != midnight
+        return ci.time() != midnight and co.time() != midnight
 
     def _generate_uid(self, booking: Booking) -> str:
         """Generate unique event ID for booking.
