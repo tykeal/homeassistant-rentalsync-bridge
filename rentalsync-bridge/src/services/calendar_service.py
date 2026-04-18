@@ -366,12 +366,20 @@ class CalendarService:
         will have a midnight UTC time component.  We treat that as
         "no time available" and fall back to all-day events.
 
+        Both datetimes must have non-midnight times to emit timed
+        events.  If only one has a real time (mixed case), we fall
+        back to all-day to avoid timezone-conversion date shifts.
+
+        Naive datetimes are compared using their raw time component
+        (assumed to already represent the intended timezone).
+        Aware datetimes are normalised to UTC before comparison.
+
         Args:
             check_in: Check-in datetime (may be naive or aware).
             check_out: Check-out datetime (may be naive or aware).
 
         Returns:
-            True if both datetimes have a non-midnight UTC time.
+            True if both datetimes have a non-midnight time.
         """
         midnight = time(0, 0)
         ci = check_in if check_in.tzinfo is None else check_in.astimezone(UTC)
