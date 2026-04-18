@@ -516,9 +516,10 @@ class TestToIcalDatetime:
         assert result.hour == 8
 
     def test_naive_datetime_gets_tz(self, service):
-        """Naive datetime is assigned listing timezone."""
+        """Naive datetime is assumed UTC and converted to listing tz."""
         dt = datetime(2026, 8, 1, 15, 0, 0)
         tz = ZoneInfo("America/New_York")
         result = service._to_ical_datetime(dt, tz)
-        assert result.hour == 15
+        # 15:00 UTC → 11:00 AM EDT (UTC-4 in summer)
+        assert result.hour == 11
         assert result.tzinfo is not None
