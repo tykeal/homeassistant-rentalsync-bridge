@@ -5,7 +5,7 @@
 import hashlib
 import logging
 from collections.abc import Sequence
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -208,6 +208,9 @@ class CalendarService:
     ) -> Event:
         """Create iCal event for a booking.
 
+        Uses DATE-TIME format when check-in/check-out times are available,
+        falling back to all-day DATE format when only dates are known.
+
         Args:
             booking: Booking data for the event.
             tz: Timezone for date handling.
@@ -226,9 +229,13 @@ class CalendarService:
         summary = booking.event_title
         event.add("summary", self._truncate_summary(summary))
 
-        # All-day event dates (extract date in listing's timezone)
-        dtstart = self._to_ical_date(booking.check_in_date, tz)
-        dtend = self._to_ical_date(booking.check_out_date, tz)
+        # Use timed events when check-in/check-out times are known
+        if self._has_meaningful_times(booking.check_in_date, booking.check_out_date):
+            dtstart: date | datetime = self._to_ical_datetime(booking.check_in_date, tz)
+            dtend: date | datetime = self._to_ical_datetime(booking.check_out_date, tz)
+        else:
+            dtstart = self._to_ical_date(booking.check_in_date, tz)
+            dtend = self._to_ical_date(booking.check_out_date, tz)
 
         event.add("dtstart", dtstart)
         event.add("dtend", dtend)
@@ -325,6 +332,46 @@ class CalendarService:
             return dt.replace(tzinfo=tz).date()
         # Already aware - convert to target timezone, then extract date
         return dt.astimezone(tz).date()
+
+    def _to_ical_datetime(self, dt: datetime, tz: ZoneInfo) -> datetime:
+        """Convert datetime to listing timezone for timed iCal events.
+
+        Returns a timezone-aware datetime which produces
+        DTSTART;TZID=America/New_York:YYYYMMDDTHHMMSS format.
+
+        Args:
+            dt: Input datetime (may be naive or aware).
+            tz: Target timezone for the listing.
+
+        Returns:
+            Timezone-aware datetime in the listing's timezone.
+        """
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=tz)
+        return dt.astimezone(tz)
+
+    @staticmethod
+    def _has_meaningful_times(
+        check_in: datetime,
+        check_out: datetime,
+    ) -> bool:
+        """Determine if check-in/check-out carry real time information.
+
+        When a PMS provides only dates (no times), the stored datetimes
+        will have a midnight UTC time component.  We treat that as
+        "no time available" and fall back to all-day events.
+
+        Args:
+            check_in: Check-in datetime (may be naive or aware).
+            check_out: Check-out datetime (may be naive or aware).
+
+        Returns:
+            True if at least one datetime has a non-midnight UTC time.
+        """
+        midnight = time(0, 0)
+        ci = check_in if check_in.tzinfo is None else check_in.astimezone(UTC)
+        co = check_out if check_out.tzinfo is None else check_out.astimezone(UTC)
+        return ci.time() != midnight or co.time() != midnight
 
     def _generate_uid(self, booking: Booking) -> str:
         """Generate unique event ID for booking.
