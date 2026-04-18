@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for calendar service."""
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -490,6 +490,46 @@ class TestHasMeaningfulTimes:
         assert CalendarService._has_meaningful_times(ci, co) is True
 
 
+class TestToIcalDate:
+    """Tests for _to_ical_date naive datetime handling."""
+
+    @pytest.fixture
+    def service(self):
+        """Create calendar service."""
+        return CalendarService(cache=CalendarCache())
+
+    def test_naive_midnight_utc_preserves_date(self, service):
+        """Naive midnight-UTC datetime preserves the UTC date.
+
+        Midnight UTC means the PMS provided a pure date; converting to
+        a western timezone would incorrectly shift to the previous day.
+        """
+        dt = datetime(2026, 8, 1, 0, 0, 0)  # naive midnight
+        tz = ZoneInfo("America/Los_Angeles")
+        result = service._to_ical_date(dt, tz)
+        assert result == date(2026, 8, 1)
+
+    def test_naive_non_midnight_converts_via_utc(self, service):
+        """Naive non-midnight datetime is treated as UTC then converted.
+
+        15:00 UTC → 11:00 AM EDT, same date in Eastern.
+        """
+        dt = datetime(2026, 8, 1, 15, 0, 0)  # naive 15:00
+        tz = ZoneInfo("America/New_York")
+        result = service._to_ical_date(dt, tz)
+        assert result == date(2026, 8, 1)
+
+    def test_naive_late_utc_may_shift_date_forward(self, service):
+        """Naive late-UTC datetime can shift date forward in eastern tz.
+
+        23:00 UTC on Aug 1 → Aug 2 05:00 in Asia/Tokyo (+9).
+        """
+        dt = datetime(2026, 8, 1, 23, 0, 0)  # naive 23:00
+        tz = ZoneInfo("Asia/Tokyo")
+        result = service._to_ical_date(dt, tz)
+        assert result == date(2026, 8, 2)
+
+
 class TestToIcalDatetime:
     """Tests for _to_ical_datetime timezone conversion."""
 
@@ -516,9 +556,10 @@ class TestToIcalDatetime:
         assert result.hour == 8
 
     def test_naive_datetime_gets_tz(self, service):
-        """Naive datetime is assigned listing timezone."""
+        """Naive datetime is assumed UTC and converted to listing tz."""
         dt = datetime(2026, 8, 1, 15, 0, 0)
         tz = ZoneInfo("America/New_York")
         result = service._to_ical_datetime(dt, tz)
-        assert result.hour == 15
+        # 15:00 UTC → 11:00 AM EDT (UTC-4 in summer)
+        assert result.hour == 11
         assert result.tzinfo is not None

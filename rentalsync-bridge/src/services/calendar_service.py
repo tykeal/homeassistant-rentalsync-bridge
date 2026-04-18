@@ -327,9 +327,8 @@ class CalendarService:
             Date object for the event day.
         """
         if dt.tzinfo is None:
-            # Naive datetime - assume it's in the target timezone
-            # Explicitly apply timezone before extracting date
-            return dt.replace(tzinfo=tz).date()
+            # Naive datetime - assume UTC (SQLite strips timezone)
+            dt = dt.replace(tzinfo=UTC)
         # When time is midnight UTC the PMS meant a pure date;
         # converting to a western timezone would shift to previous day.
         midnight = time(0, 0)
@@ -344,6 +343,9 @@ class CalendarService:
         Returns a timezone-aware datetime which produces
         DTSTART;TZID=America/New_York:YYYYMMDDTHHMMSS format.
 
+        Naive datetimes are assumed to be UTC (as stored by SQLite
+        which strips timezone info from UTC-aware values).
+
         Args:
             dt: Input datetime (may be naive or aware).
             tz: Target timezone for the listing.
@@ -352,7 +354,7 @@ class CalendarService:
             Timezone-aware datetime in the listing's timezone.
         """
         if dt.tzinfo is None:
-            return dt.replace(tzinfo=tz)
+            return dt.replace(tzinfo=UTC).astimezone(tz)
         return dt.astimezone(tz)
 
     @staticmethod
@@ -370,8 +372,7 @@ class CalendarService:
         events.  If only one has a real time (mixed case), we fall
         back to all-day to avoid timezone-conversion date shifts.
 
-        Naive datetimes are compared using their raw time component
-        (assumed to already represent the intended timezone).
+        Naive datetimes are assumed UTC (SQLite strips timezone).
         Aware datetimes are normalised to UTC before comparison.
 
         Args:
@@ -379,11 +380,19 @@ class CalendarService:
             check_out: Check-out datetime (may be naive or aware).
 
         Returns:
-            True if both datetimes have a non-midnight time.
+            True if both datetimes have a non-midnight UTC time.
         """
         midnight = time(0, 0)
-        ci = check_in if check_in.tzinfo is None else check_in.astimezone(UTC)
-        co = check_out if check_out.tzinfo is None else check_out.astimezone(UTC)
+        ci = (
+            check_in.replace(tzinfo=UTC)
+            if check_in.tzinfo is None
+            else check_in.astimezone(UTC)
+        )
+        co = (
+            check_out.replace(tzinfo=UTC)
+            if check_out.tzinfo is None
+            else check_out.astimezone(UTC)
+        )
         return ci.time() != midnight and co.time() != midnight
 
     def _generate_uid(self, booking: Booking) -> str:
