@@ -7,7 +7,7 @@ These tests validate that generated iCal feeds comply with RFC 5545
 Includes cross-provider structural equivalence checks.
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from icalendar import Calendar
@@ -514,14 +514,142 @@ class TestGuestySourcedCompliance:
         uid2 = str(next(iter(cal2.walk("VEVENT")))["uid"])
         assert uid1 == uid2
 
-    def test_guesty_all_day_date_format(
+    def test_guesty_timed_event_format(
         self, calendar_service, guesty_listing, guesty_booking
     ):
-        """Guesty events use VALUE=DATE for all-day format."""
+        """Guesty events use TZID datetime when times are available."""
         ical_str = calendar_service.generate_ical(guesty_listing, [guesty_booking])
-        # All-day events use VALUE=DATE format
+        # Timed events use TZID format, not VALUE=DATE
+        assert "DTSTART;TZID=" in ical_str
+        assert "DTEND;TZID=" in ical_str
+        assert "VALUE=DATE" not in ical_str
+
+    def test_guesty_timed_event_correct_times(
+        self, calendar_service, guesty_listing, guesty_booking
+    ):
+        """Guesty timed events contain correct local times."""
+        ical_str = calendar_service.generate_ical(guesty_listing, [guesty_booking])
+        cal = Calendar.from_ical(ical_str)
+        events = list(cal.walk("VEVENT"))
+        evt = events[0]
+        dtstart = evt["dtstart"].dt
+        dtend = evt["dtend"].dt
+
+        # Check-in 15:00 UTC -> 08:00 PDT (America/Los_Angeles)
+        assert dtstart.hour == 8
+        assert dtstart.minute == 0
+        # Check-out 11:00 UTC -> 04:00 PDT
+        assert dtend.hour == 4
+        assert dtend.minute == 0
+
+
+class TestTimedVsAllDayEvents:
+    """Test timed events vs all-day fallback behaviour."""
+
+    @pytest.fixture
+    def calendar_service(self):
+        """Create calendar service without cache."""
+        from src.services.calendar_service import CalendarCache
+
+        return CalendarService(cache=CalendarCache(ttl_seconds=0))
+
+    @pytest.fixture
+    def listing(self):
+        """Create a listing in US Eastern timezone."""
+        return Listing(
+            id=1,
+            pms_id="PROP001",
+            name="Test Property",
+            ical_url_slug="test-property",
+            enabled=True,
+            sync_enabled=True,
+            timezone="America/New_York",
+        )
+
+    def test_timed_event_when_times_available(self, calendar_service, listing):
+        """Bookings with non-midnight UTC times produce DATE-TIME events."""
+        booking = Booking(
+            id=1,
+            listing_id=1,
+            pms_booking_id="BK001",
+            guest_name="Timed Guest",
+            check_in_date=datetime(2026, 8, 1, 15, 0, 0, tzinfo=UTC),
+            check_out_date=datetime(2026, 8, 5, 11, 0, 0, tzinfo=UTC),
+            status="confirmed",
+        )
+        ical_str = calendar_service.generate_ical(listing, [booking])
+        assert "DTSTART;TZID=" in ical_str
+        assert "DTEND;TZID=" in ical_str
+        assert "VALUE=DATE" not in ical_str
+
+    def test_allday_fallback_when_midnight_utc(self, calendar_service, listing):
+        """Bookings with midnight UTC times fall back to all-day events."""
+        booking = Booking(
+            id=1,
+            listing_id=1,
+            pms_booking_id="BK002",
+            guest_name="Date-Only Guest",
+            check_in_date=datetime(2026, 8, 1, 0, 0, 0, tzinfo=UTC),
+            check_out_date=datetime(2026, 8, 5, 0, 0, 0, tzinfo=UTC),
+            status="confirmed",
+        )
+        ical_str = calendar_service.generate_ical(listing, [booking])
         assert "DTSTART;VALUE=DATE:" in ical_str
         assert "DTEND;VALUE=DATE:" in ical_str
+
+    def test_timed_event_includes_listing_timezone(self, calendar_service, listing):
+        """Timed events reference the listing's IANA timezone."""
+        booking = Booking(
+            id=1,
+            listing_id=1,
+            pms_booking_id="BK003",
+            guest_name="TZ Guest",
+            check_in_date=datetime(2026, 6, 15, 14, 0, 0, tzinfo=UTC),
+            check_out_date=datetime(2026, 6, 18, 11, 0, 0, tzinfo=UTC),
+            status="confirmed",
+        )
+        ical_str = calendar_service.generate_ical(listing, [booking])
+        assert "TZID=America/New_York" in ical_str
+
+    def test_allday_if_only_one_has_time(self, calendar_service, listing):
+        """Fall back to all-day when only one datetime has a real time."""
+        booking = Booking(
+            id=1,
+            listing_id=1,
+            pms_booking_id="BK004",
+            guest_name="Partial Time",
+            check_in_date=datetime(2026, 8, 1, 15, 0, 0, tzinfo=UTC),
+            check_out_date=datetime(2026, 8, 5, 0, 0, 0, tzinfo=UTC),
+            status="confirmed",
+        )
+        ical_str = calendar_service.generate_ical(listing, [booking])
+        assert "DTSTART;VALUE=DATE:" in ical_str
+        assert "DTEND;VALUE=DATE:" in ical_str
+        # Verify dates are preserved correctly (no timezone shift)
+        cal = Calendar.from_ical(ical_str)
+        events = list(cal.walk("VEVENT"))
+        dtstart = events[0]["dtstart"].dt
+        dtend = events[0]["dtend"].dt
+        assert dtstart == date(2026, 8, 1)
+        assert dtend == date(2026, 8, 5)
+
+    def test_dtend_after_dtstart_timed(self, calendar_service, listing):
+        """DTEND is after DTSTART for timed events."""
+        booking = Booking(
+            id=1,
+            listing_id=1,
+            pms_booking_id="BK005",
+            guest_name="Order Guest",
+            check_in_date=datetime(2026, 8, 1, 15, 0, 0, tzinfo=UTC),
+            check_out_date=datetime(2026, 8, 5, 11, 0, 0, tzinfo=UTC),
+            status="confirmed",
+        )
+        ical_str = calendar_service.generate_ical(listing, [booking])
+        cal = Calendar.from_ical(ical_str)
+        events = list(cal.walk("VEVENT"))
+        dtstart = events[0]["dtstart"].dt
+        dtend = events[0]["dtend"].dt
+        assert dtend > dtstart
 
 
 class TestCrossProviderEquivalence:

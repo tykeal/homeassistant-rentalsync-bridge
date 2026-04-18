@@ -448,3 +448,77 @@ class TestListingSpecificCustomFields:
         # Verify listing 2 has its custom field
         assert "Mountain view room" in ical2
         assert "Beach lover" not in ical2
+
+
+class TestHasMeaningfulTimes:
+    """Tests for _has_meaningful_times detection."""
+
+    def test_both_midnight_utc_returns_false(self):
+        """Both midnight UTC → no meaningful times."""
+        ci = datetime(2026, 8, 1, 0, 0, 0, tzinfo=UTC)
+        co = datetime(2026, 8, 5, 0, 0, 0, tzinfo=UTC)
+        assert CalendarService._has_meaningful_times(ci, co) is False
+
+    def test_both_have_times_returns_true(self):
+        """Both non-midnight UTC → meaningful times."""
+        ci = datetime(2026, 8, 1, 15, 0, 0, tzinfo=UTC)
+        co = datetime(2026, 8, 5, 11, 0, 0, tzinfo=UTC)
+        assert CalendarService._has_meaningful_times(ci, co) is True
+
+    def test_only_checkin_has_time(self):
+        """Only check-in non-midnight → fall back to all-day."""
+        ci = datetime(2026, 8, 1, 15, 0, 0, tzinfo=UTC)
+        co = datetime(2026, 8, 5, 0, 0, 0, tzinfo=UTC)
+        assert CalendarService._has_meaningful_times(ci, co) is False
+
+    def test_only_checkout_has_time(self):
+        """Only check-out non-midnight → fall back to all-day."""
+        ci = datetime(2026, 8, 1, 0, 0, 0, tzinfo=UTC)
+        co = datetime(2026, 8, 5, 11, 0, 0, tzinfo=UTC)
+        assert CalendarService._has_meaningful_times(ci, co) is False
+
+    def test_naive_midnight_returns_false(self):
+        """Naive datetimes at midnight → no meaningful times."""
+        ci = datetime(2026, 8, 1, 0, 0, 0)
+        co = datetime(2026, 8, 5, 0, 0, 0)
+        assert CalendarService._has_meaningful_times(ci, co) is False
+
+    def test_naive_with_time_returns_true(self):
+        """Naive datetimes with time → meaningful times."""
+        ci = datetime(2026, 8, 1, 15, 0, 0)
+        co = datetime(2026, 8, 5, 11, 0, 0)
+        assert CalendarService._has_meaningful_times(ci, co) is True
+
+
+class TestToIcalDatetime:
+    """Tests for _to_ical_datetime timezone conversion."""
+
+    @pytest.fixture
+    def service(self):
+        """Create calendar service."""
+        return CalendarService(cache=CalendarCache())
+
+    def test_utc_to_eastern(self, service):
+        """UTC datetime converts to Eastern timezone."""
+        dt = datetime(2026, 8, 1, 15, 0, 0, tzinfo=UTC)
+        tz = ZoneInfo("America/New_York")
+        result = service._to_ical_datetime(dt, tz)
+        # 15:00 UTC = 11:00 EDT
+        assert result.hour == 11
+        assert result.tzinfo is not None
+
+    def test_utc_to_pacific(self, service):
+        """UTC datetime converts to Pacific timezone."""
+        dt = datetime(2026, 8, 1, 15, 0, 0, tzinfo=UTC)
+        tz = ZoneInfo("America/Los_Angeles")
+        result = service._to_ical_datetime(dt, tz)
+        # 15:00 UTC = 08:00 PDT
+        assert result.hour == 8
+
+    def test_naive_datetime_gets_tz(self, service):
+        """Naive datetime is assigned listing timezone."""
+        dt = datetime(2026, 8, 1, 15, 0, 0)
+        tz = ZoneInfo("America/New_York")
+        result = service._to_ical_datetime(dt, tz)
+        assert result.hour == 15
+        assert result.tzinfo is not None
