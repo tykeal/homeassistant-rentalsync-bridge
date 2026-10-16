@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for sync scheduler."""
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -67,40 +68,48 @@ class TestSyncScheduler:
         assert "purge_old_bookings" in job_ids
 
     @pytest.mark.asyncio
-    async def test_start_triggers_initial_sync(self, mock_session_factory):
-        """Test starting the scheduler runs an immediate sync."""
+    async def test_start_schedules_immediate_sync(self, mock_session_factory):
+        """Test the sync job is scheduled to run immediately on startup."""
         scheduler = SyncScheduler(mock_session_factory)
 
+        before = datetime.now(UTC)
         with (
-            patch.object(scheduler._scheduler, "add_job"),
+            patch.object(scheduler._scheduler, "add_job") as mock_add_job,
             patch.object(scheduler._scheduler, "start"),
-            patch.object(scheduler, "_sync_all_listings", new=AsyncMock()) as mock_sync,
         ):
             await scheduler.start()
-            assert scheduler._initial_sync_task is not None
-            await scheduler._initial_sync_task
+        after = datetime.now(UTC)
 
-        mock_sync.assert_awaited_once()
+        sync_calls = [
+            call
+            for call in mock_add_job.call_args_list
+            if call.kwargs.get("id") == "sync_all_listings"
+        ]
+        assert len(sync_calls) == 1
+        next_run_time = sync_calls[0].kwargs["next_run_time"]
+        assert before <= next_run_time <= after
+        # The immediate run reuses the interval job, so max_instances=1
+        # prevents it from overlapping a scheduled run.
+        assert sync_calls[0].kwargs["max_instances"] == 1
 
     @pytest.mark.asyncio
-    async def test_initial_sync_failure_does_not_propagate(self, mock_session_factory):
-        """Test a failing initial sync does not break startup."""
+    async def test_startup_sync_failure_does_not_propagate(self, mock_session_factory):
+        """Test a failing startup sync does not break startup."""
         scheduler = SyncScheduler(mock_session_factory)
 
         with (
             patch.object(scheduler._scheduler, "add_job"),
             patch.object(scheduler._scheduler, "start"),
-            patch.object(
-                scheduler,
-                "_sync_all_listings",
-                new=AsyncMock(side_effect=RuntimeError("PMS unreachable")),
-            ),
         ):
             await scheduler.start()
-            assert scheduler.is_running is True
-            assert scheduler._initial_sync_task is not None
-            # Must not raise
-            await scheduler._initial_sync_task
+
+        assert scheduler.is_running is True
+
+        session = mock_session_factory.return_value.__aenter__.return_value
+        session.execute = AsyncMock(side_effect=RuntimeError("PMS unreachable"))
+
+        # The job callable must swallow its own errors
+        await scheduler._sync_all_listings()
 
     @pytest.mark.asyncio
     async def test_start_already_running(self, mock_session_factory):

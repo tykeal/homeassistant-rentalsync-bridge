@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Background task scheduler for periodic sync operations."""
 
-import asyncio
 import logging
+from datetime import UTC, datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -53,7 +53,6 @@ class SyncScheduler:
         self._scheduler = AsyncIOScheduler()
         self._running = False
         self._current_interval_minutes = DEFAULT_SYNC_INTERVAL_MINUTES
-        self._initial_sync_task: asyncio.Task[None] | None = None
 
     async def _get_sync_interval(self) -> int:
         """Get sync interval from database.
@@ -80,12 +79,19 @@ class SyncScheduler:
         self._current_interval_minutes = await self._get_sync_interval()
         interval_seconds = self._current_interval_minutes * 60
 
+        # ``next_run_time`` makes the interval job fire immediately so a fresh
+        # install or a restart does not wait a full interval for current
+        # reservations.  Routing the startup run through the same job keeps
+        # ``max_instances=1`` protection, so it can never overlap an interval
+        # run.  ``_sync_all_listings`` swallows its own exceptions, so an
+        # unreachable PMS cannot break startup.
         self._scheduler.add_job(
             self._sync_all_listings,
             trigger=IntervalTrigger(seconds=interval_seconds),
             id="sync_all_listings",
             replace_existing=True,
             max_instances=1,  # Prevent overlapping syncs
+            next_run_time=datetime.now(UTC),
         )
 
         # Add daily purge job at 02:00 UTC
@@ -105,21 +111,6 @@ class SyncScheduler:
         )
         logger.info("Data purge scheduled daily at 02:00 UTC")
 
-        # Populate the calendar immediately so a fresh install or a restart
-        # does not have to wait a full interval for current reservations.
-        self._initial_sync_task = asyncio.create_task(self._run_initial_sync())
-
-    async def _run_initial_sync(self) -> None:
-        """Run a sync immediately after startup.
-
-        Failures are logged and swallowed so an unreachable PMS never
-        prevents the application from starting.
-        """
-        try:
-            await self._sync_all_listings()
-        except Exception:
-            logger.exception("Error during initial sync")
-
     def stop(self) -> None:
         """Stop the scheduler."""
         if not self._running:
@@ -127,9 +118,6 @@ class SyncScheduler:
 
         self._scheduler.shutdown(wait=False)
         self._running = False
-        if self._initial_sync_task is not None and not self._initial_sync_task.done():
-            self._initial_sync_task.cancel()
-        self._initial_sync_task = None
         logger.info("Sync scheduler stopped")
 
     @property
