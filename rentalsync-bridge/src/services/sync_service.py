@@ -184,6 +184,21 @@ class SyncService:
                 )
                 continue
 
+            if booking_data["status"] == "cancelled":
+                # Cancellations are deliberately requested from the provider so
+                # active bookings can be retired, but they must never be
+                # re-upserted: that would bump updated_at and stop
+                # purge_cancelled_bookings from ever ageing them out, and would
+                # resurrect rows the purge already deleted.  The booking IDs are
+                # intentionally left out of seen_booking_ids - rows retired here
+                # are skipped by the prune loop's cancelled check anyway.
+                counts["cancelled"] += await self._apply_cancellation(
+                    listing,
+                    reservation.pms_booking_id,
+                    booking_data,
+                )
+                continue
+
             inserted, updated, new_ids = await self._create_bookings_for_reservation(
                 listing,
                 reservation.pms_booking_id,
@@ -255,6 +270,49 @@ class SyncService:
         )
 
         return counts
+
+    async def _apply_cancellation(
+        self,
+        listing: Listing,
+        pms_booking_id: str,
+        booking_data: dict,
+    ) -> int:
+        """Apply a provider cancellation to stored bookings.
+
+        A cancelled reservation is never inserted and an already cancelled
+        row is never touched, so ``updated_at`` stays pinned at the moment
+        of cancellation and acts as the cancellation age used by
+        ``BookingRepository.purge_cancelled_bookings``.
+
+        Args:
+            listing: The listing being synced.
+            pms_booking_id: The PMS reservation ID.
+            booking_data: Extracted booking data.
+
+        Returns:
+            Number of bookings transitioned to cancelled.
+        """
+        room_ids = booking_data.get("room_ids", [])
+        booking_ids = [f"{pms_booking_id}::{room_id}" for room_id in room_ids] or [
+            str(pms_booking_id)
+        ]
+
+        cancelled = 0
+        for booking_id in booking_ids:
+            existing = await self._booking_repo.get_by_pms_id(listing.id, booking_id)
+            if existing is None:
+                logger.debug(
+                    "Skipping unknown cancelled reservation %s for listing %s",
+                    booking_id,
+                    listing.pms_id,
+                )
+                continue
+            if existing.status == "cancelled":
+                continue
+            await self._booking_repo.mark_cancelled(existing)
+            cancelled += 1
+
+        return cancelled
 
     async def _create_bookings_for_reservation(
         self,

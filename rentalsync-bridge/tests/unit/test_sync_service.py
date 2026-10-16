@@ -371,6 +371,121 @@ class TestSyncService:
         assert booking.status == "cancelled"
 
     @pytest.mark.asyncio
+    async def test_sync_does_not_insert_unknown_cancellation(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test cancellations with no stored booking are never inserted."""
+        sync_session.add(test_listing)
+        await sync_session.commit()
+        await sync_session.refresh(test_listing)
+
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_PURGED_CANCEL",
+                    status="cancelled",
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        result = await service.sync_listing(test_listing, mock_provider)
+
+        assert result["inserted"] == 0
+        assert result["cancelled"] == 0
+        stored = await sync_session.execute(
+            select(Booking).where(Booking.pms_booking_id == "RES_PURGED_CANCEL")
+        )
+        assert stored.scalar_one_or_none() is None
+
+    @pytest.mark.asyncio
+    async def test_sync_does_not_retouch_cancelled_booking(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test repeated cancellations keep updated_at pinned."""
+        sync_session.add(test_listing)
+        await sync_session.commit()
+        await sync_session.refresh(test_listing)
+
+        booking = Booking(
+            listing_id=test_listing.id,
+            pms_booking_id="RES_STALE_CANCEL",
+            guest_name="Cancelled Guest",
+            check_in_date=_test_date(-5),
+            check_out_date=_test_date(-2),
+            status="cancelled",
+        )
+        sync_session.add(booking)
+        await sync_session.commit()
+        await sync_session.refresh(booking)
+        original_updated_at = booking.updated_at
+
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_STALE_CANCEL",
+                    check_in=_test_date(-5),
+                    check_out=_test_date(-2),
+                    status="cancelled",
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        for _ in range(2):
+            result = await service.sync_listing(test_listing, mock_provider)
+            assert result == {"inserted": 0, "updated": 0, "cancelled": 0}
+
+        await sync_session.refresh(booking)
+        assert booking.status == "cancelled"
+        assert booking.updated_at == original_updated_at
+
+    @pytest.mark.asyncio
+    async def test_sync_cancels_active_booking_only_once(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test an active booking is transitioned to cancelled exactly once."""
+        sync_session.add(test_listing)
+        await sync_session.commit()
+        await sync_session.refresh(test_listing)
+
+        booking = Booking(
+            listing_id=test_listing.id,
+            pms_booking_id="RES_ACTIVE_CANCEL",
+            guest_name="Active Guest",
+            check_in_date=_test_date(3),
+            check_out_date=_test_date(6),
+            status="confirmed",
+        )
+        sync_session.add(booking)
+        await sync_session.commit()
+
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_ACTIVE_CANCEL",
+                    check_in=_test_date(3),
+                    check_out=_test_date(6),
+                    status="cancelled",
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        first = await service.sync_listing(test_listing, mock_provider)
+        assert first["cancelled"] == 1
+
+        await sync_session.refresh(booking)
+        cancelled_at = booking.updated_at
+
+        second = await service.sync_listing(test_listing, mock_provider)
+        assert second["cancelled"] == 0
+
+        await sync_session.refresh(booking)
+        assert booking.status == "cancelled"
+        assert booking.updated_at == cancelled_at
+
+    @pytest.mark.asyncio
     async def test_sync_skips_reservations_beyond_retention(
         self, sync_session, test_listing, mock_provider
     ):
