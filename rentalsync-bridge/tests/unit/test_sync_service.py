@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from src.database import Base
-from src.models.booking import Booking
+from src.models.booking import OLD_BOOKING_RETENTION_DAYS, Booking
 from src.models.listing import Listing
 from src.providers.base import (
     PMSGuest,
@@ -84,6 +84,21 @@ def mock_provider():
     return provider
 
 
+def _test_date(day_offset: int) -> datetime:
+    """Build a test datetime relative to now.
+
+    Fixture dates must stay inside the sync retention window, so they are
+    anchored to the current time instead of hard-coded calendar dates.
+
+    Args:
+        day_offset: Days from now.
+
+    Returns:
+        Timezone-aware datetime in UTC.
+    """
+    return datetime.now(UTC).replace(microsecond=0) + timedelta(days=day_offset)
+
+
 def _make_reservation(
     pms_booking_id: str = "RES001",
     listing_pms_id: str = "PROP123",
@@ -101,8 +116,8 @@ def _make_reservation(
         listing_pms_id=listing_pms_id,
         guest_name=guest_name,
         guest_id=guest_id,
-        check_in=check_in or datetime(2026, 3, 1, tzinfo=UTC),
-        check_out=check_out or datetime(2026, 3, 5, tzinfo=UTC),
+        check_in=check_in or _test_date(61),
+        check_out=check_out or _test_date(65),
         status=status,
         room_ids=room_ids,
         custom_data=custom_data or {},
@@ -172,8 +187,8 @@ class TestSyncService:
             listing_id=test_listing.id,
             pms_booking_id="RES002",
             guest_name="Old Name",
-            check_in_date=datetime(2026, 3, 1, tzinfo=UTC),
-            check_out_date=datetime(2026, 3, 5, tzinfo=UTC),
+            check_in_date=_test_date(61),
+            check_out_date=_test_date(65),
             status="confirmed",
         )
         sync_session.add(booking)
@@ -208,8 +223,8 @@ class TestSyncService:
             listing_id=test_listing.id,
             pms_booking_id="RES_GONE",
             guest_name="Cancelled Guest",
-            check_in_date=datetime(2026, 3, 1, tzinfo=UTC),
-            check_out_date=datetime(2026, 3, 5, tzinfo=UTC),
+            check_in_date=_test_date(61),
+            check_out_date=_test_date(65),
             status="confirmed",
         )
         sync_session.add(booking)
@@ -354,6 +369,126 @@ class TestSyncService:
 
         await sync_session.refresh(booking)
         assert booking.status == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_sync_skips_reservations_beyond_retention(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test stays checked out before the retention cutoff are not stored."""
+        sync_session.add(test_listing)
+        await sync_session.commit()
+        await sync_session.refresh(test_listing)
+
+        now = datetime.now(UTC)
+        old_check_out = now - timedelta(days=OLD_BOOKING_RETENTION_DAYS + 5)
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_PURGED",
+                    check_in=old_check_out - timedelta(days=3),
+                    check_out=old_check_out,
+                    status="checked_out",
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        result = await service.sync_listing(test_listing, mock_provider)
+
+        assert result["inserted"] == 0
+        stored = await sync_session.execute(
+            select(Booking).where(Booking.pms_booking_id == "RES_PURGED")
+        )
+        assert stored.scalar_one_or_none() is None
+        # Enrichment must be skipped for discarded reservations
+        mock_provider.get_guest.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_sync_keeps_reservations_inside_retention(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test stays checked out inside the retention cutoff are stored."""
+        sync_session.add(test_listing)
+        await sync_session.commit()
+        await sync_session.refresh(test_listing)
+
+        now = datetime.now(UTC)
+        recent_check_out = now - timedelta(days=OLD_BOOKING_RETENTION_DAYS - 5)
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_RECENT",
+                    check_in=recent_check_out - timedelta(days=3),
+                    check_out=recent_check_out,
+                    status="checked_out",
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        result = await service.sync_listing(test_listing, mock_provider)
+
+        assert result["inserted"] == 1
+        stored = await sync_session.execute(
+            select(Booking).where(Booking.pms_booking_id == "RES_RECENT")
+        )
+        assert stored.scalar_one() is not None
+
+    @pytest.mark.asyncio
+    async def test_sync_keeps_long_in_progress_stay(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test a long stay started before the cutoff is still synced."""
+        sync_session.add(test_listing)
+        await sync_session.commit()
+        await sync_session.refresh(test_listing)
+
+        now = datetime.now(UTC)
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_LONG_STAY",
+                    check_in=now - timedelta(days=200),
+                    check_out=now + timedelta(days=5),
+                    status="checked_in",
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        result = await service.sync_listing(test_listing, mock_provider)
+
+        assert result["inserted"] == 1
+
+    @pytest.mark.asyncio
+    async def test_sync_leaves_purgeable_booking_untouched(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test stored bookings past retention are not marked cancelled."""
+        sync_session.add(test_listing)
+        await sync_session.commit()
+        await sync_session.refresh(test_listing)
+
+        now = datetime.now(UTC)
+        booking = Booking(
+            listing_id=test_listing.id,
+            pms_booking_id="RES_ANCIENT",
+            guest_name="Ancient Guest",
+            check_in_date=now - timedelta(days=OLD_BOOKING_RETENTION_DAYS + 10),
+            check_out_date=now - timedelta(days=OLD_BOOKING_RETENTION_DAYS + 5),
+            status="checked_out",
+        )
+        sync_session.add(booking)
+        await sync_session.commit()
+
+        mock_provider.get_reservations = AsyncMock(return_value=[])
+
+        service = SyncService(sync_session)
+        result = await service.sync_listing(test_listing, mock_provider)
+
+        assert result["cancelled"] == 0
+        await sync_session.refresh(booking)
+        assert booking.status == "checked_out"
 
     @pytest.mark.asyncio
     async def test_sync_invalidates_cache(
@@ -509,8 +644,8 @@ class TestListingIsolation:
             listing_id=listing2.id,
             pms_booking_id="RES_B001",
             guest_name="Guest B",
-            check_in_date=datetime(2026, 4, 1, tzinfo=UTC),
-            check_out_date=datetime(2026, 4, 5, tzinfo=UTC),
+            check_in_date=_test_date(91),
+            check_out_date=_test_date(95),
             status="confirmed",
         )
         sync_session.add(booking2)
@@ -554,16 +689,16 @@ class TestListingIsolation:
             listing_id=listing1.id,
             pms_booking_id="RES_X001",
             guest_name="Guest X",
-            check_in_date=datetime(2026, 5, 1, tzinfo=UTC),
-            check_out_date=datetime(2026, 5, 5, tzinfo=UTC),
+            check_in_date=_test_date(121),
+            check_out_date=_test_date(125),
             status="confirmed",
         )
         booking2 = Booking(
             listing_id=listing2.id,
             pms_booking_id="RES_Y001",
             guest_name="Guest Y",
-            check_in_date=datetime(2026, 5, 10, tzinfo=UTC),
-            check_out_date=datetime(2026, 5, 15, tzinfo=UTC),
+            check_in_date=_test_date(130),
+            check_out_date=_test_date(135),
             status="confirmed",
         )
         sync_session.add_all([booking1, booking2])
@@ -704,8 +839,8 @@ class TestBookingChangeDetection:
             listing_id=listing.id,
             pms_booking_id="EXISTING_001",
             guest_name="Existing Guest",
-            check_in_date=datetime(2026, 1, 1, tzinfo=UTC),
-            check_out_date=datetime(2026, 1, 5, tzinfo=UTC),
+            check_in_date=_test_date(1),
+            check_out_date=_test_date(5),
             status="confirmed",
         )
         sync_session.add(existing_booking)
@@ -716,8 +851,8 @@ class TestBookingChangeDetection:
                 _make_reservation(
                     pms_booking_id="NEW_001",
                     guest_name="New Guest",
-                    check_in=datetime(2026, 2, 1, tzinfo=UTC),
-                    check_out=datetime(2026, 2, 5, tzinfo=UTC),
+                    check_in=_test_date(31),
+                    check_out=_test_date(35),
                 ),
             ]
         )
@@ -751,8 +886,8 @@ class TestInvalidDateHandling:
                 _make_reservation(
                     pms_booking_id="VALID_001",
                     guest_name="Valid Guest",
-                    check_in=datetime(2026, 2, 1, tzinfo=UTC),
-                    check_out=datetime(2026, 2, 5, tzinfo=UTC),
+                    check_in=_test_date(31),
+                    check_out=_test_date(35),
                 ),
             ]
         )
@@ -956,8 +1091,8 @@ class TestRoomAssociation:
             room_id=room1.id,
             pms_booking_id="RES_ROOM_CHANGE::ROOM_A",
             guest_name="Moving Guest",
-            check_in_date=datetime(2026, 3, 1, tzinfo=UTC),
-            check_out_date=datetime(2026, 3, 5, tzinfo=UTC),
+            check_in_date=_test_date(61),
+            check_out_date=_test_date(65),
             status="confirmed",
         )
         sync_session.add(existing_booking)
@@ -1083,8 +1218,8 @@ class TestRoomAssociation:
                 _make_reservation(
                     pms_booking_id="RES_MULTI_ROOM",
                     guest_name="Multi Room Guest",
-                    check_in=datetime(2026, 4, 1, tzinfo=UTC),
-                    check_out=datetime(2026, 4, 5, tzinfo=UTC),
+                    check_in=_test_date(91),
+                    check_out=_test_date(95),
                     room_ids=("100-0", "100-1"),
                 ),
             ]
@@ -1154,8 +1289,8 @@ class TestRoomAssociation:
                 _make_reservation(
                     pms_booking_id="RES_TRANSITION",
                     guest_name="Test Guest",
-                    check_in=datetime(2026, 5, 1, tzinfo=UTC),
-                    check_out=datetime(2026, 5, 5, tzinfo=UTC),
+                    check_in=_test_date(121),
+                    check_out=_test_date(125),
                     room_ids=("200-0",),
                 ),
             ]
@@ -1172,8 +1307,8 @@ class TestRoomAssociation:
                 _make_reservation(
                     pms_booking_id="RES_TRANSITION",
                     guest_name="Test Guest",
-                    check_in=datetime(2026, 5, 1, tzinfo=UTC),
-                    check_out=datetime(2026, 5, 5, tzinfo=UTC),
+                    check_in=_test_date(121),
+                    check_out=_test_date(125),
                     room_ids=("200-0", "200-1"),
                 ),
             ]
@@ -1324,15 +1459,15 @@ class TestGuestResolution:
                     pms_booking_id="RES_A",
                     guest_name=None,
                     guest_id="G100",
-                    check_in=datetime(2026, 3, 1, tzinfo=UTC),
-                    check_out=datetime(2026, 3, 5, tzinfo=UTC),
+                    check_in=_test_date(61),
+                    check_out=_test_date(65),
                 ),
                 _make_reservation(
                     pms_booking_id="RES_B",
                     guest_name=None,
                     guest_id="G100",  # Same guest
-                    check_in=datetime(2026, 4, 1, tzinfo=UTC),
-                    check_out=datetime(2026, 4, 5, tzinfo=UTC),
+                    check_in=_test_date(91),
+                    check_out=_test_date(95),
                 ),
             ]
         )

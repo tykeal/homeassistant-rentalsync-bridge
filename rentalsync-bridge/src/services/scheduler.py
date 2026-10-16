@@ -11,6 +11,10 @@ from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from src.models.booking import (
+    CANCELLED_BOOKING_RETENTION_DAYS,
+    OLD_BOOKING_RETENTION_DAYS,
+)
 from src.models.listing import Listing
 from src.models.oauth_credential import OAuthCredential
 from src.models.system_settings import DEFAULT_SYNC_INTERVAL_MINUTES, SystemSettings
@@ -19,10 +23,6 @@ from src.providers.factory import create_provider_for_credential
 from src.repositories.booking_repository import BookingRepository
 from src.services.calendar_service import CalendarCache
 from src.services.sync_service import SyncService
-
-# Data retention settings
-OLD_BOOKING_RETENTION_DAYS = 90
-CANCELLED_BOOKING_RETENTION_DAYS = 30
 
 # Sync interval limits
 MIN_SYNC_INTERVAL_MINUTES = 1

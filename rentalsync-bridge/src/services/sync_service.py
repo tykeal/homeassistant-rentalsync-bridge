@@ -4,13 +4,13 @@
 
 import logging
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.database import get_session_factory
-from src.models.booking import Booking
+from src.models.booking import OLD_BOOKING_RETENTION_DAYS, Booking
 from src.models.listing import Listing
 from src.providers.base import (
     PMSGuest,
@@ -88,6 +88,13 @@ class SyncService:
 
         try:
             reservations = await provider.get_reservations(listing.pms_id)
+
+            # Drop stays that checked out before the retention cutoff: the
+            # fetch window is deliberately wide so in-progress stays are
+            # always returned, but persisting long-finished stays would
+            # resurrect bookings the retention purge already deleted.
+            # Filtering here also avoids needless enrichment API calls.
+            reservations = self._filter_to_retention_window(reservations)
 
             # Resolve guest names for reservations that lack them
             reservations = await self._resolve_guest_names(provider, reservations)
@@ -192,6 +199,11 @@ class SyncService:
         existing_bookings = await self._booking_repo.get_for_listing(listing.id)
         for existing_booking in existing_bookings:
             if existing_booking.status == "cancelled":
+                continue
+
+            if self._is_beyond_retention(existing_booking):
+                # Deliberately filtered out of the fetch above - the daily
+                # purge owns these rows, so do not flag them as cancelled.
                 continue
 
             booking_id = existing_booking.pms_booking_id
@@ -374,6 +386,79 @@ class SyncService:
             The base reservation ID.
         """
         return booking_id.rsplit("::", 1)[0]
+
+    @staticmethod
+    def _retention_cutoff(now: datetime | None = None) -> datetime:
+        """Get the checkout cutoff below which bookings are not retained.
+
+        Mirrors ``BookingRepository.purge_old_bookings`` so synced data can
+        never outlive the retention policy.
+
+        Args:
+            now: Optional reference time (defaults to now in UTC).
+
+        Returns:
+            Cutoff datetime in UTC.
+        """
+        reference = now or datetime.now(UTC)
+        return reference - timedelta(days=OLD_BOOKING_RETENTION_DAYS)
+
+    @classmethod
+    def _filter_to_retention_window(
+        cls,
+        reservations: list[PMSReservation],
+        now: datetime | None = None,
+    ) -> list[PMSReservation]:
+        """Drop reservations that checked out before the retention cutoff.
+
+        Args:
+            reservations: Reservations returned by the provider.
+            now: Optional reference time (defaults to now in UTC).
+
+        Returns:
+            Reservations whose checkout is within the retention window.
+        """
+        cutoff = cls._retention_cutoff(now)
+        retained = []
+        skipped = 0
+        for reservation in reservations:
+            check_out = reservation.check_out
+            if check_out is not None and check_out.tzinfo is None:
+                check_out = check_out.replace(tzinfo=UTC)
+            if check_out is not None and check_out < cutoff:
+                skipped += 1
+                continue
+            retained.append(reservation)
+
+        if skipped:
+            logger.debug(
+                "Skipped %d reservation(s) checked out before the %d day "
+                "retention cutoff",
+                skipped,
+                OLD_BOOKING_RETENTION_DAYS,
+            )
+        return retained
+
+    @classmethod
+    def _is_beyond_retention(
+        cls, booking: Booking, now: datetime | None = None
+    ) -> bool:
+        """Check whether a stored booking is past the retention cutoff.
+
+        ``check_out_date`` comes back from SQLite as a naive datetime holding
+        a UTC value, so naive values are treated as UTC.
+
+        Args:
+            booking: Stored booking to inspect.
+            now: Optional reference time (defaults to now in UTC).
+
+        Returns:
+            True if the stay checked out before the retention cutoff.
+        """
+        check_out = booking.check_out_date
+        if check_out.tzinfo is None:
+            check_out = check_out.replace(tzinfo=UTC)
+        return check_out < cls._retention_cutoff(now)
 
     @staticmethod
     def _is_in_progress(booking: Booking, now: datetime | None = None) -> bool:

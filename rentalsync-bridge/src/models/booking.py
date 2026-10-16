@@ -28,6 +28,14 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+# Data retention settings.  Shared by the purge scheduler and the sync
+# pipeline so the purge cutoff and the sync cutoff can never drift apart:
+# syncing a booking older than the purge cutoff would simply resurrect data
+# the purge just deleted.
+OLD_BOOKING_RETENTION_DAYS = 90
+CANCELLED_BOOKING_RETENTION_DAYS = 30
+
+
 class Booking(Base):
     """Cached booking data from PMS API.
 
