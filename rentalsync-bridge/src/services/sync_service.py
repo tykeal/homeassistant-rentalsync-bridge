@@ -4,13 +4,13 @@
 
 import logging
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.database import get_session_factory
-from src.models.booking import Booking
+from src.models.booking import OLD_BOOKING_RETENTION_DAYS, Booking
 from src.models.listing import Listing
 from src.providers.base import (
     PMSGuest,
@@ -24,11 +24,15 @@ from src.repositories.available_field_repository import (
 )
 from src.repositories.booking_repository import BookingRepository
 from src.repositories.room_repository import RoomRepository
-from src.services.calendar_service import CalendarCache
+from src.services.calendar_service import CalendarCache, CalendarService
 
 logger = logging.getLogger(__name__)
 
 PHONE_LAST_DIGITS = 4
+
+# The all-day vs timed export rules live in CalendarService; reuse them so
+# the prune guard agrees with what the exported calendar actually shows.
+_CALENDAR_RULES = CalendarService()
 
 
 class SyncServiceError(Exception):
@@ -88,6 +92,13 @@ class SyncService:
 
         try:
             reservations = await provider.get_reservations(listing.pms_id)
+
+            # Drop stays that checked out before the retention cutoff: the
+            # fetch window is deliberately wide so in-progress stays are
+            # always returned, but persisting long-finished stays would
+            # resurrect bookings the retention purge already deleted.
+            # Filtering here also avoids needless enrichment API calls.
+            reservations = self._filter_to_retention_window(reservations)
 
             # Resolve guest names for reservations that lack them
             reservations = await self._resolve_guest_names(provider, reservations)
@@ -177,6 +188,21 @@ class SyncService:
                 )
                 continue
 
+            if booking_data["status"] == "cancelled":
+                # Cancellations are deliberately requested from the provider so
+                # active bookings can be retired, but they must never be
+                # re-upserted: that would bump updated_at and stop
+                # purge_cancelled_bookings from ever ageing them out, and would
+                # resurrect rows the purge already deleted.  The booking IDs are
+                # intentionally left out of seen_booking_ids - rows retired here
+                # are skipped by the prune loop's cancelled check anyway.
+                counts["cancelled"] += await self._apply_cancellation(
+                    listing,
+                    reservation.pms_booking_id,
+                    booking_data,
+                )
+                continue
+
             inserted, updated, new_ids = await self._create_bookings_for_reservation(
                 listing,
                 reservation.pms_booking_id,
@@ -194,6 +220,11 @@ class SyncService:
             if existing_booking.status == "cancelled":
                 continue
 
+            if self._is_beyond_retention(existing_booking):
+                # Deliberately filtered out of the fetch above - the daily
+                # purge owns these rows, so do not flag them as cancelled.
+                continue
+
             booking_id = existing_booking.pms_booking_id
             # Extract base reservation ID (before any ::roomID suffix)
             base_reservation_id = self._extract_base_reservation_id(booking_id)
@@ -202,9 +233,25 @@ class SyncService:
             if booking_id in seen_booking_ids:
                 continue
             if base_reservation_id in seen_reservation_ids:
-                # Room config changed - cancel old booking
+                # Room config changed - cancel old booking.
+                # The in-progress guard deliberately does NOT apply here:
+                # the reservation was returned by the PMS and has already
+                # been re-created under its new room ID, so keeping the
+                # stale per-room booking would duplicate the stay.
                 await self._booking_repo.mark_cancelled(existing_booking)
                 counts["cancelled"] += 1
+                continue
+            if self._is_in_progress(existing_booking, listing):
+                # Reservation missing from the fetch but the stay is
+                # currently underway (e.g. a narrow provider window or a
+                # transient API hiccup).  Cancelling it would drop the
+                # guest's in-progress event from the exported calendar.
+                logger.warning(
+                    "Keeping in-progress booking %s for listing %s: "
+                    "absent from provider response",
+                    booking_id,
+                    listing.pms_id,
+                )
                 continue
             # Reservation no longer exists at all
             await self._booking_repo.mark_cancelled(existing_booking)
@@ -227,6 +274,49 @@ class SyncService:
         )
 
         return counts
+
+    async def _apply_cancellation(
+        self,
+        listing: Listing,
+        pms_booking_id: str,
+        booking_data: dict,
+    ) -> int:
+        """Apply a provider cancellation to stored bookings.
+
+        A cancelled reservation is never inserted and an already cancelled
+        row is never touched, so ``updated_at`` stays pinned at the moment
+        of cancellation and acts as the cancellation age used by
+        ``BookingRepository.purge_cancelled_bookings``.
+
+        Args:
+            listing: The listing being synced.
+            pms_booking_id: The PMS reservation ID.
+            booking_data: Extracted booking data.
+
+        Returns:
+            Number of bookings transitioned to cancelled.
+        """
+        room_ids = booking_data.get("room_ids", [])
+        booking_ids = [f"{pms_booking_id}::{room_id}" for room_id in room_ids] or [
+            str(pms_booking_id)
+        ]
+
+        cancelled = 0
+        for booking_id in booking_ids:
+            existing = await self._booking_repo.get_by_pms_id(listing.id, booking_id)
+            if existing is None:
+                logger.debug(
+                    "Skipping unknown cancelled reservation %s for listing %s",
+                    booking_id,
+                    listing.pms_id,
+                )
+                continue
+            if existing.status == "cancelled":
+                continue
+            await self._booking_repo.mark_cancelled(existing)
+            cancelled += 1
+
+        return cancelled
 
     async def _create_bookings_for_reservation(
         self,
@@ -358,6 +448,130 @@ class SyncService:
             The base reservation ID.
         """
         return booking_id.rsplit("::", 1)[0]
+
+    @staticmethod
+    def _retention_cutoff(now: datetime | None = None) -> datetime:
+        """Get the checkout cutoff below which bookings are not retained.
+
+        Mirrors ``BookingRepository.purge_old_bookings`` so synced data can
+        never outlive the retention policy.
+
+        Args:
+            now: Optional reference time (defaults to now in UTC).
+
+        Returns:
+            Cutoff datetime in UTC.
+        """
+        reference = now or datetime.now(UTC)
+        return reference - timedelta(days=OLD_BOOKING_RETENTION_DAYS)
+
+    @classmethod
+    def _filter_to_retention_window(
+        cls,
+        reservations: list[PMSReservation],
+        now: datetime | None = None,
+    ) -> list[PMSReservation]:
+        """Drop reservations that checked out before the retention cutoff.
+
+        Args:
+            reservations: Reservations returned by the provider.
+            now: Optional reference time (defaults to now in UTC).
+
+        Returns:
+            Reservations whose checkout is within the retention window.
+        """
+        cutoff = cls._retention_cutoff(now)
+        retained = []
+        skipped = 0
+        for reservation in reservations:
+            check_out = reservation.check_out
+            if check_out is not None and check_out.tzinfo is None:
+                check_out = check_out.replace(tzinfo=UTC)
+            if check_out is not None and check_out < cutoff:
+                skipped += 1
+                continue
+            retained.append(reservation)
+
+        if skipped:
+            logger.debug(
+                "Skipped %d reservation(s) checked out before the %d day "
+                "retention cutoff",
+                skipped,
+                OLD_BOOKING_RETENTION_DAYS,
+            )
+        return retained
+
+    @classmethod
+    def _is_beyond_retention(
+        cls, booking: Booking, now: datetime | None = None
+    ) -> bool:
+        """Check whether a stored booking is past the retention cutoff.
+
+        ``check_out_date`` comes back from SQLite as a naive datetime holding
+        a UTC value, so naive values are treated as UTC.
+
+        Args:
+            booking: Stored booking to inspect.
+            now: Optional reference time (defaults to now in UTC).
+
+        Returns:
+            True if the stay checked out before the retention cutoff.
+        """
+        check_out = booking.check_out_date
+        if check_out.tzinfo is None:
+            check_out = check_out.replace(tzinfo=UTC)
+        return check_out < cls._retention_cutoff(now)
+
+    @classmethod
+    def _is_in_progress(
+        cls,
+        booking: Booking,
+        listing: Listing | None = None,
+        now: datetime | None = None,
+    ) -> bool:
+        """Check whether a stored booking's stay is currently underway.
+
+        Mirrors how ``CalendarService`` exports the stay so the prune guard
+        and the published calendar can never disagree: all-day stays are
+        compared as local calendar dates in the listing timezone, timed
+        stays are compared as instants.
+
+        ``check_in_date``/``check_out_date`` come back from SQLite as naive
+        datetimes holding UTC values, so naive values are treated as UTC.
+
+        Args:
+            booking: Stored booking to inspect.
+            listing: Listing owning the booking, used for its timezone.
+                Falls back to UTC when not supplied.
+            now: Optional reference time (defaults to now in UTC).
+
+        Returns:
+            True if the stay is underway at the reference time.
+        """
+        reference = now or datetime.now(UTC)
+        if reference.tzinfo is None:
+            reference = reference.replace(tzinfo=UTC)
+
+        check_in = booking.check_in_date
+        check_out = booking.check_out_date
+        calendar = _CALENDAR_RULES
+        tz = calendar._get_timezone(listing.timezone if listing else "UTC")
+
+        if not calendar._has_meaningful_times(check_in, check_out):
+            # All-day stay: the calendar exports plain dates, so compare the
+            # guest's local calendar day rather than the stored instants.
+            today = reference.astimezone(tz).date()
+            return (
+                calendar._to_ical_date(check_in, tz)
+                <= today
+                < calendar._to_ical_date(check_out, tz)
+            )
+
+        if check_in.tzinfo is None:
+            check_in = check_in.replace(tzinfo=UTC)
+        if check_out.tzinfo is None:
+            check_out = check_out.replace(tzinfo=UTC)
+        return check_in <= reference < check_out
 
     @staticmethod
     def _extract_booking_data_from_dto(

@@ -318,7 +318,11 @@ class TestCancelledReservation:
     async def test_explicitly_cancelled_status_persisted(
         self, async_session, async_session_factory
     ):
-        """Test explicitly cancelled reservation persists cancelled status."""
+        """Test explicit cancellation retires an existing booking.
+
+        A cancelled reservation with no stored booking is never inserted,
+        otherwise purged cancellations would be resurrected on every poll.
+        """
         listing = make_listing(
             pms_id="explicit_cancel",
             name="Explicit Cancel Property",
@@ -329,23 +333,26 @@ class TestCancelledReservation:
         await async_session.refresh(listing)
 
         now = datetime.now(UTC)
+
+        def _reservation(status: str) -> PMSReservation:
+            """Build the reservation DTO with the requested status."""
+            return PMSReservation(
+                pms_booking_id="EX_CANCEL",
+                listing_pms_id="explicit_cancel",
+                guest_name="Cancelled Guest",
+                guest_id=None,
+                check_in=now + timedelta(days=10),
+                check_out=now + timedelta(days=13),
+                status=status,
+                room_ids=(),
+                custom_data={},
+            )
+
         mock_provider = AsyncMock()
         mock_provider.provider_type = "guesty"
         mock_provider.has_separate_custom_fields = True
         mock_provider.get_reservations = AsyncMock(
-            return_value=[
-                PMSReservation(
-                    pms_booking_id="EX_CANCEL",
-                    listing_pms_id="explicit_cancel",
-                    guest_name="Cancelled Guest",
-                    guest_id=None,
-                    check_in=now + timedelta(days=10),
-                    check_out=now + timedelta(days=13),
-                    status="cancelled",
-                    room_ids=(),
-                    custom_data={},
-                ),
-            ]
+            return_value=[_reservation("cancelled")]
         )
         mock_provider.get_guest = AsyncMock(return_value=None)
         mock_provider.get_custom_fields = AsyncMock(return_value={})
@@ -356,7 +363,24 @@ class TestCancelledReservation:
             session_factory=async_session_factory,
         )
         counts = await sync.sync_listing(listing, mock_provider)
+        assert counts["inserted"] == 0
+
+        result = await async_session.execute(
+            select(Booking).where(Booking.listing_id == listing.id)
+        )
+        assert result.scalars().first() is None
+
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[_reservation("confirmed")]
+        )
+        counts = await sync.sync_listing(listing, mock_provider)
         assert counts["inserted"] == 1
+
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[_reservation("cancelled")]
+        )
+        counts = await sync.sync_listing(listing, mock_provider)
+        assert counts["cancelled"] == 1
 
         result = await async_session.execute(
             select(Booking).where(Booking.listing_id == listing.id)

@@ -3,6 +3,7 @@
 """Background task scheduler for periodic sync operations."""
 
 import logging
+from datetime import UTC, datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -10,6 +11,10 @@ from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from src.models.booking import (
+    CANCELLED_BOOKING_RETENTION_DAYS,
+    OLD_BOOKING_RETENTION_DAYS,
+)
 from src.models.listing import Listing
 from src.models.oauth_credential import OAuthCredential
 from src.models.system_settings import DEFAULT_SYNC_INTERVAL_MINUTES, SystemSettings
@@ -18,10 +23,6 @@ from src.providers.factory import create_provider_for_credential
 from src.repositories.booking_repository import BookingRepository
 from src.services.calendar_service import CalendarCache
 from src.services.sync_service import SyncService
-
-# Data retention settings
-OLD_BOOKING_RETENTION_DAYS = 90
-CANCELLED_BOOKING_RETENTION_DAYS = 30
 
 # Sync interval limits
 MIN_SYNC_INTERVAL_MINUTES = 1
@@ -78,12 +79,19 @@ class SyncScheduler:
         self._current_interval_minutes = await self._get_sync_interval()
         interval_seconds = self._current_interval_minutes * 60
 
+        # ``next_run_time`` makes the interval job fire immediately so a fresh
+        # install or a restart does not wait a full interval for current
+        # reservations.  Routing the startup run through the same job keeps
+        # ``max_instances=1`` protection, so it can never overlap an interval
+        # run.  ``_sync_all_listings`` swallows its own exceptions, so an
+        # unreachable PMS cannot break startup.
         self._scheduler.add_job(
             self._sync_all_listings,
             trigger=IntervalTrigger(seconds=interval_seconds),
             id="sync_all_listings",
             replace_existing=True,
             max_instances=1,  # Prevent overlapping syncs
+            next_run_time=datetime.now(UTC),
         )
 
         # Add daily purge job at 02:00 UTC

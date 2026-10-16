@@ -36,6 +36,13 @@ MAX_RETRIES = 3
 INITIAL_BACKOFF = 1.0
 MAX_BACKOFF = 30.0
 
+# Guesty's ``checkIn``/``checkOut`` filters bound the respective fields
+# (checkIn >= value, checkOut <= value); there is no overlap filter on the
+# v1 endpoint.  The lower bound must therefore reach far enough back to
+# include stays that began before the current sync but are still in progress.
+DEFAULT_LOOKBACK_DAYS = 365
+DEFAULT_LOOKAHEAD_DAYS = 365
+
 # Guesty statuses that map to our normalised reservation statuses.
 _STATUS_MAP: dict[str, str] = {
     "confirmed": "confirmed",
@@ -296,7 +303,8 @@ class GuestyProvider(PMSProvider):
 
         Args:
             listing_pms_id: Guesty listing ID.
-            start_date: Start filter (default: 24h ago).
+            start_date: Start filter (default: 365 days ago, so that
+                in-progress stays which began before today are returned).
             end_date: End filter (default: 365 days ahead).
 
         Returns:
@@ -306,9 +314,9 @@ class GuestyProvider(PMSProvider):
             PMSProviderError: On API failure.
         """
         if start_date is None:
-            start_date = datetime.now(UTC) - timedelta(hours=24)
+            start_date = datetime.now(UTC) - timedelta(days=DEFAULT_LOOKBACK_DAYS)
         if end_date is None:
-            end_date = datetime.now(UTC) + timedelta(days=365)
+            end_date = datetime.now(UTC) + timedelta(days=DEFAULT_LOOKAHEAD_DAYS)
 
         statuses = "confirmed,checked_in,checked_out,canceled"
         reservations: list[PMSReservation] = []
