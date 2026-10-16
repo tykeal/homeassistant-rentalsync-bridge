@@ -20,6 +20,13 @@ MAX_RETRIES = 3
 BASE_DELAY_SECONDS = 1.0
 MAX_DELAY_SECONDS = 30.0
 
+# Cloudbeds ``getReservations`` filters stays against the
+# ``startDate``/``endDate`` window.  The lower bound must reach far enough
+# back to include stays that began before the current sync but are still in
+# progress, otherwise current reservations silently disappear.
+DEFAULT_LOOKBACK_DAYS = 365
+DEFAULT_LOOKAHEAD_DAYS = 365
+
 
 class CloudbedsServiceError(Exception):
     """Exception raised for Cloudbeds API errors."""
@@ -203,8 +210,10 @@ class CloudbedsService:
 
         Args:
             property_id: Cloudbeds property ID.
-            start_date: Filter reservations starting from this date.
-            end_date: Filter reservations ending before this date.
+            start_date: Filter reservations starting from this date
+                (default: 365 days ago, so in-progress stays are included).
+            end_date: Filter reservations ending before this date
+                (default: 365 days ahead).
 
         Returns:
             List of reservation dictionaries.
@@ -214,11 +223,11 @@ class CloudbedsService:
         """
         auth_headers = self._get_auth_headers()
 
-        # Default date range: 24h ago to 365 days in future
+        # Default date range: 365 days ago to 365 days in future
         if start_date is None:
-            start_date = datetime.now(UTC) - timedelta(hours=24)
+            start_date = datetime.now(UTC) - timedelta(days=DEFAULT_LOOKBACK_DAYS)
         if end_date is None:
-            end_date = datetime.now(UTC) + timedelta(days=365)
+            end_date = datetime.now(UTC) + timedelta(days=DEFAULT_LOOKAHEAD_DAYS)
 
         async def fetch_reservations() -> list[dict[str, Any]]:
             """Fetch reservations from Cloudbeds API."""

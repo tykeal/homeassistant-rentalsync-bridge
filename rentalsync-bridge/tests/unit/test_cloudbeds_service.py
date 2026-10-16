@@ -4,6 +4,7 @@
 
 import pytest
 from src.services.cloudbeds_service import (
+    DEFAULT_LOOKBACK_DAYS,
     CloudbedsService,
     CloudbedsServiceError,
     RateLimitError,
@@ -293,3 +294,44 @@ class TestGetRooms:
 
         assert "params" in captured_kwargs
         assert captured_kwargs["params"]["propertyIDs"] == "PROP_ABC"
+
+
+class TestGetReservationsDateWindow:
+    """Tests for the default reservation fetch window."""
+
+    @pytest.mark.asyncio
+    async def test_default_start_date_includes_in_progress_stays(self, monkeypatch):
+        """Test default startDate reaches a year into the past."""
+        from datetime import UTC, datetime, timedelta
+        from unittest.mock import AsyncMock, MagicMock
+
+        captured_kwargs = {}
+
+        async def capture_get(*args, **kwargs):
+            """Capture GET kwargs for assertion."""
+            captured_kwargs.update(kwargs)
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {"success": True, "data": []}
+            return mock_response
+
+        mock_client = AsyncMock()
+        mock_client.get = capture_get
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        import httpx
+
+        monkeypatch.setattr(httpx, "AsyncClient", lambda: mock_client)
+
+        service = CloudbedsService(access_token="test_token")
+        await service.get_reservations("PROP_ABC")
+
+        params = captured_kwargs["params"]
+        start = datetime.strptime(params["startDate"], "%Y-%m-%d").replace(tzinfo=UTC)
+        end = datetime.strptime(params["endDate"], "%Y-%m-%d").replace(tzinfo=UTC)
+        now = datetime.now(UTC)
+
+        assert DEFAULT_LOOKBACK_DAYS == 365
+        assert start <= now - timedelta(days=DEFAULT_LOOKBACK_DAYS - 1)
+        assert end >= now + timedelta(days=364)

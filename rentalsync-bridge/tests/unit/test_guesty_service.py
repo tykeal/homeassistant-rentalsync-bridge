@@ -20,6 +20,7 @@ from src.providers.base import (
 )
 from src.providers.guesty.auth import GuestyTokenManager
 from src.providers.guesty.service import (
+    DEFAULT_LOOKBACK_DAYS,
     GUESTY_BASE_URL,
     GuestyProvider,
     _extract_custom_data,
@@ -374,6 +375,30 @@ class TestGetReservations:
         params = call_kwargs.kwargs.get("params") or call_kwargs[1].get("params", {})
         assert params["checkIn"] == "2026-01-01"
         assert params["checkOut"] == "2026-12-31"
+
+    @pytest.mark.asyncio
+    async def test_default_window_includes_in_progress_stays(
+        self, guesty_provider, mock_http_client
+    ):
+        """Test the default checkIn filter reaches a year into the past."""
+        mock_http_client.request = AsyncMock(
+            return_value=_make_response({"results": []})
+        )
+
+        await guesty_provider.get_reservations("L1")
+
+        call_kwargs = mock_http_client.request.call_args
+        params = call_kwargs.kwargs.get("params") or call_kwargs[1].get("params", {})
+        check_in = datetime.strptime(params["checkIn"], "%Y-%m-%d").replace(tzinfo=UTC)
+        check_out = datetime.strptime(params["checkOut"], "%Y-%m-%d").replace(
+            tzinfo=UTC
+        )
+        now = datetime.now(UTC)
+
+        # A stay that began months ago but is still running must be covered
+        assert check_in <= now - timedelta(days=DEFAULT_LOOKBACK_DAYS - 1)
+        assert DEFAULT_LOOKBACK_DAYS == 365
+        assert check_out >= now + timedelta(days=364)
 
     @pytest.mark.asyncio
     async def test_pagination(self, guesty_provider, mock_http_client):
