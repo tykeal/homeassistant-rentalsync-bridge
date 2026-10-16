@@ -202,9 +202,25 @@ class SyncService:
             if booking_id in seen_booking_ids:
                 continue
             if base_reservation_id in seen_reservation_ids:
-                # Room config changed - cancel old booking
+                # Room config changed - cancel old booking.
+                # The in-progress guard deliberately does NOT apply here:
+                # the reservation was returned by the PMS and has already
+                # been re-created under its new room ID, so keeping the
+                # stale per-room booking would duplicate the stay.
                 await self._booking_repo.mark_cancelled(existing_booking)
                 counts["cancelled"] += 1
+                continue
+            if self._is_in_progress(existing_booking):
+                # Reservation missing from the fetch but the stay is
+                # currently underway (e.g. a narrow provider window or a
+                # transient API hiccup).  Cancelling it would drop the
+                # guest's in-progress event from the exported calendar.
+                logger.warning(
+                    "Keeping in-progress booking %s for listing %s: "
+                    "absent from provider response",
+                    booking_id,
+                    listing.pms_id,
+                )
                 continue
             # Reservation no longer exists at all
             await self._booking_repo.mark_cancelled(existing_booking)
@@ -358,6 +374,29 @@ class SyncService:
             The base reservation ID.
         """
         return booking_id.rsplit("::", 1)[0]
+
+    @staticmethod
+    def _is_in_progress(booking: Booking, now: datetime | None = None) -> bool:
+        """Check whether a stored booking's stay is currently underway.
+
+        ``check_in_date``/``check_out_date`` come back from SQLite as naive
+        datetimes holding UTC values, so naive values are treated as UTC.
+
+        Args:
+            booking: Stored booking to inspect.
+            now: Optional reference time (defaults to now in UTC).
+
+        Returns:
+            True if ``check_in <= now < check_out``.
+        """
+        reference = now or datetime.now(UTC)
+        check_in = booking.check_in_date
+        check_out = booking.check_out_date
+        if check_in.tzinfo is None:
+            check_in = check_in.replace(tzinfo=UTC)
+        if check_out.tzinfo is None:
+            check_out = check_out.replace(tzinfo=UTC)
+        return check_in <= reference < check_out
 
     @staticmethod
     def _extract_booking_data_from_dto(

@@ -3,7 +3,7 @@
 """Unit tests for sync service."""
 
 from collections.abc import AsyncGenerator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
@@ -223,6 +223,97 @@ class TestSyncService:
         assert result["inserted"] == 0
         assert result["updated"] == 0
         assert result["cancelled"] == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["confirmed", "checked_in"])
+    async def test_sync_keeps_in_progress_booking(
+        self, sync_session, test_listing, mock_provider, status
+    ):
+        """Test in-progress bookings survive absence from the fetch."""
+        sync_session.add(test_listing)
+        await sync_session.commit()
+        await sync_session.refresh(test_listing)
+
+        now = datetime.now(UTC)
+        booking = Booking(
+            listing_id=test_listing.id,
+            pms_booking_id="RES_CURRENT",
+            guest_name="Current Guest",
+            check_in_date=now - timedelta(days=3),
+            check_out_date=now + timedelta(days=2),
+            status=status,
+        )
+        sync_session.add(booking)
+        await sync_session.commit()
+
+        mock_provider.get_reservations = AsyncMock(return_value=[])
+
+        service = SyncService(sync_session)
+        result = await service.sync_listing(test_listing, mock_provider)
+
+        assert result["cancelled"] == 0
+        await sync_session.refresh(booking)
+        assert booking.status == status
+
+    @pytest.mark.asyncio
+    async def test_sync_cancels_future_booking_absent_from_fetch(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test future bookings are still cancelled when absent."""
+        sync_session.add(test_listing)
+        await sync_session.commit()
+        await sync_session.refresh(test_listing)
+
+        now = datetime.now(UTC)
+        booking = Booking(
+            listing_id=test_listing.id,
+            pms_booking_id="RES_FUTURE",
+            guest_name="Future Guest",
+            check_in_date=now + timedelta(days=10),
+            check_out_date=now + timedelta(days=14),
+            status="confirmed",
+        )
+        sync_session.add(booking)
+        await sync_session.commit()
+
+        mock_provider.get_reservations = AsyncMock(return_value=[])
+
+        service = SyncService(sync_session)
+        result = await service.sync_listing(test_listing, mock_provider)
+
+        assert result["cancelled"] == 1
+        await sync_session.refresh(booking)
+        assert booking.status == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_sync_cancels_past_booking_absent_from_fetch(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test past bookings are still cancelled when absent."""
+        sync_session.add(test_listing)
+        await sync_session.commit()
+        await sync_session.refresh(test_listing)
+
+        now = datetime.now(UTC)
+        booking = Booking(
+            listing_id=test_listing.id,
+            pms_booking_id="RES_PAST",
+            guest_name="Past Guest",
+            check_in_date=now - timedelta(days=10),
+            check_out_date=now - timedelta(days=5),
+            status="confirmed",
+        )
+        sync_session.add(booking)
+        await sync_session.commit()
+
+        mock_provider.get_reservations = AsyncMock(return_value=[])
+
+        service = SyncService(sync_session)
+        result = await service.sync_listing(test_listing, mock_provider)
+
+        assert result["cancelled"] == 1
+        await sync_session.refresh(booking)
+        assert booking.status == "cancelled"
 
     @pytest.mark.asyncio
     async def test_sync_invalidates_cache(
