@@ -27,6 +27,13 @@ MAX_DELAY_SECONDS = 30.0
 DEFAULT_LOOKBACK_DAYS = 365
 DEFAULT_LOOKAHEAD_DAYS = 365
 
+# Cloudbeds ``getReservations`` paginates with ``pageNumber``/``pageSize``
+# and documents 100 as the maximum (and default) page size.  Pages are
+# requested until a short page signals the end of the results, bounded by
+# ``MAX_RESERVATION_PAGES`` so a misbehaving API cannot loop forever.
+RESERVATIONS_PAGE_SIZE = 100
+MAX_RESERVATION_PAGES = 200
+
 # Reservation statuses requested from Cloudbeds.  ``canceled`` (one "l", as
 # spelled by the Cloudbeds API) must be included so genuine cancellations are
 # returned and can be propagated instead of silently vanishing from the
@@ -236,8 +243,19 @@ class CloudbedsService:
         if end_date is None:
             end_date = datetime.now(UTC) + timedelta(days=DEFAULT_LOOKAHEAD_DAYS)
 
-        async def fetch_reservations() -> list[dict[str, Any]]:
-            """Fetch reservations from Cloudbeds API."""
+        async def fetch_reservations(page_number: int) -> list[dict[str, Any]]:
+            """Fetch a single page of reservations from the Cloudbeds API.
+
+            Args:
+                page_number: 1-based results page to request.
+
+            Returns:
+                Reservations on the requested page.
+
+            Raises:
+                RateLimitError: If the API responds with HTTP 429.
+                CloudbedsServiceError: If the API call fails.
+            """
             async with httpx.AsyncClient() as client:
                 response = await client.get(
                     "https://api.cloudbeds.com/api/v1.3/getReservations",
@@ -252,6 +270,8 @@ class CloudbedsService:
                         "status": RESERVATION_STATUSES,
                         "includeAllRooms": "true",
                         "includeGuestsDetails": "true",
+                        "pageNumber": str(page_number),
+                        "pageSize": str(RESERVATIONS_PAGE_SIZE),
                     },
                     timeout=30.0,
                 )
@@ -274,7 +294,7 @@ class CloudbedsService:
                     raise CloudbedsServiceError(msg)
 
                 reservations: list[dict[str, Any]] = data.get("data", [])
-                if reservations:
+                if reservations and page_number == 1:
                     # Log first reservation to see structure including room keys
                     first_res = reservations[0]
                     room_keys = [k for k in first_res if "room" in k.lower()]
@@ -285,10 +305,28 @@ class CloudbedsService:
                     )
                 return reservations
 
-        result: list[dict[str, Any]] = await self._with_retry(
-            "get_reservations", fetch_reservations
+        # Accumulate every page before returning: the sync prune logic treats
+        # an absent reservation as cancelled, so a partial snapshot must never
+        # be returned.  Any page failure propagates and discards the whole run.
+        all_reservations: list[dict[str, Any]] = []
+        for page_number in range(1, MAX_RESERVATION_PAGES + 1):
+            page: list[dict[str, Any]] = await self._with_retry(
+                f"get_reservations (page {page_number})",
+                fetch_reservations,
+                page_number,
+            )
+            all_reservations.extend(page)
+
+            # Cloudbeds returns no pagination metadata, so a short page is the
+            # documented end-of-results signal.
+            if len(page) < RESERVATIONS_PAGE_SIZE:
+                return all_reservations
+
+        msg = (
+            f"getReservations exceeded {MAX_RESERVATION_PAGES} pages for "
+            f"property {property_id}; refusing to return a partial snapshot"
         )
-        return result
+        raise CloudbedsServiceError(msg)
 
     async def get_rooms(self, property_id: str) -> list[dict[str, Any]]:
         """Fetch rooms for a property from Cloudbeds API.
