@@ -32,12 +32,15 @@ logger = logging.getLogger(__name__)
 
 # Cloudbeds reservation statuses mapped to our normalised statuses.
 # Cloudbeds spells the cancelled status "canceled" (one "l").
+# ``no_show`` maps to "cancelled" so a guest who never arrived is retired
+# through the normal cancellation path instead of lingering as confirmed.
 _STATUS_MAP: dict[str, str] = {
     "confirmed": "confirmed",
     "checked_in": "checked_in",
     "checked_out": "checked_out",
     "canceled": "cancelled",
     "cancelled": "cancelled",
+    "no_show": "cancelled",
 }
 
 

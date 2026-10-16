@@ -37,8 +37,9 @@ MAX_RESERVATION_PAGES = 200
 # Reservation statuses requested from Cloudbeds.  ``canceled`` (one "l", as
 # spelled by the Cloudbeds API) must be included so genuine cancellations are
 # returned and can be propagated instead of silently vanishing from the
-# response.
-RESERVATION_STATUSES = "confirmed,checked_in,checked_out,canceled"
+# response.  ``no_show`` is included for the same reason: a guest who never
+# arrived must be retired rather than left in the exported calendar.
+RESERVATION_STATUSES = "confirmed,checked_in,checked_out,canceled,no_show"
 
 
 class CloudbedsServiceError(Exception):

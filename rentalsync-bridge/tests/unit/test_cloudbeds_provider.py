@@ -219,6 +219,28 @@ class TestGetReservations:
         assert reservations[0].status == "cancelled"
 
     @pytest.mark.asyncio
+    async def test_no_show_status_normalized(self, provider, mock_service):
+        """Test Cloudbeds "no_show" maps to the internal "cancelled" status."""
+        mock_service.get_reservations = AsyncMock(
+            return_value=[
+                {
+                    "reservationID": "RES_NS",
+                    "guestName": "Dan Absent",
+                    "startDate": "2026-05-01",
+                    "endDate": "2026-05-04",
+                    "status": "no_show",
+                    "roomID": "R1",
+                }
+            ]
+        )
+
+        reservations = await provider.get_reservations("P1")
+
+        # Without the mapping this would fall back to "confirmed" and the
+        # booking would persist in the exported calendar.
+        assert reservations[0].status == "cancelled"
+
+    @pytest.mark.asyncio
     async def test_single_room_id_from_top_level(self, provider, mock_service):
         """Test that a single top-level roomID is extracted correctly."""
         reservations = await provider.get_reservations("P1")

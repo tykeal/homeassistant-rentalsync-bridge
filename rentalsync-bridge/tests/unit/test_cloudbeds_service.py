@@ -376,6 +376,9 @@ class TestGetReservationsDateWindow:
         assert "confirmed" in statuses
         assert "checked_in" in statuses
         assert "checked_out" in statuses
+        # A guest who never arrived must be returned so the stored booking is
+        # retired instead of lingering as confirmed.
+        assert "no_show" in statuses
 
 
 class TestGetReservationsPagination:

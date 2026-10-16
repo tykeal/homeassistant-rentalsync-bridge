@@ -371,6 +371,54 @@ class TestSyncService:
         assert booking.status == "cancelled"
 
     @pytest.mark.asyncio
+    async def test_sync_retires_no_show_during_stay(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test a no-show during the stay is retired, not kept in progress."""
+        from src.providers.cloudbeds.provider import CloudbedsProvider
+
+        sync_session.add(test_listing)
+        await sync_session.commit()
+        await sync_session.refresh(test_listing)
+
+        now = datetime.now(UTC)
+        check_in = now - timedelta(days=1)
+        check_out = now + timedelta(days=2)
+        booking = Booking(
+            listing_id=test_listing.id,
+            pms_booking_id="RES_NO_SHOW",
+            guest_name="Absent Guest",
+            check_in_date=check_in,
+            check_out_date=check_out,
+            status="confirmed",
+        )
+        sync_session.add(booking)
+        await sync_session.commit()
+
+        # Build the DTO through the real Cloudbeds mapping so the regression
+        # covers the raw "no_show" status, not a pre-normalized value.
+        reservation = CloudbedsProvider._map_reservation(
+            {
+                "reservationID": "RES_NO_SHOW",
+                "guestName": "Absent Guest",
+                "startDate": check_in.isoformat(),
+                "endDate": check_out.isoformat(),
+                "status": "no_show",
+            },
+            test_listing.pms_id,
+        )
+        assert reservation.status == "cancelled"
+
+        mock_provider.get_reservations = AsyncMock(return_value=[reservation])
+
+        service = SyncService(sync_session)
+        result = await service.sync_listing(test_listing, mock_provider)
+
+        assert result["cancelled"] == 1
+        await sync_session.refresh(booking)
+        assert booking.status == "cancelled"
+
+    @pytest.mark.asyncio
     async def test_sync_does_not_insert_unknown_cancellation(
         self, sync_session, test_listing, mock_provider
     ):
