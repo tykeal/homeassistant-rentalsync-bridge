@@ -67,6 +67,42 @@ class TestSyncScheduler:
         assert "purge_old_bookings" in job_ids
 
     @pytest.mark.asyncio
+    async def test_start_triggers_initial_sync(self, mock_session_factory):
+        """Test starting the scheduler runs an immediate sync."""
+        scheduler = SyncScheduler(mock_session_factory)
+
+        with (
+            patch.object(scheduler._scheduler, "add_job"),
+            patch.object(scheduler._scheduler, "start"),
+            patch.object(scheduler, "_sync_all_listings", new=AsyncMock()) as mock_sync,
+        ):
+            await scheduler.start()
+            assert scheduler._initial_sync_task is not None
+            await scheduler._initial_sync_task
+
+        mock_sync.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_initial_sync_failure_does_not_propagate(self, mock_session_factory):
+        """Test a failing initial sync does not break startup."""
+        scheduler = SyncScheduler(mock_session_factory)
+
+        with (
+            patch.object(scheduler._scheduler, "add_job"),
+            patch.object(scheduler._scheduler, "start"),
+            patch.object(
+                scheduler,
+                "_sync_all_listings",
+                new=AsyncMock(side_effect=RuntimeError("PMS unreachable")),
+            ),
+        ):
+            await scheduler.start()
+            assert scheduler.is_running is True
+            assert scheduler._initial_sync_task is not None
+            # Must not raise
+            await scheduler._initial_sync_task
+
+    @pytest.mark.asyncio
     async def test_start_already_running(self, mock_session_factory):
         """Test starting already running scheduler logs warning."""
         scheduler = SyncScheduler(mock_session_factory)
