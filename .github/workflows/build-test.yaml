@@ -163,6 +163,10 @@ jobs:
           include_dev: "false"
           sbom_format: "both"
           path_prefix: 'rentalsync-bridge/'
+          # Temporary workaround: action default 3.12 fails requires-python
+          # (>=3.13) and uv then picks 3.15, which cannot build watchfiles.
+          # Remove the pin once upstream handles this; see issue #101.
+          python_version: "3.14"
 
       - name: "Upload SBOM artifacts"
         # yamllint disable-line rule:line-length
