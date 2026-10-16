@@ -649,6 +649,178 @@ class TestSyncService:
             await service.sync_listing(test_listing, mock_provider)
 
 
+class TestIsInProgress:
+    """Tests for the timezone-aware in-progress guard."""
+
+    @staticmethod
+    def _booking(check_in: datetime, check_out: datetime) -> Booking:
+        """Build an unsaved booking with the given stay dates."""
+        return Booking(
+            listing_id=1,
+            pms_booking_id="RES_TZ",
+            guest_name="TZ Guest",
+            check_in_date=check_in,
+            check_out_date=check_out,
+            status="confirmed",
+        )
+
+    @staticmethod
+    def _listing(timezone: str) -> Listing:
+        """Build an unsaved listing in the given timezone."""
+        return Listing(
+            pms_id="PROP_TZ",
+            name="TZ Property",
+            ical_url_slug="tz-property",
+            enabled=True,
+            sync_enabled=True,
+            timezone=timezone,
+        )
+
+    def test_all_day_stay_in_progress_at_local_checkout_boundary(self):
+        """Test an all-day stay is active until the local checkout date."""
+        # Date-only PMS values are stored as midnight UTC. For a UTC-7
+        # listing it is still October 15 locally at 01:00 UTC on October 16.
+        booking = self._booking(
+            datetime(2026, 10, 13, tzinfo=UTC),
+            datetime(2026, 10, 16, tzinfo=UTC),
+        )
+        now = datetime(2026, 10, 16, 1, 0, tzinfo=UTC)
+
+        assert (
+            SyncService._is_in_progress(
+                booking, self._listing("America/Los_Angeles"), now
+            )
+            is True
+        )
+
+    def test_all_day_stay_not_in_progress_after_local_checkout(self):
+        """Test an all-day stay ends once the local checkout date passes."""
+        booking = self._booking(
+            datetime(2026, 10, 13, tzinfo=UTC),
+            datetime(2026, 10, 16, tzinfo=UTC),
+        )
+        # 2026-10-16 18:00 UTC is 11:00 local on the checkout date.
+        now = datetime(2026, 10, 16, 18, 0, tzinfo=UTC)
+
+        assert (
+            SyncService._is_in_progress(
+                booking, self._listing("America/Los_Angeles"), now
+            )
+            is False
+        )
+
+    def test_all_day_stay_not_in_progress_before_local_check_in(self):
+        """Test an all-day stay is not active before its check-in date."""
+        booking = self._booking(
+            datetime(2026, 10, 13, tzinfo=UTC),
+            datetime(2026, 10, 16, tzinfo=UTC),
+        )
+        now = datetime(2026, 10, 12, 20, 0, tzinfo=UTC)
+
+        assert (
+            SyncService._is_in_progress(
+                booking, self._listing("America/Los_Angeles"), now
+            )
+            is False
+        )
+
+    def test_timed_stay_compares_instants(self):
+        """Test stays with real times are compared as instants."""
+        booking = self._booking(
+            datetime(2026, 10, 13, 16, 0, tzinfo=UTC),
+            datetime(2026, 10, 16, 18, 0, tzinfo=UTC),
+        )
+        listing = self._listing("America/Los_Angeles")
+
+        assert (
+            SyncService._is_in_progress(
+                booking, listing, datetime(2026, 10, 16, 1, 0, tzinfo=UTC)
+            )
+            is True
+        )
+        assert (
+            SyncService._is_in_progress(
+                booking, listing, datetime(2026, 10, 16, 18, 0, tzinfo=UTC)
+            )
+            is False
+        )
+
+    def test_invalid_timezone_falls_back_to_utc(self):
+        """Test an unknown IANA name behaves like UTC."""
+        booking = self._booking(
+            datetime(2026, 10, 13, tzinfo=UTC),
+            datetime(2026, 10, 16, tzinfo=UTC),
+        )
+        now = datetime(2026, 10, 15, 23, 0, tzinfo=UTC)
+
+        listing = self._listing("Not/AZone")
+
+        assert SyncService._is_in_progress(booking, listing, now) is True
+
+    def test_missing_listing_defaults_to_utc(self):
+        """Test the guard still works without a listing."""
+        booking = self._booking(
+            datetime(2026, 10, 13, tzinfo=UTC),
+            datetime(2026, 10, 16, tzinfo=UTC),
+        )
+
+        assert (
+            SyncService._is_in_progress(
+                booking, None, datetime(2026, 10, 15, 23, 0, tzinfo=UTC)
+            )
+            is True
+        )
+
+    def test_naive_stored_values_treated_as_utc(self):
+        """Test naive SQLite values are interpreted as UTC."""
+        booking = self._booking(
+            datetime(2026, 10, 13),
+            datetime(2026, 10, 16),
+        )
+        now = datetime(2026, 10, 16, 1, 0, tzinfo=UTC)
+
+        assert (
+            SyncService._is_in_progress(
+                booking, self._listing("America/Los_Angeles"), now
+            )
+            is True
+        )
+
+    @pytest.mark.asyncio
+    async def test_sync_keeps_all_day_stay_ending_today(
+        self, sync_session, mock_provider
+    ):
+        """Test the prune loop keeps a locally in-progress all-day stay."""
+        listing = self._listing("America/Los_Angeles")
+        sync_session.add(listing)
+        await sync_session.commit()
+        await sync_session.refresh(listing)
+
+        now = datetime.now(UTC)
+        today_utc_midnight = datetime(
+            now.year, now.month, now.day, tzinfo=UTC
+        ) + timedelta(days=1)
+        booking = Booking(
+            listing_id=listing.id,
+            pms_booking_id="RES_LOCAL_BOUNDARY",
+            guest_name="Boundary Guest",
+            check_in_date=today_utc_midnight - timedelta(days=3),
+            check_out_date=today_utc_midnight,
+            status="confirmed",
+        )
+        sync_session.add(booking)
+        await sync_session.commit()
+
+        mock_provider.get_reservations = AsyncMock(return_value=[])
+
+        service = SyncService(sync_session)
+        result = await service.sync_listing(listing, mock_provider)
+
+        assert result["cancelled"] == 0
+        await sync_session.refresh(booking)
+        assert booking.status == "confirmed"
+
+
 class TestExtractBookingDataFromDto:
     """Tests for booking data extraction from DTOs."""
 

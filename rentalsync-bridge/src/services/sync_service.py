@@ -24,11 +24,15 @@ from src.repositories.available_field_repository import (
 )
 from src.repositories.booking_repository import BookingRepository
 from src.repositories.room_repository import RoomRepository
-from src.services.calendar_service import CalendarCache
+from src.services.calendar_service import CalendarCache, CalendarService
 
 logger = logging.getLogger(__name__)
 
 PHONE_LAST_DIGITS = 4
+
+# The all-day vs timed export rules live in CalendarService; reuse them so
+# the prune guard agrees with what the exported calendar actually shows.
+_CALENDAR_RULES = CalendarService()
 
 
 class SyncServiceError(Exception):
@@ -237,7 +241,7 @@ class SyncService:
                 await self._booking_repo.mark_cancelled(existing_booking)
                 counts["cancelled"] += 1
                 continue
-            if self._is_in_progress(existing_booking):
+            if self._is_in_progress(existing_booking, listing):
                 # Reservation missing from the fetch but the stay is
                 # currently underway (e.g. a narrow provider window or a
                 # transient API hiccup).  Cancelling it would drop the
@@ -518,23 +522,51 @@ class SyncService:
             check_out = check_out.replace(tzinfo=UTC)
         return check_out < cls._retention_cutoff(now)
 
-    @staticmethod
-    def _is_in_progress(booking: Booking, now: datetime | None = None) -> bool:
+    @classmethod
+    def _is_in_progress(
+        cls,
+        booking: Booking,
+        listing: Listing | None = None,
+        now: datetime | None = None,
+    ) -> bool:
         """Check whether a stored booking's stay is currently underway.
+
+        Mirrors how ``CalendarService`` exports the stay so the prune guard
+        and the published calendar can never disagree: all-day stays are
+        compared as local calendar dates in the listing timezone, timed
+        stays are compared as instants.
 
         ``check_in_date``/``check_out_date`` come back from SQLite as naive
         datetimes holding UTC values, so naive values are treated as UTC.
 
         Args:
             booking: Stored booking to inspect.
+            listing: Listing owning the booking, used for its timezone.
+                Falls back to UTC when not supplied.
             now: Optional reference time (defaults to now in UTC).
 
         Returns:
-            True if ``check_in <= now < check_out``.
+            True if the stay is underway at the reference time.
         """
         reference = now or datetime.now(UTC)
+        if reference.tzinfo is None:
+            reference = reference.replace(tzinfo=UTC)
+
         check_in = booking.check_in_date
         check_out = booking.check_out_date
+        calendar = _CALENDAR_RULES
+        tz = calendar._get_timezone(listing.timezone if listing else "UTC")
+
+        if not calendar._has_meaningful_times(check_in, check_out):
+            # All-day stay: the calendar exports plain dates, so compare the
+            # guest's local calendar day rather than the stored instants.
+            today = reference.astimezone(tz).date()
+            return (
+                calendar._to_ical_date(check_in, tz)
+                <= today
+                < calendar._to_ical_date(check_out, tz)
+            )
+
         if check_in.tzinfo is None:
             check_in = check_in.replace(tzinfo=UTC)
         if check_out.tzinfo is None:
