@@ -301,7 +301,7 @@ class TestGetReservationsDateWindow:
 
     @pytest.mark.asyncio
     async def test_default_start_date_includes_in_progress_stays(self, monkeypatch):
-        """Test default startDate reaches a year into the past."""
+        """Test default checkInFrom reaches a year into the past."""
         from datetime import UTC, datetime, timedelta
         from unittest.mock import AsyncMock, MagicMock
 
@@ -328,8 +328,12 @@ class TestGetReservationsDateWindow:
         await service.get_reservations("PROP_ABC")
 
         params = captured_kwargs["params"]
-        start = datetime.strptime(params["startDate"], "%Y-%m-%d").replace(tzinfo=UTC)
-        end = datetime.strptime(params["endDate"], "%Y-%m-%d").replace(tzinfo=UTC)
+        # Cloudbeds v1.3 getReservations documents checkInFrom/checkOutTo as
+        # the stay-date bounds; startDate/endDate are not supported.
+        assert "startDate" not in params
+        assert "endDate" not in params
+        start = datetime.strptime(params["checkInFrom"], "%Y-%m-%d").replace(tzinfo=UTC)
+        end = datetime.strptime(params["checkOutTo"], "%Y-%m-%d").replace(tzinfo=UTC)
         now = datetime.now(UTC)
 
         assert DEFAULT_LOOKBACK_DAYS == 365

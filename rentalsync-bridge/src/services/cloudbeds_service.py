@@ -20,10 +20,10 @@ MAX_RETRIES = 3
 BASE_DELAY_SECONDS = 1.0
 MAX_DELAY_SECONDS = 30.0
 
-# Cloudbeds ``getReservations`` filters stays against the
-# ``startDate``/``endDate`` window.  The lower bound must reach far enough
-# back to include stays that began before the current sync but are still in
-# progress, otherwise current reservations silently disappear.
+# Cloudbeds ``getReservations`` filters stays against the documented
+# ``checkInFrom``/``checkOutTo`` window.  The lower bound must reach far
+# enough back to include stays that began before the current sync but are
+# still in progress, otherwise current reservations silently disappear.
 DEFAULT_LOOKBACK_DAYS = 365
 DEFAULT_LOOKAHEAD_DAYS = 365
 
@@ -216,10 +216,11 @@ class CloudbedsService:
 
         Args:
             property_id: Cloudbeds property ID.
-            start_date: Filter reservations starting from this date
-                (default: 365 days ago, so in-progress stays are included).
-            end_date: Filter reservations ending before this date
-                (default: 365 days ahead).
+            start_date: Earliest check-in date to return, sent as
+                ``checkInFrom`` (default: 365 days ago, so in-progress
+                stays are included).
+            end_date: Latest check-out date to return, sent as
+                ``checkOutTo`` (default: 365 days ahead).
 
         Returns:
             List of reservation dictionaries.
@@ -246,8 +247,8 @@ class CloudbedsService:
                     },
                     params={
                         "propertyID": property_id,
-                        "startDate": start_date.strftime("%Y-%m-%d"),
-                        "endDate": end_date.strftime("%Y-%m-%d"),
+                        "checkInFrom": start_date.strftime("%Y-%m-%d"),
+                        "checkOutTo": end_date.strftime("%Y-%m-%d"),
                         "status": RESERVATION_STATUSES,
                         "includeAllRooms": "true",
                         "includeGuestsDetails": "true",
