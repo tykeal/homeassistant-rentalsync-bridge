@@ -30,6 +30,30 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Cloudbeds reservation statuses mapped to our normalised statuses.
+# Cloudbeds spells the cancelled status "canceled" (one "l").
+_STATUS_MAP: dict[str, str] = {
+    "confirmed": "confirmed",
+    "checked_in": "checked_in",
+    "checked_out": "checked_out",
+    "canceled": "cancelled",
+    "cancelled": "cancelled",
+}
+
+
+def _normalize_status(raw_status: Any) -> str:
+    """Normalize a Cloudbeds reservation status.
+
+    Args:
+        raw_status: Raw ``status`` value from the Cloudbeds API.
+
+    Returns:
+        Normalized status; unknown values fall back to ``confirmed``.
+    """
+    if not raw_status:
+        return "confirmed"
+    return _STATUS_MAP.get(str(raw_status).lower(), "confirmed")
+
 
 @provider("cloudbeds")
 class CloudbedsProvider(PMSProvider):
@@ -462,7 +486,7 @@ class CloudbedsProvider(PMSProvider):
             guest_id=str(raw["guestID"]) if raw.get("guestID") is not None else None,
             check_in=_parse_date(check_in),
             check_out=_parse_date(check_out),
-            status=(raw.get("status") or "confirmed").lower(),
+            status=_normalize_status(raw.get("status")),
             room_ids=tuple(room_ids),
             custom_data=dict(raw.get("customFields") or {}),
         )

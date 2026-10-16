@@ -27,6 +27,12 @@ MAX_DELAY_SECONDS = 30.0
 DEFAULT_LOOKBACK_DAYS = 365
 DEFAULT_LOOKAHEAD_DAYS = 365
 
+# Reservation statuses requested from Cloudbeds.  ``canceled`` (one "l", as
+# spelled by the Cloudbeds API) must be included so genuine cancellations are
+# returned and can be propagated instead of silently vanishing from the
+# response.
+RESERVATION_STATUSES = "confirmed,checked_in,checked_out,canceled"
+
 
 class CloudbedsServiceError(Exception):
     """Exception raised for Cloudbeds API errors."""
@@ -242,7 +248,7 @@ class CloudbedsService:
                         "propertyID": property_id,
                         "startDate": start_date.strftime("%Y-%m-%d"),
                         "endDate": end_date.strftime("%Y-%m-%d"),
-                        "status": "confirmed,checked_in,checked_out",
+                        "status": RESERVATION_STATUSES,
                         "includeAllRooms": "true",
                         "includeGuestsDetails": "true",
                     },

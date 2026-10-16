@@ -335,3 +335,37 @@ class TestGetReservationsDateWindow:
         assert DEFAULT_LOOKBACK_DAYS == 365
         assert start <= now - timedelta(days=DEFAULT_LOOKBACK_DAYS - 1)
         assert end >= now + timedelta(days=364)
+
+    @pytest.mark.asyncio
+    async def test_status_filter_includes_cancellations(self, monkeypatch):
+        """Test cancellations are requested so they are not silently absent."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        captured_kwargs = {}
+
+        async def capture_get(*args, **kwargs):
+            """Capture GET kwargs for assertion."""
+            captured_kwargs.update(kwargs)
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {"success": True, "data": []}
+            return mock_response
+
+        mock_client = AsyncMock()
+        mock_client.get = capture_get
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        import httpx
+
+        monkeypatch.setattr(httpx, "AsyncClient", lambda: mock_client)
+
+        service = CloudbedsService(access_token="test_token")
+        await service.get_reservations("PROP_ABC")
+
+        statuses = captured_kwargs["params"]["status"].split(",")
+        # Cloudbeds spells the cancelled status with a single "l"
+        assert "canceled" in statuses
+        assert "confirmed" in statuses
+        assert "checked_in" in statuses
+        assert "checked_out" in statuses

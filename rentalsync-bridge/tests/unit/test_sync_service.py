@@ -316,6 +316,46 @@ class TestSyncService:
         assert booking.status == "cancelled"
 
     @pytest.mark.asyncio
+    async def test_sync_cancels_in_progress_booking_from_fetch(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test a cancellation during the stay is not shielded as in-progress."""
+        sync_session.add(test_listing)
+        await sync_session.commit()
+        await sync_session.refresh(test_listing)
+
+        now = datetime.now(UTC)
+        check_in = now - timedelta(days=1)
+        check_out = now + timedelta(days=2)
+        booking = Booking(
+            listing_id=test_listing.id,
+            pms_booking_id="RES_CANCELLED",
+            guest_name="Cancelled Guest",
+            check_in_date=check_in,
+            check_out_date=check_out,
+            status="checked_in",
+        )
+        sync_session.add(booking)
+        await sync_session.commit()
+
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_CANCELLED",
+                    check_in=check_in,
+                    check_out=check_out,
+                    status="cancelled",
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(test_listing, mock_provider)
+
+        await sync_session.refresh(booking)
+        assert booking.status == "cancelled"
+
+    @pytest.mark.asyncio
     async def test_sync_invalidates_cache(
         self, sync_session, test_listing, mock_provider
     ):

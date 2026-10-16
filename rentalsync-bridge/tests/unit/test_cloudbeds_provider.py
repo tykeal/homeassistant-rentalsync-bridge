@@ -199,6 +199,26 @@ class TestGetReservations:
         assert first.check_out == datetime(2026, 3, 5, tzinfo=UTC)
 
     @pytest.mark.asyncio
+    async def test_canceled_status_normalized(self, provider, mock_service):
+        """Test Cloudbeds "canceled" maps to the internal "cancelled" status."""
+        mock_service.get_reservations = AsyncMock(
+            return_value=[
+                {
+                    "reservationID": "RES_X",
+                    "guestName": "Carol White",
+                    "startDate": "2026-05-01",
+                    "endDate": "2026-05-04",
+                    "status": "canceled",
+                    "roomID": "R1",
+                }
+            ]
+        )
+
+        reservations = await provider.get_reservations("P1")
+
+        assert reservations[0].status == "cancelled"
+
+    @pytest.mark.asyncio
     async def test_single_room_id_from_top_level(self, provider, mock_service):
         """Test that a single top-level roomID is extracted correctly."""
         reservations = await provider.get_reservations("P1")
