@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for calendar service."""
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -11,6 +11,7 @@ from src.models.booking import Booking
 from src.models.custom_field import CustomField
 from src.models.listing import Listing
 from src.services.calendar_service import (
+    VTIMEZONE_PADDING_DAYS,
     CalendarCache,
     CalendarService,
 )
@@ -696,3 +697,234 @@ class TestVTimezone:
 
         assert "BEGIN:VTIMEZONE" in first
         assert second == first
+
+
+class TestVTimezoneDynamicWindow:
+    """Tests for the booking-derived VTIMEZONE transition window."""
+
+    # Byte size of the VTIMEZONE emitted with the icalendar library's
+    # default 1970-2038 window, measured for a single-booking feed.
+    LEGACY_WINDOW_BYTES = 2677
+
+    @pytest.fixture
+    def service(self):
+        """Create calendar service with a fresh cache."""
+        return CalendarService(cache=CalendarCache())
+
+    @staticmethod
+    def _listing(slug: str, timezone: str = "America/New_York") -> Listing:
+        """Build a listing with an explicit cache slug."""
+        listing = Listing(
+            pms_id=f"dyn_{slug}",
+            name="Dynamic TZ Property",
+            ical_url_slug=slug,
+            enabled=True,
+            sync_enabled=True,
+            timezone=timezone,
+        )
+        listing.id = 1
+        return listing
+
+    @staticmethod
+    def _timed_booking(
+        index: int,
+        check_in: datetime,
+        nights: int = 2,
+    ) -> Booking:
+        """Build a timed booking starting at the given UTC datetime."""
+        booking = Booking(
+            listing_id=1,
+            pms_booking_id=f"DYN{index}",
+            guest_name=f"Guest {index}",
+            check_in_date=check_in,
+            check_out_date=check_in + timedelta(days=nights, hours=-4),
+            status="confirmed",
+        )
+        booking.id = index
+        return booking
+
+    @staticmethod
+    def _allday_booking(index: int, check_in: datetime) -> Booking:
+        """Build an all-day booking (midnight UTC, no TZID emitted)."""
+        booking = Booking(
+            listing_id=1,
+            pms_booking_id=f"DYNAD{index}",
+            guest_name=f"Guest {index}",
+            check_in_date=check_in.replace(hour=0, minute=0),
+            check_out_date=(check_in + timedelta(days=2)).replace(hour=0, minute=0),
+            status="confirmed",
+        )
+        booking.id = index
+        return booking
+
+    @staticmethod
+    def _vtimezone_bytes(ical: str) -> int:
+        """Return the serialized byte size of the VTIMEZONE block."""
+        start = ical.find("BEGIN:VTIMEZONE")
+        end = ical.find("END:VTIMEZONE")
+        assert start != -1
+        assert end != -1
+        return len(ical[start : end + len("END:VTIMEZONE")].encode("utf-8"))
+
+    @staticmethod
+    def _transitions(cal: Calendar) -> list[datetime]:
+        """Collect every transition datetime declared in the VTIMEZONE.
+
+        Includes each STANDARD/DAYLIGHT DTSTART plus any RDATE entries,
+        which are local (floating) datetimes per RFC 5545.
+        """
+        moments: list[datetime] = []
+        for component in cal.walk():
+            if component.name not in ("STANDARD", "DAYLIGHT"):
+                continue
+            moments.append(component["DTSTART"].dt)
+            rdates = component.get("RDATE")
+            if rdates is None:
+                continue
+            if not isinstance(rdates, list):
+                rdates = [rdates]
+            for rdate in rdates:
+                moments.extend(entry.dt for entry in rdate.dts)
+        return sorted(moments)
+
+    @staticmethod
+    def _event_starts(cal: Calendar) -> list[datetime]:
+        """Collect VEVENT DTSTART values as naive local datetimes."""
+        starts: list[datetime] = []
+        for event in cal.walk("VEVENT"):
+            dtstart = event["DTSTART"].dt
+            assert isinstance(dtstart, datetime)
+            starts.append(dtstart.replace(tzinfo=None))
+        return starts
+
+    def test_window_is_much_smaller_than_library_default(self, service):
+        """A narrow booking range yields a far smaller VTIMEZONE."""
+        listing = self._listing("dyn-narrow")
+        check_in = datetime(2026, 7, 1, 19, 0, tzinfo=UTC)
+        ical = service.generate_ical(listing, [self._timed_booking(1, check_in)])
+
+        size = self._vtimezone_bytes(ical)
+        assert size < self.LEGACY_WINDOW_BYTES / 2
+        assert size < 1000
+
+    def test_window_has_no_2038_expiry_comment(self, service):
+        """The library default 1970-2038 comment is not emitted."""
+        listing = self._listing("dyn-no-2038")
+        check_in = datetime(2026, 7, 1, 19, 0, tzinfo=UTC)
+        ical = service.generate_ical(listing, [self._timed_booking(1, check_in)])
+
+        assert "1970-01-01 to 2038-01-01" not in ical
+
+    def test_transition_brackets_earliest_event(self, service):
+        """A transition exists at or before the earliest event start."""
+        listing = self._listing("dyn-bracket")
+        check_in = datetime(2026, 7, 1, 19, 0, tzinfo=UTC)
+        ical = service.generate_ical(listing, [self._timed_booking(1, check_in)])
+
+        cal = Calendar.from_ical(ical)
+        transitions = self._transitions(cal)
+        earliest_event = min(self._event_starts(cal))
+
+        assert transitions
+        assert transitions[0] <= earliest_event
+
+    def test_multi_year_span_covers_all_events(self, service):
+        """A multi-year booking span widens the window to cover every event."""
+        anchor = datetime(2026, 3, 15, 18, 0, tzinfo=UTC)
+        bookings = [
+            self._timed_booking(i, anchor + timedelta(days=365 * i)) for i in range(5)
+        ]
+        listing = self._listing("dyn-span")
+        ical = service.generate_ical(listing, bookings)
+
+        cal = Calendar.from_ical(ical)
+        transitions = self._transitions(cal)
+        starts = self._event_starts(cal)
+
+        assert len(starts) == 5
+        assert transitions[0] <= min(starts)
+        assert transitions[-1] >= max(starts)
+        # Each event must sit at or after some declared transition.
+        for start in starts:
+            assert any(moment <= start for moment in transitions)
+
+    def test_far_future_booking_is_covered(self, service):
+        """A 2040 booking is covered, unlike the old fixed 2038 cutoff."""
+        listing = self._listing("dyn-2040")
+        check_in = datetime(2040, 7, 1, 19, 0, tzinfo=UTC)
+        ical = service.generate_ical(listing, [self._timed_booking(1, check_in)])
+
+        cal = Calendar.from_ical(ical)
+        transitions = self._transitions(cal)
+        earliest_event = min(self._event_starts(cal))
+
+        assert earliest_event.year == 2040
+        assert transitions
+        assert transitions[0] <= earliest_event
+        assert max(moment.year for moment in transitions) >= 2040
+
+    def test_all_day_only_feed_emits_no_vtimezone(self, service):
+        """An all-day-only feed still emits no VTIMEZONE at all."""
+        listing = self._listing("dyn-allday")
+        anchor = datetime(2026, 7, 1, 0, 0, tzinfo=UTC)
+        ical = service.generate_ical(listing, [self._allday_booking(1, anchor)])
+
+        cal = Calendar.from_ical(ical)
+        assert list(cal.walk("VTIMEZONE")) == []
+        assert "BEGIN:VTIMEZONE" not in ical
+
+    def test_window_ignores_all_day_bookings(self, service):
+        """Mixed feeds derive the window only from the timed bookings."""
+        timed_in = datetime(2030, 7, 1, 19, 0, tzinfo=UTC)
+        bookings = [
+            self._allday_booking(1, datetime(2020, 2, 1, 0, 0, tzinfo=UTC)),
+            self._timed_booking(2, timed_in),
+            self._allday_booking(3, datetime(2045, 2, 1, 0, 0, tzinfo=UTC)),
+        ]
+        listing = self._listing("dyn-mixed")
+        ical = service.generate_ical(listing, bookings)
+
+        cal = Calendar.from_ical(ical)
+        transitions = self._transitions(cal)
+
+        assert len(list(cal.walk("VTIMEZONE"))) == 1
+        assert transitions
+        # Window spans only the timed booking +/- one year of padding.
+        assert all(2029 <= moment.year <= 2032 for moment in transitions)
+        assert self._vtimezone_bytes(ical) < 1000
+
+    def test_window_uses_localized_booking_times(self, service):
+        """The window derives from localized values, not naive UTC."""
+        # 2027-01-01 00:30 UTC is 2026-12-31 19:30 in New York, so the
+        # localized start falls in the previous year.
+        listing = self._listing("dyn-boundary")
+        check_in = datetime(2027, 1, 1, 0, 30, tzinfo=UTC)
+        ical = service.generate_ical(listing, [self._timed_booking(1, check_in)])
+
+        cal = Calendar.from_ical(ical)
+        transitions = self._transitions(cal)
+        earliest_event = min(self._event_starts(cal))
+
+        assert earliest_event.year == 2026
+        assert transitions[0] <= earliest_event
+
+    def test_no_timed_bookings_window_is_none(self, service):
+        """The helper returns None when no booking produces a TZID."""
+        anchor = datetime(2026, 7, 1, 0, 0, tzinfo=UTC)
+        window = service._vtimezone_window(
+            [self._allday_booking(1, anchor)], ZoneInfo("America/New_York")
+        )
+
+        assert window is None
+
+    def test_window_padding_matches_constant(self, service):
+        """The computed window is padded by VTIMEZONE_PADDING_DAYS."""
+        check_in = datetime(2026, 7, 1, 19, 0, tzinfo=UTC)
+        booking = self._timed_booking(1, check_in)
+        window = service._vtimezone_window([booking], ZoneInfo("America/New_York"))
+
+        assert window is not None
+        first_date, last_date = window
+        padding = timedelta(days=VTIMEZONE_PADDING_DAYS)
+        assert first_date == date(2026, 7, 1) - padding
+        assert last_date == date(2026, 7, 3) + padding
