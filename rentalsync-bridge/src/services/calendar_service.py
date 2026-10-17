@@ -23,6 +23,11 @@ CACHE_TTL_SECONDS = 300
 # Minimum phone digits required
 MIN_PHONE_DIGITS = 4
 
+# Days of padding added either side of the booking range when emitting
+# VTIMEZONE transitions, ensuring at least one transition brackets the
+# earliest referenced timestamp.
+VTIMEZONE_PADDING_DAYS = 365
+
 
 class CalendarCache:
     """Simple in-memory cache for generated iCal strings."""
@@ -165,7 +170,16 @@ class CalendarService:
         # Emit VTIMEZONE for any TZID referenced by the events (RFC 5545 3.6.5).
         # Feeds with only all-day DATE events or UTC times reference no TZID,
         # so no VTIMEZONE is added for them.
-        cal.add_missing_timezones()
+        # The window is derived from the bookings instead of using the library
+        # defaults (1970-2038): those bake in a 2038 expiry that would drop
+        # coverage for far-future bookings, and emit ~2.6KB of RDATE lines in
+        # every feed.
+        window = self._vtimezone_window(bookings, tz)
+        if window is None:
+            cal.add_missing_timezones()
+        else:
+            first_date, last_date = window
+            cal.add_missing_timezones(first_date=first_date, last_date=last_date)
 
         # Convert to string
         ical_bytes = cal.to_ical()
@@ -361,6 +375,41 @@ class CalendarService:
         if dt.tzinfo is None:
             return dt.replace(tzinfo=UTC).astimezone(tz)
         return dt.astimezone(tz)
+
+    def _vtimezone_window(
+        self,
+        bookings: Sequence[Booking],
+        tz: ZoneInfo,
+    ) -> tuple[date, date] | None:
+        """Compute the date window for VTIMEZONE transition generation.
+
+        Only bookings that produce timed (TZID-referencing) events are
+        considered; all-day bookings emit DATE values with no TZID.  The
+        window is derived from the same localized datetimes the events use
+        and padded either side so transitions bracket every timestamp.
+
+        Args:
+            bookings: Bookings included in the feed.
+            tz: Listing timezone used for the events.
+
+        Returns:
+            (first_date, last_date) tuple, or None when no timed bookings.
+        """
+        starts: list[date] = []
+        ends: list[date] = []
+        for booking in bookings:
+            if not self._has_meaningful_times(
+                booking.check_in_date, booking.check_out_date
+            ):
+                continue
+            starts.append(self._to_ical_datetime(booking.check_in_date, tz).date())
+            ends.append(self._to_ical_datetime(booking.check_out_date, tz).date())
+
+        if not starts:
+            return None
+
+        padding = timedelta(days=VTIMEZONE_PADDING_DAYS)
+        return min(starts) - padding, max(ends) + padding
 
     @staticmethod
     def _has_meaningful_times(
