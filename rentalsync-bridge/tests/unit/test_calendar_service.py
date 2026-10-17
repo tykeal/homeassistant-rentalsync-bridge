@@ -6,6 +6,7 @@ from datetime import UTC, date, datetime
 from zoneinfo import ZoneInfo
 
 import pytest
+from icalendar import Calendar
 from src.models.booking import Booking
 from src.models.custom_field import CustomField
 from src.models.listing import Listing
@@ -563,3 +564,135 @@ class TestToIcalDatetime:
         # 15:00 UTC → 11:00 AM EDT (UTC-4 in summer)
         assert result.hour == 11
         assert result.tzinfo is not None
+
+
+class TestVTimezone:
+    """Tests for VTIMEZONE emission (RFC 5545 section 3.6.5)."""
+
+    @pytest.fixture
+    def service(self):
+        """Create calendar service with a fresh cache."""
+        return CalendarService(cache=CalendarCache())
+
+    @staticmethod
+    def _listing(timezone: str) -> Listing:
+        """Build a listing for the given timezone."""
+        listing = Listing(
+            pms_id="tz_prop",
+            name="TZ Property",
+            ical_url_slug=f"tz-{timezone.replace('/', '-').lower()}",
+            enabled=True,
+            sync_enabled=True,
+            timezone=timezone,
+        )
+        listing.id = 1
+        return listing
+
+    @staticmethod
+    def _timed_booking(index: int = 1) -> Booking:
+        """Build a booking with meaningful check-in/check-out times."""
+        booking = Booking(
+            listing_id=1,
+            pms_booking_id=f"TIMED{index}",
+            guest_name=f"Guest {index}",
+            check_in_date=datetime(2026, 7, index, 19, 0, tzinfo=UTC),
+            check_out_date=datetime(2026, 7, index + 2, 15, 0, tzinfo=UTC),
+            status="confirmed",
+        )
+        booking.id = index
+        return booking
+
+    @staticmethod
+    def _allday_booking(index: int = 1) -> Booking:
+        """Build a booking without meaningful times (all-day DATE event)."""
+        booking = Booking(
+            listing_id=1,
+            pms_booking_id=f"ALLDAY{index}",
+            guest_name=f"Guest {index}",
+            check_in_date=datetime(2026, 7, index, 0, 0, tzinfo=UTC),
+            check_out_date=datetime(2026, 7, index + 2, 0, 0, tzinfo=UTC),
+            status="confirmed",
+        )
+        booking.id = index
+        return booking
+
+    def test_timed_events_emit_single_vtimezone(self, service):
+        """Timed events yield exactly one VTIMEZONE matching the listing tz."""
+        listing = self._listing("America/New_York")
+        ical = service.generate_ical(listing, [self._timed_booking()])
+
+        cal = Calendar.from_ical(ical)
+        timezones = list(cal.walk("VTIMEZONE"))
+        assert len(timezones) == 1
+        assert str(timezones[0]["TZID"]) == "America/New_York"
+
+    def test_dst_zone_has_standard_and_daylight(self, service):
+        """A DST-observing zone yields STANDARD and DAYLIGHT subcomponents."""
+        listing = self._listing("America/New_York")
+        ical = service.generate_ical(listing, [self._timed_booking()])
+
+        cal = Calendar.from_ical(ical)
+        assert len(list(cal.walk("STANDARD"))) >= 1
+        assert len(list(cal.walk("DAYLIGHT"))) >= 1
+
+    def test_non_dst_zone_has_only_standard(self, service):
+        """A non-DST zone yields a VTIMEZONE with only STANDARD."""
+        listing = self._listing("America/Phoenix")
+        ical = service.generate_ical(listing, [self._timed_booking()])
+
+        cal = Calendar.from_ical(ical)
+        timezones = list(cal.walk("VTIMEZONE"))
+        assert len(timezones) == 1
+        assert str(timezones[0]["TZID"]) == "America/Phoenix"
+        assert len(list(cal.walk("STANDARD"))) >= 1
+        assert list(cal.walk("DAYLIGHT")) == []
+
+    def test_all_day_only_feed_has_no_vtimezone(self, service):
+        """All-day DATE events reference no TZID, so no VTIMEZONE is added."""
+        listing = self._listing("America/New_York")
+        ical = service.generate_ical(listing, [self._allday_booking()])
+
+        cal = Calendar.from_ical(ical)
+        assert list(cal.walk("VTIMEZONE")) == []
+        assert len(list(cal.walk("VEVENT"))) == 1
+
+    def test_utc_listing_emits_no_vtimezone(self, service):
+        """UTC times serialize with a Z suffix, requiring no VTIMEZONE."""
+        listing = self._listing("UTC")
+        ical = service.generate_ical(listing, [self._timed_booking()])
+
+        cal = Calendar.from_ical(ical)
+        assert list(cal.walk("VTIMEZONE")) == []
+        assert len(list(cal.walk("VEVENT"))) == 1
+        assert "DTSTART:20260701T190000Z" in ical
+
+    def test_many_events_emit_one_vtimezone(self, service):
+        """Multiple events sharing a timezone do not duplicate VTIMEZONE."""
+        listing = self._listing("America/New_York")
+        bookings = [self._timed_booking(i) for i in range(1, 6)]
+        ical = service.generate_ical(listing, bookings)
+
+        cal = Calendar.from_ical(ical)
+        assert len(list(cal.walk("VTIMEZONE"))) == 1
+        assert len(list(cal.walk("VEVENT"))) == 5
+
+    def test_vtimezone_precedes_first_vevent(self, service):
+        """VTIMEZONE is serialized before the first VEVENT."""
+        listing = self._listing("America/New_York")
+        bookings = [self._timed_booking(i) for i in range(1, 4)]
+        ical = service.generate_ical(listing, bookings)
+
+        tz_pos = ical.find("BEGIN:VTIMEZONE")
+        event_pos = ical.find("BEGIN:VEVENT")
+        assert tz_pos != -1
+        assert event_pos != -1
+        assert tz_pos < event_pos
+
+    def test_vtimezone_is_cached(self, service):
+        """The cached payload includes the VTIMEZONE component."""
+        listing = self._listing("America/New_York")
+        first = service.generate_ical(listing, [self._timed_booking()])
+        second = service.generate_ical(listing, [self._timed_booking()])
+
+        assert "BEGIN:VTIMEZONE" in first
+        assert second == first
