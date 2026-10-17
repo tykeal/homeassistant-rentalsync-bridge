@@ -162,6 +162,11 @@ class CalendarService:
             event = self._create_event(booking, tz, custom_fields)
             cal.add_component(event)
 
+        # Emit VTIMEZONE for any TZID referenced by the events (RFC 5545 3.6.5).
+        # Feeds with only all-day DATE events or UTC times reference no TZID,
+        # so no VTIMEZONE is added for them.
+        cal.add_missing_timezones()
+
         # Convert to string
         ical_bytes = cal.to_ical()
         ical_string = cast("bytes", ical_bytes).decode("utf-8")
