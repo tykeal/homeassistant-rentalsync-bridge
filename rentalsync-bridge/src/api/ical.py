@@ -14,32 +14,28 @@ from src.repositories.booking_repository import BookingRepository
 from src.repositories.custom_field_repository import CustomFieldRepository
 from src.repositories.listing_repository import ListingRepository
 from src.repositories.room_repository import RoomRepository
-from src.services.calendar_service import CalendarCache, CalendarService
+from src.services.calendar_service import (
+    CalendarService,
+    get_calendar_cache,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["iCal"])
 
-# Shared cache instance
-_calendar_cache = CalendarCache()
-
-
-def get_calendar_cache() -> CalendarCache:
-    """Get the shared calendar cache instance.
-
-    Returns:
-        CalendarCache singleton instance.
-    """
-    return _calendar_cache
+__all__ = ["get_calendar_cache", "get_calendar_service", "router"]
 
 
 def get_calendar_service() -> CalendarService:
-    """Get calendar service with shared cache.
+    """Get calendar service backed by the global calendar cache.
+
+    The cache MUST be the same instance ``SyncService`` invalidates after a
+    sync, otherwise served feeds stay stale until the TTL lapses.
 
     Returns:
-        CalendarService instance with cache.
+        CalendarService instance using the global cache.
     """
-    return CalendarService(cache=_calendar_cache)
+    return CalendarService(cache=get_calendar_cache())
 
 
 @router.get(

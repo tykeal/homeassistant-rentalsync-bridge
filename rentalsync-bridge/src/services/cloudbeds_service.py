@@ -34,12 +34,19 @@ DEFAULT_LOOKAHEAD_DAYS = 365
 RESERVATIONS_PAGE_SIZE = 100
 MAX_RESERVATION_PAGES = 200
 
-# Reservation statuses requested from Cloudbeds.  ``canceled`` (one "l", as
-# spelled by the Cloudbeds API) must be included so genuine cancellations are
-# returned and can be propagated instead of silently vanishing from the
-# response.  ``no_show`` is included for the same reason: a guest who never
-# arrived must be retired rather than left in the exported calendar.
-RESERVATION_STATUSES = "confirmed,checked_in,checked_out,canceled,no_show"
+# The Cloudbeds v1.3 ``getReservations`` spec declares ``status`` as a
+# SINGLE-VALUE enum (not_confirmed|confirmed|canceled|checked_in|checked_out|
+# no_show), so the comma-separated list we used to send was not a valid
+# value and its behaviour was undefined.  The parameter is therefore omitted
+# entirely: the date window already bounds the result volume, and statuses
+# are normalised locally by ``_normalize_status`` in the Cloudbeds provider.
+# ``canceled``/``no_show`` must keep flowing through so cancellations can be
+# propagated instead of silently vanishing from the response.
+#
+# ``not_confirmed`` is the one status we must drop client-side: it is an
+# unfulfilled hold rather than a stay, and ``_normalize_status`` falls back
+# to "confirmed" for unrecognised values, which would export it.
+EXCLUDED_RESERVATION_STATUSES = frozenset({"not_confirmed"})
 
 
 class CloudbedsServiceError(Exception):
@@ -222,6 +229,9 @@ class CloudbedsService:
     ) -> list[dict[str, Any]]:
         """Fetch reservations for a property.
 
+        No ``status`` filter is sent: the Cloudbeds v1.3 spec declares it as
+        a single-value enum, so statuses are filtered client-side instead.
+
         Args:
             property_id: Cloudbeds property ID.
             start_date: Earliest check-in date to return, sent as
@@ -231,7 +241,8 @@ class CloudbedsService:
                 ``checkOutTo`` (default: 365 days ahead).
 
         Returns:
-            List of reservation dictionaries.
+            List of reservation dictionaries, excluding ``not_confirmed``
+            holds.  Cancellations are retained so they can be propagated.
 
         Raises:
             CloudbedsServiceError: If API call fails.
@@ -268,7 +279,6 @@ class CloudbedsService:
                         "propertyID": property_id,
                         "checkInFrom": start_date.strftime("%Y-%m-%d"),
                         "checkOutTo": end_date.strftime("%Y-%m-%d"),
-                        "status": RESERVATION_STATUSES,
                         "includeAllRooms": "true",
                         "includeGuestsDetails": "true",
                         "pageNumber": str(page_number),
@@ -318,10 +328,16 @@ class CloudbedsService:
                 fetch_reservations,
                 page_number,
             )
-            all_reservations.extend(page)
+            all_reservations.extend(
+                r
+                for r in page
+                if str(r.get("status") or "").lower()
+                not in EXCLUDED_RESERVATION_STATUSES
+            )
 
             # Cloudbeds returns no pagination metadata, so a short page is the
-            # documented end-of-results signal.
+            # documented end-of-results signal.  The RAW page length is used:
+            # the client-side status filter above must not shorten a full page.
             if len(page) < RESERVATIONS_PAGE_SIZE:
                 return all_reservations
 

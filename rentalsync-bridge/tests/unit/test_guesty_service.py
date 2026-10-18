@@ -33,6 +33,23 @@ from src.providers.guesty.service import (
 # Sample API responses
 # ---------------------------------------------------------------------------
 
+
+def _rel(days: int, suffix: str = "") -> str:
+    """Build a reservation date string relative to now.
+
+    Sample stays must stay inside the provider's default 365-day window,
+    which is now applied client-side, so fixed calendar dates would rot.
+
+    Args:
+        days: Offset in days from now.
+        suffix: Optional time suffix appended to the date.
+
+    Returns:
+        ISO date string, optionally with *suffix* appended.
+    """
+    return (datetime.now(UTC) + timedelta(days=days)).strftime("%Y-%m-%d") + suffix
+
+
 SAMPLE_LISTINGS_PAGE1 = {
     "results": [
         {
@@ -67,8 +84,8 @@ SAMPLE_RESERVATIONS = {
             "_id": "R1",
             "status": "confirmed",
             "guest": {"_id": "G1", "fullName": "Alice Smith"},
-            "checkIn": "2026-03-01T14:00:00Z",
-            "checkOut": "2026-03-05T11:00:00Z",
+            "checkIn": _rel(-10, "T14:00:00Z"),
+            "checkOut": _rel(-6, "T11:00:00Z"),
             "listingId": "L1",
             "source": "airbnb",
             "confirmationCode": "ABC123",
@@ -84,24 +101,24 @@ SAMPLE_RESERVATIONS = {
             "_id": "R2",
             "status": "checked_in",
             "guest": {"_id": "G2", "fullName": "Bob Jones"},
-            "checkIn": "2026-04-10",
-            "checkOut": "2026-04-15",
+            "checkIn": _rel(-2),
+            "checkOut": _rel(3),
             "listingId": "L1",
         },
         {
             "_id": "R3",
             "status": "inquiry",
             "guest": {"_id": "G3", "fullName": "Excluded"},
-            "checkIn": "2026-05-01",
-            "checkOut": "2026-05-05",
+            "checkIn": _rel(20),
+            "checkOut": _rel(24),
             "listingId": "L1",
         },
         {
             "_id": "R4",
             "status": "canceled",
             "guest": {"_id": "G4", "fullName": "Cancelled Guest"},
-            "checkIn": "2026-06-01",
-            "checkOut": "2026-06-05",
+            "checkIn": _rel(40),
+            "checkOut": _rel(44),
             "listingId": "L1",
         },
     ]
@@ -361,10 +378,18 @@ class TestGetReservations:
         assert "R3" not in booking_ids
 
     @pytest.mark.asyncio
-    async def test_date_filters_passed(self, guesty_provider, mock_http_client):
-        """Test that date filters are forwarded to the API."""
+    async def test_no_undocumented_date_filters_sent(
+        self, guesty_provider, mock_http_client
+    ):
+        """Test that undocumented stay-date query params are not sent.
+
+        Guesty's v1 ``/reservations`` OpenAPI definition exposes only a
+        generic ``filters`` array -- there are no ``checkIn``/``checkOut``
+        or ``startDate``/``endDate`` query parameters -- and whether the API
+        rejects or silently ignores unknown parameters is undocumented.
+        """
         mock_http_client.request = AsyncMock(
-            return_value=_make_response({"results": []})
+            return_value=_make_response({"results": [], "count": 0})
         )
 
         start = datetime(2026, 1, 1, tzinfo=UTC)
@@ -373,68 +398,537 @@ class TestGetReservations:
 
         call_kwargs = mock_http_client.request.call_args
         params = call_kwargs.kwargs.get("params") or call_kwargs[1].get("params", {})
-        assert params["checkIn"] == "2026-01-01"
-        assert params["checkOut"] == "2026-12-31"
+        assert params["listingId"] == "L1"
+        for unsupported in ("checkIn", "checkOut", "startDate", "endDate"):
+            assert unsupported not in params
+
+    @pytest.mark.asyncio
+    async def test_window_filter_applied_client_side(
+        self, guesty_provider, mock_http_client
+    ):
+        """Test stays are filtered to the requested window after fetching."""
+        payload = {
+            "count": 3,
+            "results": [
+                {
+                    "_id": "BEFORE",
+                    "status": "confirmed",
+                    "checkIn": _rel(-40),
+                    "checkOut": _rel(-35),
+                    "listingId": "L1",
+                },
+                {
+                    "_id": "IN-PROGRESS",
+                    "status": "confirmed",
+                    "checkIn": _rel(-2),
+                    "checkOut": _rel(3),
+                    "listingId": "L1",
+                },
+                {
+                    "_id": "AFTER",
+                    "status": "confirmed",
+                    "checkIn": _rel(40),
+                    "checkOut": _rel(45),
+                    "listingId": "L1",
+                },
+            ],
+        }
+        mock_http_client.request = AsyncMock(return_value=_make_response(payload))
+
+        now = datetime.now(UTC)
+        reservations = await guesty_provider.get_reservations(
+            "L1",
+            start_date=now - timedelta(days=5),
+            end_date=now + timedelta(days=5),
+        )
+
+        # A stay straddling "now" must survive: that is the issue #99 defect.
+        assert {r.pms_booking_id for r in reservations} == {"IN-PROGRESS"}
 
     @pytest.mark.asyncio
     async def test_default_window_includes_in_progress_stays(
         self, guesty_provider, mock_http_client
     ):
-        """Test the default checkIn filter reaches a year into the past."""
-        mock_http_client.request = AsyncMock(
-            return_value=_make_response({"results": []})
-        )
-
-        await guesty_provider.get_reservations("L1")
-
-        call_kwargs = mock_http_client.request.call_args
-        params = call_kwargs.kwargs.get("params") or call_kwargs[1].get("params", {})
-        check_in = datetime.strptime(params["checkIn"], "%Y-%m-%d").replace(tzinfo=UTC)
-        check_out = datetime.strptime(params["checkOut"], "%Y-%m-%d").replace(
-            tzinfo=UTC
-        )
-        now = datetime.now(UTC)
-
-        # A stay that began months ago but is still running must be covered
-        assert check_in <= now - timedelta(days=DEFAULT_LOOKBACK_DAYS - 1)
-        assert DEFAULT_LOOKBACK_DAYS == 365
-        assert check_out >= now + timedelta(days=364)
-
-    @pytest.mark.asyncio
-    async def test_pagination(self, guesty_provider, mock_http_client):
-        """Test that multiple pages are fetched."""
-        full_page = {
+        """Test the default window reaches a year into the past."""
+        payload = {
+            "count": 2,
             "results": [
                 {
-                    "_id": f"R{i}",
+                    "_id": "OLD-BUT-RUNNING",
                     "status": "confirmed",
-                    "guest": {"_id": f"G{i}", "fullName": f"Guest {i}"},
-                    "checkIn": "2026-03-01",
-                    "checkOut": "2026-03-05",
+                    "checkIn": _rel(-(DEFAULT_LOOKBACK_DAYS - 2)),
+                    "checkOut": _rel(2),
                     "listingId": "L1",
-                }
-                for i in range(100)
-            ]
-        }
-        last_page = {
-            "results": [
+                },
                 {
-                    "_id": "R100",
+                    "_id": "ANCIENT",
                     "status": "confirmed",
-                    "guest": {"_id": "G100", "fullName": "Last Guest"},
-                    "checkIn": "2026-03-01",
-                    "checkOut": "2026-03-05",
+                    "checkIn": _rel(-(DEFAULT_LOOKBACK_DAYS + 20)),
+                    "checkOut": _rel(-(DEFAULT_LOOKBACK_DAYS + 10)),
                     "listingId": "L1",
-                }
-            ]
+                },
+            ],
         }
-
-        mock_http_client.request = AsyncMock(
-            side_effect=[_make_response(full_page), _make_response(last_page)]
-        )
+        mock_http_client.request = AsyncMock(return_value=_make_response(payload))
 
         reservations = await guesty_provider.get_reservations("L1")
+
+        ids = {r.pms_booking_id for r in reservations}
+        assert DEFAULT_LOOKBACK_DAYS == 365
+        assert "OLD-BUT-RUNNING" in ids
+        assert "ANCIENT" not in ids
+
+
+# ---------------------------------------------------------------------------
+# get_reservations pagination
+# ---------------------------------------------------------------------------
+
+
+def _reservation(booking_id):
+    """Build a raw in-window Guesty reservation dict.
+
+    Args:
+        booking_id: Reservation ``_id``.
+
+    Returns:
+        Raw reservation dict.
+    """
+    return {
+        "_id": booking_id,
+        "status": "confirmed",
+        "guest": {"_id": f"g-{booking_id}", "fullName": f"Guest {booking_id}"},
+        "checkIn": _rel(-1),
+        "checkOut": _rel(2),
+        "listingId": "L1",
+    }
+
+
+def _mock_provider(handler):
+    """Build a GuestyProvider wired to a MockTransport handler.
+
+    Args:
+        handler: Callable taking an httpx.Request and returning a Response.
+
+    Returns:
+        Configured GuestyProvider.
+    """
+    token_manager = AsyncMock()
+    token_manager.get_token = AsyncMock(return_value="tok")
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url=GUESTY_BASE_URL,
+    )
+    return GuestyProvider(token_manager=token_manager, http_client=client)
+
+
+class TestReservationPagination:
+    """Pagination tests for GuestyProvider.get_reservations."""
+
+    @pytest.mark.asyncio
+    async def test_accumulates_pages_driven_by_count(self):
+        """Test every record is fetched when ``count`` exceeds one page."""
+        total = 250
+        requested_skips = []
+
+        def handler(request):
+            """Serve full pages up to ``total`` records.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            skip = int(request.url.params["skip"])
+            requested_skips.append(skip)
+            page = [_reservation(f"R{i}") for i in range(skip, min(skip + 100, total))]
+            return httpx.Response(200, json={"count": total, "results": page})
+
+        provider = _mock_provider(handler)
+        reservations = await provider.get_reservations("L1")
+        await provider.aclose()
+
+        assert len(reservations) == total
+        assert requested_skips == [0, 100, 200]
+
+    @pytest.mark.asyncio
+    async def test_short_page_is_not_treated_as_end(self):
+        """Test a short non-final page does not truncate the snapshot.
+
+        A server-side page cap smaller than the requested limit must not be
+        mistaken for end-of-results: the sync prune logic treats missing
+        bookings as cancelled, so truncation silently retires live stays.
+        """
+        total = 120
+        page_size = 40
+
+        def handler(request):
+            """Serve 40-record pages even though 100 are requested.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            skip = int(request.url.params["skip"])
+            page = [
+                _reservation(f"R{i}") for i in range(skip, min(skip + page_size, total))
+            ]
+            return httpx.Response(200, json={"count": total, "results": page})
+
+        provider = _mock_provider(handler)
+        reservations = await provider.get_reservations("L1")
+        await provider.aclose()
+
+        assert len(reservations) == total
+
+    @pytest.mark.asyncio
+    async def test_later_page_failure_returns_nothing(self):
+        """Test a failure on a later page raises instead of truncating."""
+
+        def handler(request):
+            """Fail the second page.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            skip = int(request.url.params["skip"])
+            if skip == 0:
+                page = [_reservation(f"R{i}") for i in range(100)]
+                return httpx.Response(200, json={"count": 200, "results": page})
+            return httpx.Response(500, json={"error": "boom"})
+
+        provider = _mock_provider(handler)
+        with pytest.raises(PMSProviderError):
+            await provider.get_reservations("L1")
+        await provider.aclose()
+
+    @pytest.mark.asyncio
+    async def test_missing_count_falls_back_to_short_page(self):
+        """Test the short-page heuristic is used when ``count`` is absent."""
+        pages = [
+            {"results": [_reservation(f"R{i}") for i in range(100)]},
+            {"results": [_reservation("R100")]},
+        ]
+        calls = []
+
+        def handler(request):
+            """Serve the prepared pages without ``count`` metadata.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            index = len(calls)
+            calls.append(request)
+            return httpx.Response(200, json=pages[index])
+
+        provider = _mock_provider(handler)
+        reservations = await provider.get_reservations("L1")
+        await provider.aclose()
+
+        assert len(calls) == 2
         assert len(reservations) == 101
+
+    @pytest.mark.asyncio
+    async def test_empty_page_raises_instead_of_partial(self):
+        """Test an inconsistent ``count`` raises rather than truncating.
+
+        An empty page while records remain outstanding means the API will not
+        serve the rest of the snapshot.  Returning the records gathered so far
+        would let the sync prune logic cancel every unseen future booking, so
+        the run must fail and preserve the existing snapshot instead.
+        """
+        calls = []
+
+        def handler(request):
+            """Claim more records than are ever served.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            calls.append(request)
+            if request.url.params["skip"] != "0":
+                return httpx.Response(200, json={"count": 9999, "results": []})
+            page = [_reservation(f"R{i}") for i in range(100)]
+            return httpx.Response(200, json={"count": 9999, "results": page})
+
+        provider = _mock_provider(handler)
+        with pytest.raises(PMSProviderError, match="partial snapshot"):
+            await provider.get_reservations("L1")
+        await provider.aclose()
+
+        assert len(calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_exact_count_completes_without_empty_page(self):
+        """Test a run ending exactly on ``count`` does not raise.
+
+        The empty-page guard must not turn a legitimate completion into a
+        spurious error when the final page lands exactly on ``count``.
+        """
+        total = 200
+        calls = []
+
+        def handler(request):
+            """Serve exactly ``total`` records in full pages.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            calls.append(request)
+            skip = int(request.url.params["skip"])
+            page = [_reservation(f"R{i}") for i in range(skip, min(skip + 100, total))]
+            return httpx.Response(200, json={"count": total, "results": page})
+
+        provider = _mock_provider(handler)
+        reservations = await provider.get_reservations("L1")
+        await provider.aclose()
+
+        assert len(calls) == 2
+        assert len(reservations) == total
+
+    @pytest.mark.asyncio
+    async def test_missing_count_empty_first_page_returns_empty(self):
+        """Test the ``count``-less fallback still ends on an empty page."""
+        calls = []
+
+        def handler(request):
+            """Serve a single empty page without ``count`` metadata.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            calls.append(request)
+            return httpx.Response(200, json={"results": []})
+
+        provider = _mock_provider(handler)
+        reservations = await provider.get_reservations("L1")
+        await provider.aclose()
+
+        assert len(calls) == 1
+        assert reservations == []
+
+    @pytest.mark.asyncio
+    async def test_zero_count_returns_empty(self):
+        """Test a listing with no reservations completes cleanly."""
+
+        def handler(request):
+            """Report zero records.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            return httpx.Response(200, json={"count": 0, "results": []})
+
+        provider = _mock_provider(handler)
+        reservations = await provider.get_reservations("L1")
+        await provider.aclose()
+
+        assert reservations == []
+
+    @pytest.mark.asyncio
+    async def test_growing_count_raises_instead_of_partial(self):
+        """Test a ``count`` that grows mid-pagination raises.
+
+        A concurrent insertion into the unread portion of the result set
+        shifts records across page boundaries, so the pages already read and
+        the pages still to come describe different snapshots.  Trusting the
+        first ``count`` would stop early and omit a real tail booking, which
+        the sync prune logic would then cancel and drop from the iCal feed.
+        """
+        calls = []
+
+        def handler(request):
+            """Report 200 records, then 201 on the second page.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            calls.append(request)
+            skip = int(request.url.params["skip"])
+            total = 200 if skip == 0 else 201
+            page = [_reservation(f"R{i}") for i in range(skip, skip + 100)]
+            return httpx.Response(200, json={"count": total, "results": page})
+
+        provider = _mock_provider(handler)
+        with pytest.raises(PMSProviderError, match="count changed during") as excinfo:
+            await provider.get_reservations("L1")
+        await provider.aclose()
+
+        assert len(calls) == 2
+        message = str(excinfo.value)
+        assert "200" in message
+        assert "201" in message
+
+    @pytest.mark.asyncio
+    async def test_shrinking_count_raises_instead_of_partial(self):
+        """Test a ``count`` that shrinks mid-pagination raises.
+
+        A concurrent deletion is equally destructive: the remaining pages are
+        renumbered against a smaller result set, so records can be skipped
+        entirely and would be retired as unseen.
+        """
+        calls = []
+
+        def handler(request):
+            """Report 200 records, then 150 on the second page.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            calls.append(request)
+            skip = int(request.url.params["skip"])
+            total = 200 if skip == 0 else 150
+            page = [_reservation(f"R{i}") for i in range(skip, skip + 50)]
+            return httpx.Response(200, json={"count": total, "results": page})
+
+        provider = _mock_provider(handler)
+        with pytest.raises(PMSProviderError, match="count changed during") as excinfo:
+            await provider.get_reservations("L1")
+        await provider.aclose()
+
+        assert len(calls) == 2
+        message = str(excinfo.value)
+        assert "200" in message
+        assert "150" in message
+
+    @pytest.mark.asyncio
+    async def test_page_cap_raises(self, monkeypatch):
+        """Test exceeding the page cap raises instead of truncating."""
+        import src.providers.guesty.service as guesty_service
+
+        monkeypatch.setattr(guesty_service, "MAX_RESERVATION_PAGES", 3)
+
+        def handler(request):
+            """Always claim there is more to fetch.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            skip = int(request.url.params["skip"])
+            page = [_reservation(f"R{skip + i}") for i in range(100)]
+            return httpx.Response(200, json={"count": 100_000, "results": page})
+
+        provider = _mock_provider(handler)
+        with pytest.raises(PMSProviderError, match="exceeded 3 pages"):
+            await provider.get_reservations("L1")
+        await provider.aclose()
+
+
+class TestReservationWindowBounds:
+    """Window-bound handling for GuestyProvider.get_reservations.
+
+    The provider interface does not require timezone-aware bounds, and the
+    window filter is now applied client-side against UTC-aware parsed dates,
+    so naive bounds must be coerced rather than raising ``TypeError``.
+    """
+
+    @staticmethod
+    def _single_page_provider():
+        """Build a provider serving one in-window reservation.
+
+        Returns:
+            Configured GuestyProvider.
+        """
+
+        def handler(request):
+            """Serve a single reservation page.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            return httpx.Response(
+                200, json={"count": 1, "results": [_reservation("R1")]}
+            )
+
+        return _mock_provider(handler)
+
+    @pytest.mark.asyncio
+    async def test_aware_bounds(self):
+        """Test timezone-aware bounds select the overlapping stay."""
+        now = datetime.now(UTC)
+        provider = self._single_page_provider()
+        reservations = await provider.get_reservations(
+            "L1",
+            start_date=now - timedelta(days=10),
+            end_date=now + timedelta(days=10),
+        )
+        await provider.aclose()
+
+        assert len(reservations) == 1
+
+    @pytest.mark.asyncio
+    async def test_naive_bounds(self):
+        """Test naive bounds are treated as UTC instead of raising."""
+        now = datetime.now(UTC).replace(tzinfo=None)
+        provider = self._single_page_provider()
+        reservations = await provider.get_reservations(
+            "L1",
+            start_date=now - timedelta(days=10),
+            end_date=now + timedelta(days=10),
+        )
+        await provider.aclose()
+
+        assert len(reservations) == 1
+
+    @pytest.mark.asyncio
+    async def test_mixed_naive_and_aware_bounds(self):
+        """Test a naive start combined with an aware end is accepted."""
+        now = datetime.now(UTC)
+        provider = self._single_page_provider()
+        reservations = await provider.get_reservations(
+            "L1",
+            start_date=(now - timedelta(days=10)).replace(tzinfo=None),
+            end_date=now + timedelta(days=10),
+        )
+        await provider.aclose()
+
+        assert len(reservations) == 1
+
+    @pytest.mark.asyncio
+    async def test_naive_bounds_still_filter(self):
+        """Test naive bounds outside the stay still exclude it."""
+        now = datetime.now(UTC).replace(tzinfo=None)
+        provider = self._single_page_provider()
+        reservations = await provider.get_reservations(
+            "L1",
+            start_date=now - timedelta(days=60),
+            end_date=now - timedelta(days=30),
+        )
+        await provider.aclose()
+
+        assert reservations == []
 
 
 # ---------------------------------------------------------------------------
