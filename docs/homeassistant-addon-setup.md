@@ -53,6 +53,20 @@ variable. Set it to `debug` when gathering diagnostics (for example, to see how
 many reservations the PMS returned for each listing); any unrecognised value
 falls back to `info`.
 
+##### What `debug` does and does not log
+
+`debug` adds application diagnostics only: reservation identifiers, booking
+statuses, check-in/check-out dates, room identifiers and sync counts. Guest
+names, email addresses and phone numbers are not emitted by these diagnostics,
+and SQL statements, database driver activity and HTTP client traffic stay
+suppressed at `debug`, so the add-on log does not echo stored guest records or
+API credentials.
+
+This is a best-effort guarantee covering the add-on's own logging. Logs can
+still contain property names, listing slugs and provider error messages
+returned verbatim by your PMS. Always skim a log before pasting it into a
+public GitHub issue and redact anything you would not want published.
+
 ### 4. Start the Add-on
 
 1. Click **Start**
