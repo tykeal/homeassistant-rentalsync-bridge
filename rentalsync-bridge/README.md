@@ -84,6 +84,19 @@ docker run -d \
 3. Configure API key and start
 4. Access via Home Assistant sidebar
 
+Add-on options:
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `log_level` | Logging verbosity (`debug`, `info`, `warning`, `error`, `critical`) | `info` |
+
+Set `log_level` to `debug` when collecting diagnostics for a bug report.
+`debug` adds application diagnostics (reservation ids, statuses, dates, room
+ids and sync counts) and deliberately leaves SQL, database driver and HTTP
+client logging suppressed, so guest names, contact details and API credentials
+are not emitted. Provider error messages and property names can still appear,
+so review and redact a log before posting it publicly.
+
 ## Database Backup
 
 The SQLite database stores all configuration and cached bookings.

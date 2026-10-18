@@ -78,6 +78,9 @@ class BookingResponse(BaseModel):
 
     id: int = Field(description="Booking ID")
     pms_booking_id: str = Field(description="PMS booking ID")
+    room_id: int | None = Field(
+        default=None, description="Room ID (null for property-level bookings)"
+    )
     guest_name: str | None = Field(default=None, description="Guest name")
     guest_phone_last4: str | None = Field(
         default=None, description="Last 4 phone digits"
@@ -787,6 +790,7 @@ async def get_listing_bookings(
             {
                 "id": b.id,
                 "pms_booking_id": b.pms_booking_id,
+                "room_id": b.room_id,
                 "guest_name": b.guest_name,
                 "guest_phone_last4": b.guest_phone_last4,
                 "check_in_date": b.check_in_date.isoformat(),

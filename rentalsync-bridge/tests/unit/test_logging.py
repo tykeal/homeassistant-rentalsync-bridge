@@ -5,9 +5,12 @@
 import logging
 from io import StringIO
 
+from src.config import Settings
 from src.utils.logging import (
     LOG_DATE_FORMAT,
     LOG_FORMAT,
+    SENSITIVE_LOGGERS,
+    SQL_DEBUG_ENV_VAR,
     get_log_level,
     get_logger,
     setup_logging,
@@ -27,6 +30,30 @@ class TestGetLogLevel:
         # conftest sets LOG_LEVEL=DEBUG
         level = get_log_level()
         assert level == logging.DEBUG
+
+    def test_accepts_lowercase_addon_option_value(self, monkeypatch):
+        """Test lowercase values (as supplied by the add-on) are parsed."""
+        monkeypatch.setattr(
+            "src.utils.logging.get_settings",
+            lambda: Settings(log_level="warning"),
+        )
+        assert get_log_level() == logging.WARNING
+
+    def test_invalid_value_falls_back_to_info(self, monkeypatch):
+        """Test an unrecognised level falls back to INFO instead of raising."""
+        monkeypatch.setattr(
+            "src.utils.logging.get_settings",
+            lambda: Settings(log_level="verbose"),
+        )
+        assert get_log_level() == logging.INFO
+
+    def test_empty_value_falls_back_to_info(self, monkeypatch):
+        """Test an empty level (unset env var) falls back to INFO."""
+        monkeypatch.setattr(
+            "src.utils.logging.get_settings",
+            lambda: Settings(log_level=""),
+        )
+        assert get_log_level() == logging.INFO
 
 
 class TestSetupLogging:
@@ -75,6 +102,41 @@ class TestSetupLogging:
         output = stream.getvalue()
         assert "Test message" in output
         assert "INFO" in output
+
+
+class TestSensitiveLibraryLoggers:
+    """Tests that guest data and credentials stay out of DEBUG output."""
+
+    def test_sensitive_loggers_pinned_at_debug(self, monkeypatch):
+        """Test DEBUG never enables SQL, driver or HTTP client logging."""
+        monkeypatch.delenv(SQL_DEBUG_ENV_VAR, raising=False)
+        setup_logging(level=logging.DEBUG, stream=StringIO())
+
+        for name in SENSITIVE_LOGGERS:
+            library_logger = logging.getLogger(name)
+            assert library_logger.level >= logging.WARNING
+            assert not library_logger.isEnabledFor(logging.INFO)
+
+    def test_sql_logging_requires_explicit_env_opt_in(self, monkeypatch):
+        """Test the undocumented escape hatch re-enables SQL logging."""
+        monkeypatch.setenv(SQL_DEBUG_ENV_VAR, "true")
+        setup_logging(level=logging.DEBUG, stream=StringIO())
+
+        assert logging.getLogger("sqlalchemy.engine").level == logging.DEBUG
+        # The opt-in is scoped to the SQL engine only.
+        assert logging.getLogger("aiosqlite").level >= logging.WARNING
+
+    def test_addon_debug_option_does_not_enable_sql_logging(self, monkeypatch):
+        """Test the add-on log_level option cannot turn on SQL logging."""
+        monkeypatch.delenv(SQL_DEBUG_ENV_VAR, raising=False)
+        monkeypatch.setattr(
+            "src.utils.logging.get_settings",
+            lambda: Settings(log_level="debug"),
+        )
+        setup_logging(stream=StringIO())
+
+        assert logging.getLogger().level == logging.DEBUG
+        assert logging.getLogger("sqlalchemy.engine").level >= logging.WARNING
 
 
 class TestGetLogger:
