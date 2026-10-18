@@ -746,6 +746,78 @@ class TestReservationPagination:
         assert reservations == []
 
     @pytest.mark.asyncio
+    async def test_growing_count_raises_instead_of_partial(self):
+        """Test a ``count`` that grows mid-pagination raises.
+
+        A concurrent insertion into the unread portion of the result set
+        shifts records across page boundaries, so the pages already read and
+        the pages still to come describe different snapshots.  Trusting the
+        first ``count`` would stop early and omit a real tail booking, which
+        the sync prune logic would then cancel and drop from the iCal feed.
+        """
+        calls = []
+
+        def handler(request):
+            """Report 200 records, then 201 on the second page.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            calls.append(request)
+            skip = int(request.url.params["skip"])
+            total = 200 if skip == 0 else 201
+            page = [_reservation(f"R{i}") for i in range(skip, skip + 100)]
+            return httpx.Response(200, json={"count": total, "results": page})
+
+        provider = _mock_provider(handler)
+        with pytest.raises(PMSProviderError, match="count changed during") as excinfo:
+            await provider.get_reservations("L1")
+        await provider.aclose()
+
+        assert len(calls) == 2
+        message = str(excinfo.value)
+        assert "200" in message
+        assert "201" in message
+
+    @pytest.mark.asyncio
+    async def test_shrinking_count_raises_instead_of_partial(self):
+        """Test a ``count`` that shrinks mid-pagination raises.
+
+        A concurrent deletion is equally destructive: the remaining pages are
+        renumbered against a smaller result set, so records can be skipped
+        entirely and would be retired as unseen.
+        """
+        calls = []
+
+        def handler(request):
+            """Report 200 records, then 150 on the second page.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            calls.append(request)
+            skip = int(request.url.params["skip"])
+            total = 200 if skip == 0 else 150
+            page = [_reservation(f"R{i}") for i in range(skip, skip + 50)]
+            return httpx.Response(200, json={"count": total, "results": page})
+
+        provider = _mock_provider(handler)
+        with pytest.raises(PMSProviderError, match="count changed during") as excinfo:
+            await provider.get_reservations("L1")
+        await provider.aclose()
+
+        assert len(calls) == 2
+        message = str(excinfo.value)
+        assert "200" in message
+        assert "150" in message
+
+    @pytest.mark.asyncio
     async def test_page_cap_raises(self, monkeypatch):
         """Test exceeding the page cap raises instead of truncating."""
         import src.providers.guesty.service as guesty_service

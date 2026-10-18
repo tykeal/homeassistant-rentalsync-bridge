@@ -324,8 +324,9 @@ class GuestyProvider(PMSProvider):
 
         Raises:
             PMSProviderError: On API failure, if the API stops serving records
-                before ``count`` is reached, or if pagination does not
-                terminate within ``MAX_RESERVATION_PAGES``.
+                before ``count`` is reached, if ``count`` changes between
+                pages, or if pagination does not terminate within
+                ``MAX_RESERVATION_PAGES``.
         """
         if start_date is None:
             start_date = datetime.now(UTC) - timedelta(days=DEFAULT_LOOKBACK_DAYS)
@@ -360,12 +361,24 @@ class GuestyProvider(PMSProvider):
             results = data.get("results", [])
 
             raw_count = data.get("count")
-            if (
-                total is None
-                and isinstance(raw_count, int)
-                and not isinstance(raw_count, bool)
-            ):
-                total = raw_count
+            if isinstance(raw_count, int) and not isinstance(raw_count, bool):
+                if total is None:
+                    total = raw_count
+                elif raw_count != total:
+                    # The result set changed underneath pagination, so the
+                    # pages already collected describe a different snapshot
+                    # than the pages still to come.  Returning the mixture
+                    # would hand the sync prune logic a snapshot that can
+                    # omit a real booking, retiring it.  A concurrent write
+                    # is transient, so the next sync cycle should succeed.
+                    msg = (
+                        f"Guesty reservation count changed during pagination "
+                        f"for listing {listing_pms_id}: started at {total}, "
+                        f"page {page + 1} reported {raw_count}; refusing to "
+                        f"return an inconsistent snapshot (retry on the next "
+                        f"sync cycle)"
+                    )
+                    raise PMSProviderError(msg)
 
             for item in results:
                 mapped = self._map_reservation(item, listing_pms_id)
