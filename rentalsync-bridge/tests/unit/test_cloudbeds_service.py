@@ -344,18 +344,36 @@ class TestGetReservationsDateWindow:
         assert end >= now + timedelta(days=364)
 
     @pytest.mark.asyncio
-    async def test_status_filter_includes_cancellations(self, monkeypatch):
-        """Test cancellations are requested so they are not silently absent."""
+    async def test_no_status_param_and_cancellations_retained(self, monkeypatch):
+        """Test ``status`` is omitted and cancellations still come through.
+
+        The Cloudbeds v1.3 ``getReservations`` spec declares ``status`` as a
+        single-value enum, so the comma-separated list previously sent was
+        not a valid value.  Statuses are filtered client-side instead; every
+        status that must be propagated has to survive that filter.
+        """
         from unittest.mock import AsyncMock, MagicMock
 
         captured_kwargs = {}
+        payload = [
+            {"reservationID": "R-CONFIRMED", "status": "confirmed"},
+            {"reservationID": "R-CHECKED-IN", "status": "checked_in"},
+            {"reservationID": "R-CHECKED-OUT", "status": "checked_out"},
+            {"reservationID": "R-CANCELED", "status": "canceled"},
+            {"reservationID": "R-NO-SHOW", "status": "no_show"},
+            {"reservationID": "R-NOT-CONFIRMED", "status": "not_confirmed"},
+        ]
 
         async def capture_get(*args, **kwargs):
-            """Capture GET kwargs for assertion."""
+            """Capture GET kwargs and serve the payload.
+
+            Returns:
+                Mocked response object.
+            """
             captured_kwargs.update(kwargs)
             mock_response = MagicMock()
             mock_response.status_code = 200
-            mock_response.json.return_value = {"success": True, "data": []}
+            mock_response.json.return_value = {"success": True, "data": payload}
             return mock_response
 
         mock_client = AsyncMock()
@@ -368,17 +386,67 @@ class TestGetReservationsDateWindow:
         monkeypatch.setattr(httpx, "AsyncClient", lambda: mock_client)
 
         service = CloudbedsService(access_token="test_token")
-        await service.get_reservations("PROP_ABC")
+        reservations = await service.get_reservations("PROP_ABC")
 
-        statuses = captured_kwargs["params"]["status"].split(",")
-        # Cloudbeds spells the cancelled status with a single "l"
-        assert "canceled" in statuses
-        assert "confirmed" in statuses
-        assert "checked_in" in statuses
-        assert "checked_out" in statuses
-        # A guest who never arrived must be returned so the stored booking is
-        # retired instead of lingering as confirmed.
-        assert "no_show" in statuses
+        assert "status" not in captured_kwargs["params"]
+
+        returned = {r["reservationID"] for r in reservations}
+        # Cancellations and no-shows must still be returned so SyncService
+        # can retire the stored bookings instead of leaving them confirmed.
+        assert "R-CANCELED" in returned
+        assert "R-NO-SHOW" in returned
+        assert {"R-CONFIRMED", "R-CHECKED-IN", "R-CHECKED-OUT"} <= returned
+        # Unfulfilled holds are not stays and must be dropped locally.
+        assert "R-NOT-CONFIRMED" not in returned
+
+    @pytest.mark.asyncio
+    async def test_excluded_status_does_not_end_pagination(self, monkeypatch):
+        """Test the client-side status filter cannot truncate pagination."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        pages = {
+            1: [
+                {
+                    "reservationID": f"R{i}",
+                    "status": "not_confirmed" if i % 2 else "confirmed",
+                }
+                for i in range(RESERVATIONS_PAGE_SIZE)
+            ],
+            2: [{"reservationID": "R-LAST", "status": "confirmed"}],
+        }
+        requested = []
+
+        async def capture_get(*args, **kwargs):
+            """Serve a full page then a short page.
+
+            Returns:
+                Mocked response object.
+            """
+            page_number = int(kwargs["params"]["pageNumber"])
+            requested.append(page_number)
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {
+                "success": True,
+                "data": pages.get(page_number, []),
+            }
+            return mock_response
+
+        mock_client = AsyncMock()
+        mock_client.get = capture_get
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        import httpx
+
+        monkeypatch.setattr(httpx, "AsyncClient", lambda: mock_client)
+
+        service = CloudbedsService(access_token="test_token")
+        reservations = await service.get_reservations("PROP_ABC")
+
+        assert requested == [1, 2]
+        assert any(r["reservationID"] == "R-LAST" for r in reservations)
+        assert all(r["status"] != "not_confirmed" for r in reservations)
 
 
 class TestGetReservationsPagination:
