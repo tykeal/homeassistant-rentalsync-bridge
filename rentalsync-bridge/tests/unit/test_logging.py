@@ -5,6 +5,7 @@
 import logging
 from io import StringIO
 
+from src.config import Settings
 from src.utils.logging import (
     LOG_DATE_FORMAT,
     LOG_FORMAT,
@@ -27,6 +28,30 @@ class TestGetLogLevel:
         # conftest sets LOG_LEVEL=DEBUG
         level = get_log_level()
         assert level == logging.DEBUG
+
+    def test_accepts_lowercase_addon_option_value(self, monkeypatch):
+        """Test lowercase values (as supplied by the add-on) are parsed."""
+        monkeypatch.setattr(
+            "src.utils.logging.get_settings",
+            lambda: Settings(log_level="warning"),
+        )
+        assert get_log_level() == logging.WARNING
+
+    def test_invalid_value_falls_back_to_info(self, monkeypatch):
+        """Test an unrecognised level falls back to INFO instead of raising."""
+        monkeypatch.setattr(
+            "src.utils.logging.get_settings",
+            lambda: Settings(log_level="verbose"),
+        )
+        assert get_log_level() == logging.INFO
+
+    def test_empty_value_falls_back_to_info(self, monkeypatch):
+        """Test an empty level (unset env var) falls back to INFO."""
+        monkeypatch.setattr(
+            "src.utils.logging.get_settings",
+            lambda: Settings(log_level=""),
+        )
+        assert get_log_level() == logging.INFO
 
 
 class TestSetupLogging:

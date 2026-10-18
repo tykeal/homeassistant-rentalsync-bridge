@@ -11,7 +11,12 @@ if [ -f "$CONFIG_PATH" ]; then
     export CLOUDBEDS_CLIENT_ID=$(jq -r '.cloudbeds_client_id // empty' "$CONFIG_PATH")
     export CLOUDBEDS_CLIENT_SECRET=$(jq -r '.cloudbeds_client_secret // empty' "$CONFIG_PATH")
     export SYNC_INTERVAL_MINUTES=$(jq -r '.sync_interval_minutes // 5' "$CONFIG_PATH")
+    LOG_LEVEL=$(jq -r '.log_level // "info"' "$CONFIG_PATH")
+    export LOG_LEVEL="${LOG_LEVEL^^}"
 fi
+
+# Fall back to INFO when no add-on options are present
+export LOG_LEVEL="${LOG_LEVEL:-INFO}"
 
 # Set database path for Home Assistant data persistence
 export DATABASE_URL="${DATABASE_URL:-sqlite:////data/rentalsync.db}"

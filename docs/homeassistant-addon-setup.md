@@ -36,6 +36,7 @@ Navigate to the add-on's **Configuration** tab and set:
 ```yaml
 cloudbeds_api_key: "your-api-key-here"
 timezone: "America/New_York"
+log_level: info
 ```
 
 #### Configuration Options
@@ -44,7 +45,13 @@ timezone: "America/New_York"
 |--------|-------------|---------|
 | `cloudbeds_api_key` | Your Cloudbeds API key | Required |
 | `timezone` | IANA timezone identifier | `UTC` |
-| `log_level` | Logging verbosity (DEBUG, INFO, WARNING, ERROR) | `INFO` |
+| `log_level` | Logging verbosity | `info` |
+
+The `log_level` option accepts `debug`, `info`, `warning`, `error` or
+`critical` and is passed to the application as the `LOG_LEVEL` environment
+variable. Set it to `debug` when gathering diagnostics (for example, to see how
+many reservations the PMS returned for each listing); any unrecognised value
+falls back to `info`.
 
 ### 4. Start the Add-on
 
