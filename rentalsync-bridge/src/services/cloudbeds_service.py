@@ -296,12 +296,14 @@ class CloudbedsService:
 
                 reservations: list[dict[str, Any]] = data.get("data", [])
                 if reservations and page_number == 1:
-                    # Log first reservation to see structure including room keys
+                    # Log only the payload's field names: values may contain
+                    # guest names, emails and phone numbers, and these logs
+                    # are routinely pasted into public issue reports.
                     first_res = reservations[0]
                     room_keys = [k for k in first_res if "room" in k.lower()]
                     logger.debug(
-                        "Sample reservation data: %s (room-related keys: %s)",
-                        first_res,
+                        "Reservation payload fields: %s (room-related keys: %s)",
+                        sorted(first_res),
                         room_keys,
                     )
                 return reservations
@@ -370,7 +372,6 @@ class CloudbedsService:
                     raise CloudbedsServiceError(msg)
 
                 data = response.json()
-                logger.debug("getRooms response for property %s: %s", property_id, data)
 
                 if not data.get("success"):
                     msg = f"API returned error: {data}"
@@ -383,6 +384,15 @@ class CloudbedsService:
                 for prop in properties_data:
                     if isinstance(prop, dict) and "rooms" in prop:
                         rooms.extend(prop["rooms"])
+                if rooms:
+                    # Field names only: room payloads are provider data that
+                    # may carry free-text values, and these logs are pasted
+                    # into public issue reports.
+                    logger.debug(
+                        "Room payload fields for property %s: %s",
+                        property_id,
+                        sorted(rooms[0]) if isinstance(rooms[0], dict) else [],
+                    )
                 logger.info("Fetched %d rooms for property %s", len(rooms), property_id)
                 return rooms
 
