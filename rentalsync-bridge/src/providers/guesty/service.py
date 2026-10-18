@@ -320,7 +320,8 @@ class GuestyProvider(PMSProvider):
             List of PMSReservation DTOs whose stay overlaps the window.
 
         Raises:
-            PMSProviderError: On API failure or if pagination does not
+            PMSProviderError: On API failure, if the API stops serving records
+                before ``count`` is reached, or if pagination does not
                 terminate within ``MAX_RESERVATION_PAGES``.
         """
         if start_date is None:
@@ -375,15 +376,15 @@ class GuestyProvider(PMSProvider):
             elif fetched >= total:
                 return reservations
             elif not results:
-                logger.warning(
-                    "Guesty returned an empty reservations page for listing %s "
-                    "after %d of %d records (page %d); stopping",
-                    listing_pms_id,
-                    fetched,
-                    total,
-                    page + 1,
+                # ``count`` promised more records than the API will serve.
+                # Returning what we have would hand the sync prune logic a
+                # known-incomplete snapshot, retiring every unseen booking.
+                msg = (
+                    f"Guesty returned an empty reservations page for listing "
+                    f"{listing_pms_id} after {fetched} of {total} records "
+                    f"(page {page + 1}); refusing to return a partial snapshot"
                 )
-                return reservations
+                raise PMSProviderError(msg)
 
         msg = (
             f"Guesty /v1/reservations exceeded {MAX_RESERVATION_PAGES} pages for "

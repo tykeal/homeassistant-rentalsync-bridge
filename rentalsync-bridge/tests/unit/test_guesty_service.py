@@ -637,8 +637,14 @@ class TestReservationPagination:
         assert len(reservations) == 101
 
     @pytest.mark.asyncio
-    async def test_empty_page_stops_without_partial_loop(self):
-        """Test an inconsistent ``count`` cannot spin forever."""
+    async def test_empty_page_raises_instead_of_partial(self):
+        """Test an inconsistent ``count`` raises rather than truncating.
+
+        An empty page while records remain outstanding means the API will not
+        serve the rest of the snapshot.  Returning the records gathered so far
+        would let the sync prune logic cancel every unseen future booking, so
+        the run must fail and preserve the existing snapshot instead.
+        """
         calls = []
 
         def handler(request):
@@ -657,11 +663,87 @@ class TestReservationPagination:
             return httpx.Response(200, json={"count": 9999, "results": page})
 
         provider = _mock_provider(handler)
+        with pytest.raises(PMSProviderError, match="partial snapshot"):
+            await provider.get_reservations("L1")
+        await provider.aclose()
+
+        assert len(calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_exact_count_completes_without_empty_page(self):
+        """Test a run ending exactly on ``count`` does not raise.
+
+        The empty-page guard must not turn a legitimate completion into a
+        spurious error when the final page lands exactly on ``count``.
+        """
+        total = 200
+        calls = []
+
+        def handler(request):
+            """Serve exactly ``total`` records in full pages.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            calls.append(request)
+            skip = int(request.url.params["skip"])
+            page = [_reservation(f"R{i}") for i in range(skip, min(skip + 100, total))]
+            return httpx.Response(200, json={"count": total, "results": page})
+
+        provider = _mock_provider(handler)
         reservations = await provider.get_reservations("L1")
         await provider.aclose()
 
         assert len(calls) == 2
-        assert len(reservations) == 100
+        assert len(reservations) == total
+
+    @pytest.mark.asyncio
+    async def test_missing_count_empty_first_page_returns_empty(self):
+        """Test the ``count``-less fallback still ends on an empty page."""
+        calls = []
+
+        def handler(request):
+            """Serve a single empty page without ``count`` metadata.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            calls.append(request)
+            return httpx.Response(200, json={"results": []})
+
+        provider = _mock_provider(handler)
+        reservations = await provider.get_reservations("L1")
+        await provider.aclose()
+
+        assert len(calls) == 1
+        assert reservations == []
+
+    @pytest.mark.asyncio
+    async def test_zero_count_returns_empty(self):
+        """Test a listing with no reservations completes cleanly."""
+
+        def handler(request):
+            """Report zero records.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            return httpx.Response(200, json={"count": 0, "results": []})
+
+        provider = _mock_provider(handler)
+        reservations = await provider.get_reservations("L1")
+        await provider.aclose()
+
+        assert reservations == []
 
     @pytest.mark.asyncio
     async def test_page_cap_raises(self, monkeypatch):
