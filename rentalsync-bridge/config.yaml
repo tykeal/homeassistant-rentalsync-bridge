@@ -23,8 +23,10 @@ hassio_api: false
 map:
   - ssl:ro
   - config:rw
-options: {}
-schema: {}
+options:
+  log_level: info
+schema:
+  log_level: list(debug|info|warning|error|critical)?
 ports:
   8099/tcp: null
 ports_description:

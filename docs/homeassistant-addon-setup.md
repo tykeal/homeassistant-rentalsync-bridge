@@ -36,6 +36,7 @@ Navigate to the add-on's **Configuration** tab and set:
 ```yaml
 cloudbeds_api_key: "your-api-key-here"
 timezone: "America/New_York"
+log_level: info
 ```
 
 #### Configuration Options
@@ -44,7 +45,27 @@ timezone: "America/New_York"
 |--------|-------------|---------|
 | `cloudbeds_api_key` | Your Cloudbeds API key | Required |
 | `timezone` | IANA timezone identifier | `UTC` |
-| `log_level` | Logging verbosity (DEBUG, INFO, WARNING, ERROR) | `INFO` |
+| `log_level` | Logging verbosity | `info` |
+
+The `log_level` option accepts `debug`, `info`, `warning`, `error` or
+`critical` and is passed to the application as the `LOG_LEVEL` environment
+variable. Set it to `debug` when gathering diagnostics (for example, to see how
+many reservations the PMS returned for each listing); any unrecognised value
+falls back to `info`.
+
+##### What `debug` does and does not log
+
+`debug` adds application diagnostics only: reservation identifiers, booking
+statuses, check-in/check-out dates, room identifiers and sync counts. Guest
+names, email addresses and phone numbers are not emitted by these diagnostics,
+and SQL statements, database driver activity and HTTP client traffic stay
+suppressed at `debug`, so the add-on log does not echo stored guest records or
+API credentials.
+
+This is a best-effort guarantee covering the add-on's own logging. Logs can
+still contain property names, listing slugs and provider error messages
+returned verbatim by your PMS. Always skim a log before pasting it into a
+public GitHub issue and redact anything you would not want published.
 
 ### 4. Start the Add-on
 

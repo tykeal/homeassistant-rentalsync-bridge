@@ -92,6 +92,7 @@ class SyncService:
 
         try:
             reservations = await provider.get_reservations(listing.pms_id)
+            fetched_count = len(reservations)
 
             # Drop stays that checked out before the retention cutoff: the
             # fetch window is deliberately wide so in-progress stays are
@@ -99,6 +100,15 @@ class SyncService:
             # resurrect bookings the retention purge already deleted.
             # Filtering here also avoids needless enrichment API calls.
             reservations = self._filter_to_retention_window(reservations)
+
+            logger.info(
+                "Provider returned %d reservation(s) for listing %s; "
+                "%d remain after retention filtering",
+                fetched_count,
+                listing.pms_id,
+                len(reservations),
+            )
+            self._log_reservation_snapshot(listing, reservations)
 
             # Resolve guest names for reservations that lack them
             reservations = await self._resolve_guest_names(provider, reservations)
@@ -125,6 +135,36 @@ class SyncService:
                 error_msg,
             )
             raise SyncServiceError(error_msg) from e
+
+    @staticmethod
+    def _log_reservation_snapshot(
+        listing: Listing,
+        reservations: list[PMSReservation],
+    ) -> None:
+        """Log a PII-free summary of the provider snapshot at DEBUG level.
+
+        Only identifiers, statuses and dates are emitted: these logs are
+        routinely pasted into public issue reports, so guest names, emails
+        and phone numbers must never appear here.
+
+        Args:
+            listing: Listing being synced.
+            reservations: Reservations retained for processing.
+        """
+        if not logger.isEnabledFor(logging.DEBUG):
+            return
+
+        for reservation in reservations:
+            logger.debug(
+                "Reservation snapshot for listing %s: id=%s status=%s "
+                "check_in=%s check_out=%s rooms=%s",
+                listing.pms_id,
+                reservation.pms_booking_id,
+                reservation.status,
+                reservation.check_in.isoformat() if reservation.check_in else None,
+                reservation.check_out.isoformat() if reservation.check_out else None,
+                list(reservation.room_ids),
+            )
 
     async def _persist_sync_error(self, listing_id: int, error_msg: str) -> None:
         """Persist sync error status using a separate session.
@@ -251,6 +291,14 @@ class SyncService:
                     "absent from provider response",
                     booking_id,
                     listing.pms_id,
+                )
+                logger.debug(
+                    "In-progress guard kept booking %s: check_in=%s "
+                    "check_out=%s status=%s",
+                    booking_id,
+                    existing_booking.check_in_date.isoformat(),
+                    existing_booking.check_out_date.isoformat(),
+                    existing_booking.status,
                 )
                 continue
             # Reservation no longer exists at all

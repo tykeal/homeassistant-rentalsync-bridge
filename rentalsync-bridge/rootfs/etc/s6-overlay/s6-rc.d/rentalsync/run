@@ -8,6 +8,15 @@ set -e
 
 bashio::log.info "Starting RentalSync Bridge..."
 
+# Apply the configured log level (falls back to INFO when unset/invalid)
+if bashio::config.has_value 'log_level'; then
+    LOG_LEVEL=$(bashio::config 'log_level')
+    export LOG_LEVEL="${LOG_LEVEL^^}"
+else
+    export LOG_LEVEL="INFO"
+fi
+bashio::log.info "Log level: ${LOG_LEVEL}"
+
 # Set database path for Home Assistant data persistence
 export DATABASE_URL="${DATABASE_URL:-sqlite:////data/rentalsync.db}"
 

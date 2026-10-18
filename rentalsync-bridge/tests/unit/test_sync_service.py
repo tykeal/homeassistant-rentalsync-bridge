@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for sync service."""
 
+import logging
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
@@ -2052,3 +2053,130 @@ class TestCustomFieldEnrichment:
 
         assert enriched is reservations
         mock_provider.get_custom_fields.assert_not_called()
+
+
+def _sync_log_text(caplog) -> str:
+    """Join log records emitted by the sync service only.
+
+    Use this for positive assertions about sync service messages.  Privacy
+    assertions must use :func:`_all_log_text` instead: filtering by logger
+    name hides anything a library logger leaks.
+    """
+    return "\n".join(
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "src.services.sync_service"
+    )
+
+
+def _all_log_text(caplog) -> str:
+    """Join every captured log record, whatever logger emitted it.
+
+    Privacy assertions must cover the complete output, including records
+    from SQLAlchemy, aiosqlite and HTTP clients.
+    """
+    return "\n".join(record.getMessage() for record in caplog.records)
+
+
+class TestSyncObservabilityLogging:
+    """Tests for diagnostic logging emitted by sync_listing."""
+
+    @pytest.mark.asyncio
+    async def test_logs_provider_and_retained_counts(
+        self, sync_session, test_listing, mock_provider, caplog
+    ):
+        """Test INFO log reports fetched and post-filter reservation counts."""
+        sync_session.add(test_listing)
+        await sync_session.commit()
+        await sync_session.refresh(test_listing)
+
+        stale_checkout = _test_date(-(OLD_BOOKING_RETENTION_DAYS + 10))
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(pms_booking_id="RES_KEEP"),
+                _make_reservation(
+                    pms_booking_id="RES_OLD",
+                    check_in=stale_checkout - timedelta(days=3),
+                    check_out=stale_checkout,
+                ),
+            ]
+        )
+
+        service = SyncService(sync_session)
+        with caplog.at_level(logging.INFO, logger="src.services.sync_service"):
+            await service.sync_listing(test_listing, mock_provider)
+
+        assert (
+            "Provider returned 2 reservation(s) for listing PROP123; "
+            "1 remain after retention filtering" in _sync_log_text(caplog)
+        )
+
+    @pytest.mark.asyncio
+    async def test_debug_snapshot_has_ids_dates_and_no_pii(
+        self, sync_session, test_listing, mock_provider, caplog
+    ):
+        """Test DEBUG snapshot logs identifiers/dates but never guest data."""
+        sync_session.add(test_listing)
+        await sync_session.commit()
+        await sync_session.refresh(test_listing)
+
+        check_in = _test_date(-1)
+        check_out = _test_date(2)
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_PII",
+                    guest_name="Jane Doe",
+                    check_in=check_in,
+                    check_out=check_out,
+                    room_ids=("ROOM1",),
+                    custom_data={"guest_phone_last4": "4567"},
+                ),
+            ]
+        )
+
+        service = SyncService(sync_session)
+        with caplog.at_level(logging.DEBUG, logger="src.services.sync_service"):
+            await service.sync_listing(test_listing, mock_provider)
+
+        log_text = _sync_log_text(caplog)
+        assert "id=RES_PII" in log_text
+        assert "status=confirmed" in log_text
+        assert check_in.isoformat() in log_text
+        assert check_out.isoformat() in log_text
+
+        # Privacy assertions cover every logger, not just the sync service.
+        all_text = _all_log_text(caplog)
+        assert "Jane Doe" not in all_text
+        assert "4567" not in all_text
+
+    @pytest.mark.asyncio
+    async def test_in_progress_guard_logs_booking_id_at_debug(
+        self, sync_session, test_listing, mock_provider, caplog
+    ):
+        """Test the in-progress prune guard logs its decision at DEBUG."""
+        sync_session.add(test_listing)
+        await sync_session.commit()
+        await sync_session.refresh(test_listing)
+
+        booking = Booking(
+            listing_id=test_listing.id,
+            pms_booking_id="RES_INPROGRESS",
+            guest_name="Jane Doe",
+            check_in_date=_test_date(-2),
+            check_out_date=_test_date(2),
+            status="confirmed",
+        )
+        sync_session.add(booking)
+        await sync_session.commit()
+
+        mock_provider.get_reservations = AsyncMock(return_value=[])
+
+        service = SyncService(sync_session)
+        with caplog.at_level(logging.DEBUG, logger="src.services.sync_service"):
+            result = await service.sync_listing(test_listing, mock_provider)
+
+        assert result["cancelled"] == 0
+        log_text = _sync_log_text(caplog)
+        assert "In-progress guard kept booking RES_INPROGRESS" in log_text
+        assert "Jane Doe" not in _all_log_text(caplog)
