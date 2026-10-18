@@ -10,7 +10,6 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.ical import get_calendar_cache
 from src.database import get_db
 from src.models.custom_field import CustomField
 from src.repositories.available_field_repository import (
@@ -19,6 +18,7 @@ from src.repositories.available_field_repository import (
 )
 from src.repositories.custom_field_repository import CustomFieldRepository
 from src.repositories.listing_repository import ListingRepository
+from src.services.calendar_service import get_calendar_cache
 
 logger = logging.getLogger(__name__)
 
