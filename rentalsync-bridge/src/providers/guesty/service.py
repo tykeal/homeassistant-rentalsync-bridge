@@ -36,12 +36,21 @@ MAX_RETRIES = 3
 INITIAL_BACKOFF = 1.0
 MAX_BACKOFF = 30.0
 
-# Guesty's ``checkIn``/``checkOut`` filters bound the respective fields
-# (checkIn >= value, checkOut <= value); there is no overlap filter on the
-# v1 endpoint.  The lower bound must therefore reach far enough back to
-# include stays that began before the current sync but are still in progress.
+# Guesty's v1 ``/reservations`` endpoint does not document named
+# ``checkIn``/``checkOut`` (nor ``startDate``/``endDate``) query parameters:
+# the official OpenAPI definition only exposes a generic ``filters`` array of
+# ``{field, operator, value}`` objects, and whether unknown query parameters
+# are rejected or silently ignored is NOT documented.  Rather than guess at an
+# undocumented contract, the stay window is applied client-side: we fetch the
+# superset for the listing and keep stays overlapping the window.  The lower
+# bound must reach far enough back to include stays that began before the
+# current sync but are still in progress.
 DEFAULT_LOOKBACK_DAYS = 365
 DEFAULT_LOOKAHEAD_DAYS = 365
+
+# Upper bound on reservation pages so an absent or inconsistent ``count``
+# cannot spin forever.  100 records per page * 500 pages = 50k reservations.
+MAX_RESERVATION_PAGES = 500
 
 # Guesty statuses that map to our normalised reservation statuses.
 _STATUS_MAP: dict[str, str] = {
@@ -303,15 +312,16 @@ class GuestyProvider(PMSProvider):
 
         Args:
             listing_pms_id: Guesty listing ID.
-            start_date: Start filter (default: 365 days ago, so that
-                in-progress stays which began before today are returned).
-            end_date: End filter (default: 365 days ahead).
+            start_date: Start of the stay window (default: 365 days ago, so
+                that in-progress stays which began before today are kept).
+            end_date: End of the stay window (default: 365 days ahead).
 
         Returns:
-            List of PMSReservation DTOs.
+            List of PMSReservation DTOs whose stay overlaps the window.
 
         Raises:
-            PMSProviderError: On API failure.
+            PMSProviderError: On API failure or if pagination does not
+                terminate within ``MAX_RESERVATION_PAGES``.
         """
         if start_date is None:
             start_date = datetime.now(UTC) - timedelta(days=DEFAULT_LOOKBACK_DAYS)
@@ -321,30 +331,65 @@ class GuestyProvider(PMSProvider):
         statuses = "confirmed,checked_in,checked_out,canceled"
         reservations: list[PMSReservation] = []
         skip = 0
+        fetched = 0
+        total: int | None = None
 
-        while True:
+        # Accumulate every page before returning: the sync prune logic treats
+        # an absent reservation as cancelled, so a partial snapshot must never
+        # be returned.  Any page failure propagates out of ``_request`` and
+        # discards the whole run.
+        for page in range(MAX_RESERVATION_PAGES):
+            # No stay-date filter is sent: see DEFAULT_LOOKBACK_DAYS above.
             params: dict[str, Any] = {
                 "listingId": listing_pms_id,
                 "status": statuses,
                 "limit": DEFAULT_PAGE_LIMIT,
                 "skip": skip,
-                "checkIn": start_date.strftime("%Y-%m-%d"),
-                "checkOut": end_date.strftime("%Y-%m-%d"),
             }
             response = await self._request("GET", "/v1/reservations", params=params)
             data = response.json()
             results = data.get("results", [])
 
+            raw_count = data.get("count")
+            if (
+                total is None
+                and isinstance(raw_count, int)
+                and not isinstance(raw_count, bool)
+            ):
+                total = raw_count
+
             for item in results:
                 mapped = self._map_reservation(item, listing_pms_id)
-                if mapped is not None:
+                if mapped is not None and _overlaps_window(
+                    mapped, start_date, end_date
+                ):
                     reservations.append(mapped)
 
-            if len(results) < DEFAULT_PAGE_LIMIT:
-                break
-            skip += DEFAULT_PAGE_LIMIT
+            fetched += len(results)
+            skip += len(results)
 
-        return reservations
+            if total is None:
+                # ``count`` absent: fall back to the short-page heuristic.
+                if len(results) < DEFAULT_PAGE_LIMIT:
+                    return reservations
+            elif fetched >= total:
+                return reservations
+            elif not results:
+                logger.warning(
+                    "Guesty returned an empty reservations page for listing %s "
+                    "after %d of %d records (page %d); stopping",
+                    listing_pms_id,
+                    fetched,
+                    total,
+                    page + 1,
+                )
+                return reservations
+
+        msg = (
+            f"Guesty /v1/reservations exceeded {MAX_RESERVATION_PAGES} pages for "
+            f"listing {listing_pms_id}; refusing to return a partial snapshot"
+        )
+        raise PMSProviderError(msg)
 
     async def get_rooms(self, listing_pms_id: str) -> list[PMSRoom]:
         """Fetch rooms/units for a Guesty listing.
@@ -632,6 +677,28 @@ class GuestyProvider(PMSProvider):
 
 
 # -- module-level helpers ------------------------------------------------------
+
+
+def _overlaps_window(
+    reservation: PMSReservation,
+    start: datetime,
+    end: datetime,
+) -> bool:
+    """Report whether a reservation's stay overlaps the requested window.
+
+    Applied client-side because Guesty's v1 ``/reservations`` endpoint has no
+    documented named stay-date query parameters (see DEFAULT_LOOKBACK_DAYS).
+
+    Args:
+        reservation: Mapped reservation DTO.
+        start: Inclusive lower bound of the window.
+        end: Inclusive upper bound of the window.
+
+    Returns:
+        True if the stay intersects ``[start, end]``.
+    """
+    return reservation.check_out >= start and reservation.check_in <= end
+
 
 # Keys extracted from top-level reservation data.
 _CUSTOM_KEYS = ("source", "confirmationCode", "nightsCount", "guestsCount")
