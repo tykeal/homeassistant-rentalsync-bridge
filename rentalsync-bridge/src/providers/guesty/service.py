@@ -23,6 +23,7 @@ from src.providers.base import (
 )
 from src.providers.guesty.auth import GUESTY_TOKEN_URL, GuestyTokenManager
 from src.providers.registry import provider
+from src.utils.datetime_utils import ensure_utc
 
 if TYPE_CHECKING:
     from src.models.oauth_credential import OAuthCredential
@@ -314,7 +315,9 @@ class GuestyProvider(PMSProvider):
             listing_pms_id: Guesty listing ID.
             start_date: Start of the stay window (default: 365 days ago, so
                 that in-progress stays which began before today are kept).
+                Naive values are interpreted as UTC.
             end_date: End of the stay window (default: 365 days ahead).
+                Naive values are interpreted as UTC.
 
         Returns:
             List of PMSReservation DTOs whose stay overlaps the window.
@@ -328,6 +331,11 @@ class GuestyProvider(PMSProvider):
             start_date = datetime.now(UTC) - timedelta(days=DEFAULT_LOOKBACK_DAYS)
         if end_date is None:
             end_date = datetime.now(UTC) + timedelta(days=DEFAULT_LOOKAHEAD_DAYS)
+
+        # The provider interface does not require timezone-aware bounds, but
+        # the window check below compares against UTC-aware parsed dates.
+        start_date = ensure_utc(start_date)
+        end_date = ensure_utc(end_date)
 
         statuses = "confirmed,checked_in,checked_out,canceled"
         reservations: list[PMSReservation] = []
@@ -766,7 +774,7 @@ def _parse_date(value: str | datetime | None) -> datetime:
         raise PMSProviderError(msg)
 
     if isinstance(value, datetime):
-        return value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
+        return ensure_utc(value)
 
     if value.endswith("Z"):
         value = value[:-1] + "+00:00"
@@ -779,7 +787,7 @@ def _parse_date(value: str | datetime | None) -> datetime:
         except (ValueError, TypeError) as exc:
             msg = f"Cannot parse date value: {value!r}"
             raise PMSProviderError(msg) from exc
-    return dt.astimezone(UTC) if dt.tzinfo else dt.replace(tzinfo=UTC)
+    return ensure_utc(dt)
 
 
 def _parse_retry_after(response: httpx.Response) -> float | None:

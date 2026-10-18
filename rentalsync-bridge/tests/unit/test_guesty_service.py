@@ -771,6 +771,94 @@ class TestReservationPagination:
         await provider.aclose()
 
 
+class TestReservationWindowBounds:
+    """Window-bound handling for GuestyProvider.get_reservations.
+
+    The provider interface does not require timezone-aware bounds, and the
+    window filter is now applied client-side against UTC-aware parsed dates,
+    so naive bounds must be coerced rather than raising ``TypeError``.
+    """
+
+    @staticmethod
+    def _single_page_provider():
+        """Build a provider serving one in-window reservation.
+
+        Returns:
+            Configured GuestyProvider.
+        """
+
+        def handler(request):
+            """Serve a single reservation page.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            return httpx.Response(
+                200, json={"count": 1, "results": [_reservation("R1")]}
+            )
+
+        return _mock_provider(handler)
+
+    @pytest.mark.asyncio
+    async def test_aware_bounds(self):
+        """Test timezone-aware bounds select the overlapping stay."""
+        now = datetime.now(UTC)
+        provider = self._single_page_provider()
+        reservations = await provider.get_reservations(
+            "L1",
+            start_date=now - timedelta(days=10),
+            end_date=now + timedelta(days=10),
+        )
+        await provider.aclose()
+
+        assert len(reservations) == 1
+
+    @pytest.mark.asyncio
+    async def test_naive_bounds(self):
+        """Test naive bounds are treated as UTC instead of raising."""
+        now = datetime.now(UTC).replace(tzinfo=None)
+        provider = self._single_page_provider()
+        reservations = await provider.get_reservations(
+            "L1",
+            start_date=now - timedelta(days=10),
+            end_date=now + timedelta(days=10),
+        )
+        await provider.aclose()
+
+        assert len(reservations) == 1
+
+    @pytest.mark.asyncio
+    async def test_mixed_naive_and_aware_bounds(self):
+        """Test a naive start combined with an aware end is accepted."""
+        now = datetime.now(UTC)
+        provider = self._single_page_provider()
+        reservations = await provider.get_reservations(
+            "L1",
+            start_date=(now - timedelta(days=10)).replace(tzinfo=None),
+            end_date=now + timedelta(days=10),
+        )
+        await provider.aclose()
+
+        assert len(reservations) == 1
+
+    @pytest.mark.asyncio
+    async def test_naive_bounds_still_filter(self):
+        """Test naive bounds outside the stay still exclude it."""
+        now = datetime.now(UTC).replace(tzinfo=None)
+        provider = self._single_page_provider()
+        reservations = await provider.get_reservations(
+            "L1",
+            start_date=now - timedelta(days=60),
+            end_date=now - timedelta(days=30),
+        )
+        await provider.aclose()
+
+        assert reservations == []
+
+
 # ---------------------------------------------------------------------------
 # get_rooms
 # ---------------------------------------------------------------------------
