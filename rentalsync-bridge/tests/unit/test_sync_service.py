@@ -2058,14 +2058,24 @@ class TestCustomFieldEnrichment:
 def _sync_log_text(caplog) -> str:
     """Join log records emitted by the sync service only.
 
-    Other libraries (SQLAlchemy, aiosqlite) echo full SQL at DEBUG, so
-    assertions about what the sync service logs must ignore them.
+    Use this for positive assertions about sync service messages.  Privacy
+    assertions must use :func:`_all_log_text` instead: filtering by logger
+    name hides anything a library logger leaks.
     """
     return "\n".join(
         record.getMessage()
         for record in caplog.records
         if record.name == "src.services.sync_service"
     )
+
+
+def _all_log_text(caplog) -> str:
+    """Join every captured log record, whatever logger emitted it.
+
+    Privacy assertions must cover the complete output, including records
+    from SQLAlchemy, aiosqlite and HTTP clients.
+    """
+    return "\n".join(record.getMessage() for record in caplog.records)
 
 
 class TestSyncObservabilityLogging:
@@ -2134,8 +2144,11 @@ class TestSyncObservabilityLogging:
         assert "status=confirmed" in log_text
         assert check_in.isoformat() in log_text
         assert check_out.isoformat() in log_text
-        assert "Jane Doe" not in log_text
-        assert "4567" not in log_text
+
+        # Privacy assertions cover every logger, not just the sync service.
+        all_text = _all_log_text(caplog)
+        assert "Jane Doe" not in all_text
+        assert "4567" not in all_text
 
     @pytest.mark.asyncio
     async def test_in_progress_guard_logs_booking_id_at_debug(
@@ -2166,4 +2179,4 @@ class TestSyncObservabilityLogging:
         assert result["cancelled"] == 0
         log_text = _sync_log_text(caplog)
         assert "In-progress guard kept booking RES_INPROGRESS" in log_text
-        assert "Jane Doe" not in log_text
+        assert "Jane Doe" not in _all_log_text(caplog)
