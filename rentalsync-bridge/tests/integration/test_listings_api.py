@@ -733,6 +733,70 @@ class TestGetListingBookings:
         assert data["bookings"][0]["guest_name"] == "John Doe"
         assert data["bookings"][0]["guest_phone_last4"] == "1234"
 
+    @pytest.mark.asyncio
+    async def test_get_bookings_includes_room_id(self, listings_app, listings_session):
+        """Test response exposes room_id, including the NULL case."""
+        from datetime import datetime
+
+        from src.models.room import Room
+
+        listing = Listing(
+            pms_id="ROOMIDS",
+            name="Room Ids Property",
+            ical_url_slug="room-ids",
+            enabled=True,
+            sync_enabled=True,
+        )
+        listings_session.add(listing)
+        await listings_session.commit()
+        await listings_session.refresh(listing)
+
+        room = Room(
+            listing_id=listing.id,
+            pms_room_id="ROOM-A",
+            room_name="Room A",
+            ical_url_slug="room-a",
+            enabled=True,
+        )
+        listings_session.add(room)
+        await listings_session.commit()
+        await listings_session.refresh(room)
+
+        listings_session.add_all(
+            [
+                Booking(
+                    listing_id=listing.id,
+                    room_id=room.id,
+                    pms_booking_id="RES_ROOM",
+                    check_in_date=datetime(2024, 4, 1),
+                    check_out_date=datetime(2024, 4, 5),
+                    status="confirmed",
+                ),
+                Booking(
+                    listing_id=listing.id,
+                    room_id=None,
+                    pms_booking_id="RES_NOROOM",
+                    check_in_date=datetime(2024, 4, 10),
+                    check_out_date=datetime(2024, 4, 15),
+                    status="confirmed",
+                ),
+            ]
+        )
+        await listings_session.commit()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=listings_app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                f"/api/listings/{listing.id}/bookings",
+                headers={"Authorization": "******"},
+            )
+
+        assert response.status_code == 200
+        bookings = {b["pms_booking_id"]: b for b in response.json()["bookings"]}
+        assert bookings["RES_ROOM"]["room_id"] == room.id
+        assert bookings["RES_NOROOM"]["room_id"] is None
+
 
 class TestSyncProperties:
     """Tests for POST /api/listings/sync-properties endpoint."""
