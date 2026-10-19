@@ -325,7 +325,8 @@ class GuestyProvider(PMSProvider):
 
         Raises:
             PMSProviderError: On API failure (including the listing-scope
-                lookup), if the API stops serving records before ``count`` is
+                lookup), if a returned reservation names no listing at all,
+                if the API stops serving records before ``count`` is
                 reached, if ``count`` changes between pages, or if pagination
                 does not terminate within ``MAX_RESERVATION_PAGES``.
         """
@@ -463,11 +464,15 @@ class GuestyProvider(PMSProvider):
 
         Returns:
             Number of records discarded as belonging to another listing.
+
+        Raises:
+            PMSProviderError: If a reservation names no listing at all and
+                therefore cannot be attributed to any listing.
         """
         start, end = window
         foreign = 0
         for item in results:
-            if not _belongs_to_listing(item, scope_ids):
+            if not _belongs_to_listing(item, scope_ids, listing_pms_id):
                 foreign += 1
                 continue
             mapped = self._map_reservation(item, listing_pms_id)
@@ -831,7 +836,11 @@ def _reservation_listing_refs(raw: dict[str, Any]) -> set[str]:
     return refs
 
 
-def _belongs_to_listing(raw: dict[str, Any], scope_ids: frozenset[str]) -> bool:
+def _belongs_to_listing(
+    raw: dict[str, Any],
+    scope_ids: frozenset[str],
+    listing_pms_id: str,
+) -> bool:
     """Report whether a raw reservation belongs to the listing being synced.
 
     Guesty silently ignores query parameters it does not recognise, so the
@@ -839,20 +848,39 @@ def _belongs_to_listing(raw: dict[str, Any], scope_ids: frozenset[str]) -> bool:
     filter returns the whole account and every listing would then store every
     reservation.  This check is the authoritative scope boundary.
 
-    A reservation that names no listing at all is accepted: dropping it would
-    hand the sync prune logic a snapshot missing a real booking, which retires
-    it.
+    A reservation that carries no usable listing reference at all cannot be
+    attributed, and neither available fallback is safe:
+
+    * accepting it is fail-open — ``_resolve_room_id()`` substitutes the
+      listing currently being synced, so a single-unit listing attaches the
+      foreign record to its own room and exports it into the wrong calendar;
+    * dropping it hands the sync prune logic a snapshot missing a real
+      booking, which retires it.
+
+    So the run is aborted instead, leaving existing data untouched and
+    surfacing the provider response that broke the assumption.
 
     Args:
         raw: Raw reservation dict from the Guesty API.
         scope_ids: Listing IDs owned by the listing being synced.
+        listing_pms_id: Guesty listing ID being synced, named in the error.
 
     Returns:
-        True if the reservation belongs to the listing.
+        True if the reservation belongs to the listing.  False when it names
+        listings that are simply not ours — a normal, expected exclusion.
+
+    Raises:
+        PMSProviderError: If the reservation names no listing at all.
     """
     refs = _reservation_listing_refs(raw)
     if not refs:
-        return True
+        reservation_id = str(raw.get("_id") or "<unknown>")
+        msg = (
+            f"Guesty reservation {reservation_id} carries no listing "
+            f"reference while syncing listing {listing_pms_id}; refusing to "
+            f"guess its owner (please report this reservation ID)"
+        )
+        raise PMSProviderError(msg)
     return bool(refs & scope_ids)
 
 

@@ -705,6 +705,47 @@ class TestReservationListingScope:
         assert json.loads(seen[0].params["filters"])[0]["value"] == ["C1", "P1"]
 
     @pytest.mark.asyncio
+    async def test_unattributable_reservation_raises(self):
+        """Test a reservation naming no listing aborts the fetch.
+
+        Accepting it is fail-open: ``_resolve_room_id()`` would substitute
+        the listing being synced and export a foreign stay into the wrong
+        calendar.  Dropping it is also unsafe because the sync prune logic
+        cancels any booking missing from the snapshot.
+        """
+        orphan = self._stay("R-ORPHAN", None)
+        orphan.pop("listingId")
+        account = {"count": 2, "results": [self._stay("R-MINE", "L1"), orphan]}
+        provider, _ = _scoped_provider({"_id": "L1", "title": "Beach"}, account)
+
+        with pytest.raises(PMSProviderError, match="R-ORPHAN") as excinfo:
+            await provider.get_reservations("L1")
+        await provider.aclose()
+
+        assert "L1" in str(excinfo.value)
+
+    @pytest.mark.asyncio
+    async def test_mismatched_reservation_excluded_quietly(self):
+        """Test a reservation naming another listing is filtered, not raised.
+
+        Only the "no usable reference whatsoever" case is exceptional; a
+        record that simply belongs elsewhere is a normal exclusion.
+        """
+        account = {
+            "count": 2,
+            "results": [
+                self._stay("R-MINE", "L1"),
+                self._stay("R-OTHER", "L2", parentListingId="P2"),
+            ],
+        }
+        provider, _ = _scoped_provider({"_id": "L1", "title": "Beach"}, account)
+
+        reservations = await provider.get_reservations("L1")
+        await provider.aclose()
+
+        assert [r.pms_booking_id for r in reservations] == ["R-MINE"]
+
+    @pytest.mark.asyncio
     async def test_scope_lookup_failure_raises(self):
         """Test a failed scope lookup aborts rather than returning data.
 
