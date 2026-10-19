@@ -3,6 +3,7 @@
 """Guesty PMS provider — full Guesty Open API integration."""
 
 import asyncio
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -37,15 +38,14 @@ MAX_RETRIES = 3
 INITIAL_BACKOFF = 1.0
 MAX_BACKOFF = 30.0
 
-# Guesty's v1 ``/reservations`` endpoint does not document named
-# ``checkIn``/``checkOut`` (nor ``startDate``/``endDate``) query parameters:
-# the official OpenAPI definition only exposes a generic ``filters`` array of
-# ``{field, operator, value}`` objects, and whether unknown query parameters
-# are rejected or silently ignored is NOT documented.  Rather than guess at an
-# undocumented contract, the stay window is applied client-side: we fetch the
-# superset for the listing and keep stays overlapping the window.  The lower
-# bound must reach far enough back to include stays that began before the
-# current sync but are still in progress.
+# Guesty's v1 ``/reservations`` endpoint exposes only ``viewId``, ``filters``,
+# ``fields``, ``sort``, ``limit`` (max 100) and ``skip``.  There are no named
+# ``checkIn``/``checkOut`` (nor ``startDate``/``endDate``) query parameters, so
+# the stay window is applied client-side: we fetch the superset for the listing
+# and keep stays overlapping the window.  The lower bound must reach far enough
+# back to include stays that began before the current sync but are still in
+# progress.
+# Reference: https://open-api-docs.guesty.com/reference/reservationsV2List
 DEFAULT_LOOKBACK_DAYS = 365
 DEFAULT_LOOKAHEAD_DAYS = 365
 
@@ -320,13 +320,14 @@ class GuestyProvider(PMSProvider):
                 Naive values are interpreted as UTC.
 
         Returns:
-            List of PMSReservation DTOs whose stay overlaps the window.
+            List of PMSReservation DTOs belonging to this listing whose stay
+            overlaps the window.
 
         Raises:
-            PMSProviderError: On API failure, if the API stops serving records
-                before ``count`` is reached, if ``count`` changes between
-                pages, or if pagination does not terminate within
-                ``MAX_RESERVATION_PAGES``.
+            PMSProviderError: On API failure (including the listing-scope
+                lookup), if the API stops serving records before ``count`` is
+                reached, if ``count`` changes between pages, or if pagination
+                does not terminate within ``MAX_RESERVATION_PAGES``.
         """
         if start_date is None:
             start_date = datetime.now(UTC) - timedelta(days=DEFAULT_LOOKBACK_DAYS)
@@ -338,8 +339,24 @@ class GuestyProvider(PMSProvider):
         start_date = ensure_utc(start_date)
         end_date = ensure_utc(end_date)
 
-        statuses = "confirmed,checked_in,checked_out,canceled"
+        # Resolve the identifiers whose reservations belong to this listing
+        # before any reservation page is requested.  A failure here raises
+        # out of ``get_rooms`` and aborts the whole fetch, so the sync prune
+        # logic is never handed an unscoped or empty snapshot.
+        scope_ids = await self._listing_scope_ids(listing_pms_id)
+        listing_filter = json.dumps(
+            [
+                {
+                    "field": "listingId",
+                    "operator": "$in",
+                    "value": sorted(scope_ids),
+                }
+            ],
+            separators=(",", ":"),
+        )
+
         reservations: list[PMSReservation] = []
+        foreign = 0
         skip = 0
         fetched = 0
         total: int | None = None
@@ -351,8 +368,7 @@ class GuestyProvider(PMSProvider):
         for page in range(MAX_RESERVATION_PAGES):
             # No stay-date filter is sent: see DEFAULT_LOOKBACK_DAYS above.
             params: dict[str, Any] = {
-                "listingId": listing_pms_id,
-                "status": statuses,
+                "filters": listing_filter,
                 "limit": DEFAULT_PAGE_LIMIT,
                 "skip": skip,
             }
@@ -380,12 +396,13 @@ class GuestyProvider(PMSProvider):
                     )
                     raise PMSProviderError(msg)
 
-            for item in results:
-                mapped = self._map_reservation(item, listing_pms_id)
-                if mapped is not None and _overlaps_window(
-                    mapped, start_date, end_date
-                ):
-                    reservations.append(mapped)
+            foreign += self._collect_page(
+                results,
+                listing_pms_id,
+                scope_ids,
+                (start_date, end_date),
+                reservations,
+            )
 
             fetched += len(results)
             skip += len(results)
@@ -393,9 +410,9 @@ class GuestyProvider(PMSProvider):
             if total is None:
                 # ``count`` absent: fall back to the short-page heuristic.
                 if len(results) < DEFAULT_PAGE_LIMIT:
-                    return reservations
+                    break
             elif fetched >= total:
-                return reservations
+                break
             elif not results:
                 # ``count`` promised more records than the API will serve.
                 # Returning what we have would hand the sync prune logic a
@@ -406,12 +423,79 @@ class GuestyProvider(PMSProvider):
                     f"(page {page + 1}); refusing to return a partial snapshot"
                 )
                 raise PMSProviderError(msg)
+        else:
+            msg = (
+                f"Guesty /v1/reservations exceeded {MAX_RESERVATION_PAGES} pages for "
+                f"listing {listing_pms_id}; refusing to return a partial snapshot"
+            )
+            raise PMSProviderError(msg)
 
-        msg = (
-            f"Guesty /v1/reservations exceeded {MAX_RESERVATION_PAGES} pages for "
-            f"listing {listing_pms_id}; refusing to return a partial snapshot"
-        )
-        raise PMSProviderError(msg)
+        if foreign:
+            logger.debug(
+                "Discarded %d reservation(s) belonging to another listing "
+                "while syncing listing %s",
+                foreign,
+                listing_pms_id,
+            )
+        return reservations
+
+    def _collect_page(
+        self,
+        results: list[dict[str, Any]],
+        listing_pms_id: str,
+        scope_ids: frozenset[str],
+        window: tuple[datetime, datetime],
+        out: list[PMSReservation],
+    ) -> int:
+        """Map one reservation page into *out*, skipping foreign records.
+
+        Guesty silently ignores query parameters it does not recognise, so
+        the server-side listing filter cannot be trusted on its own: an
+        unhonoured filter returns the whole account and every listing would
+        then store every reservation.
+
+        Args:
+            results: Raw reservation dicts from one response page.
+            listing_pms_id: Guesty listing ID being synced.
+            scope_ids: Listing IDs owned by the listing being synced.
+            window: Inclusive ``(start, end)`` stay-overlap bounds.
+            out: Accumulator the mapped reservations are appended to.
+
+        Returns:
+            Number of records discarded as belonging to another listing.
+        """
+        start, end = window
+        foreign = 0
+        for item in results:
+            if not _belongs_to_listing(item, scope_ids):
+                foreign += 1
+                continue
+            mapped = self._map_reservation(item, listing_pms_id)
+            if mapped is not None and _overlaps_window(mapped, start, end):
+                out.append(mapped)
+        return foreign
+
+    async def _listing_scope_ids(self, listing_pms_id: str) -> frozenset[str]:
+        """Collect the Guesty listing IDs owned by a synced listing.
+
+        For a single-unit listing this is just its own ID.  For a multi-unit
+        ("MTL") parent it also includes every child sub-unit listing ID,
+        because Guesty computes a reservation's ``listingId`` as
+        ``unitId ?? unitTypeId`` — an assigned stay reports the child, not
+        the parent we are syncing.
+
+        Args:
+            listing_pms_id: Guesty listing ID being synced.
+
+        Returns:
+            Frozen set of listing IDs whose reservations belong to this
+            listing.
+
+        Raises:
+            PMSProviderError: On API failure.
+        """
+        rooms = await self.get_rooms(listing_pms_id)
+        return frozenset({listing_pms_id, *(room.pms_room_id for room in rooms)})
 
     async def get_rooms(self, listing_pms_id: str) -> list[PMSRoom]:
         """Fetch rooms/units for a Guesty listing.
@@ -698,6 +782,78 @@ class GuestyProvider(PMSProvider):
 
 
 # -- module-level helpers ------------------------------------------------------
+
+
+_LISTING_REF_KEYS = ("listingId", "parentListingId", "unitTypeId", "unitId")
+
+
+def _reservation_listing_refs(raw: dict[str, Any]) -> set[str]:
+    """Collect every listing identifier a raw reservation refers to.
+
+    Guesty spreads the owning listing across several fields depending on the
+    property type and API generation: the top-level ``listingId`` is computed
+    as ``unitId ?? unitTypeId``, the stay segments carry ``unitId`` and
+    ``unitTypeId``, v3 payloads add ``parentListingId``, and legacy payloads
+    use the ``mtl`` block.
+
+    Args:
+        raw: Raw reservation dict from the Guesty API.
+
+    Returns:
+        Set of non-empty listing identifiers referenced by the reservation.
+    """
+    refs: set[str] = set()
+
+    def _add(source: dict[str, Any], keys: tuple[str, ...]) -> None:
+        """Add the non-empty values of *keys* in *source* to ``refs``.
+
+        Args:
+            source: Mapping to read from.
+            keys: Keys whose values are listing identifiers.
+        """
+        for key in keys:
+            value = source.get(key)
+            if value:
+                refs.add(str(value))
+
+    _add(raw, _LISTING_REF_KEYS)
+
+    stay = raw.get("stay")
+    if isinstance(stay, list):
+        for segment in stay:
+            if isinstance(segment, dict):
+                _add(segment, _LISTING_REF_KEYS)
+
+    mtl = raw.get("mtl")
+    if isinstance(mtl, dict):
+        _add(mtl, ("_id", "p"))
+
+    return refs
+
+
+def _belongs_to_listing(raw: dict[str, Any], scope_ids: frozenset[str]) -> bool:
+    """Report whether a raw reservation belongs to the listing being synced.
+
+    Guesty silently ignores query parameters it does not recognise, so the
+    server-side listing filter cannot be trusted on its own: an unhonoured
+    filter returns the whole account and every listing would then store every
+    reservation.  This check is the authoritative scope boundary.
+
+    A reservation that names no listing at all is accepted: dropping it would
+    hand the sync prune logic a snapshot missing a real booking, which retires
+    it.
+
+    Args:
+        raw: Raw reservation dict from the Guesty API.
+        scope_ids: Listing IDs owned by the listing being synced.
+
+    Returns:
+        True if the reservation belongs to the listing.
+    """
+    refs = _reservation_listing_refs(raw)
+    if not refs:
+        return True
+    return bool(refs & scope_ids)
 
 
 def _resolve_room_id(raw: dict[str, Any], listing_pms_id: str) -> str:
