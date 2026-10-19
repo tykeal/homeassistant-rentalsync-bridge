@@ -1673,6 +1673,142 @@ class TestRoomAssociation:
             "RES_TRANSITION::200-1",
         }
 
+    @pytest.mark.asyncio
+    async def test_unassigned_unit_logged_without_warning(
+        self, sync_session, mock_provider, caplog
+    ):
+        """Test an unassigned multi-unit stay does not warn every sync.
+
+        A reservation the PMS has not allocated to a physical unit reports
+        the parent listing in the room position.  That is a normal state, so
+        it must be reported informationally while still reaching the
+        listing-level calendar.
+        """
+        from src.models.room import Room
+
+        listing = Listing(
+            pms_id="MTL_PARENT",
+            name="Multi Unit",
+            ical_url_slug="multi-unit",
+            enabled=True,
+            sync_enabled=True,
+        )
+        sync_session.add(listing)
+        await sync_session.commit()
+        await sync_session.refresh(listing)
+
+        sync_session.add(
+            Room(
+                listing_id=listing.id,
+                pms_room_id="MTL_CHILD",
+                room_name="4785b",
+                ical_url_slug="4785b",
+                enabled=True,
+            )
+        )
+        await sync_session.commit()
+
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_UNASSIGNED",
+                    guest_name="Unassigned Guest",
+                    room_ids=("MTL_PARENT",),
+                ),
+            ]
+        )
+
+        service = SyncService(sync_session)
+        with caplog.at_level(logging.INFO, logger="src.services.sync_service"):
+            await service.sync_listing(listing, mock_provider)
+
+        assert "not assigned to a specific unit" in _sync_log_text(caplog)
+        assert not [
+            record
+            for record in caplog.records
+            if record.name == "src.services.sync_service"
+            and record.levelno >= logging.WARNING
+        ]
+
+        stmt = select(Booking).where(
+            Booking.pms_booking_id == "RES_UNASSIGNED::MTL_PARENT"
+        )
+        db_result = await sync_session.execute(stmt)
+        assert db_result.scalar_one().room_id is None
+
+    @pytest.mark.asyncio
+    async def test_unknown_room_still_warns(self, sync_session, mock_provider, caplog):
+        """Test a genuinely unknown room reference keeps warning."""
+        from src.models.room import Room
+
+        listing = Listing(
+            pms_id="WARN_PARENT",
+            name="Warn Listing",
+            ical_url_slug="warn-listing",
+            enabled=True,
+            sync_enabled=True,
+        )
+        sync_session.add(listing)
+        await sync_session.commit()
+        await sync_session.refresh(listing)
+
+        sync_session.add(
+            Room(
+                listing_id=listing.id,
+                pms_room_id="KNOWN_ROOM",
+                room_name="Known",
+                ical_url_slug="known",
+                enabled=True,
+            )
+        )
+        await sync_session.commit()
+
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_STRAY",
+                    guest_name="Stray Guest",
+                    room_ids=("STRAY_ROOM",),
+                ),
+            ]
+        )
+
+        service = SyncService(sync_session)
+        with caplog.at_level(logging.INFO, logger="src.services.sync_service"):
+            await service.sync_listing(listing, mock_provider)
+
+        assert "Room STRAY_ROOM not found" in _sync_log_text(caplog)
+
+    @pytest.mark.asyncio
+    async def test_unsynced_rooms_still_warn(self, sync_session, mock_provider, caplog):
+        """Test a listing with no rooms yet keeps the actionable warning."""
+        listing = Listing(
+            pms_id="NO_ROOMS",
+            name="No Rooms",
+            ical_url_slug="no-rooms",
+            enabled=True,
+            sync_enabled=True,
+        )
+        sync_session.add(listing)
+        await sync_session.commit()
+        await sync_session.refresh(listing)
+
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_NO_ROOMS",
+                    guest_name="Pending Guest",
+                    room_ids=("NO_ROOMS",),
+                ),
+            ]
+        )
+
+        service = SyncService(sync_session)
+        with caplog.at_level(logging.INFO, logger="src.services.sync_service"):
+            await service.sync_listing(listing, mock_provider)
+
+        assert "Sync rooms first" in _sync_log_text(caplog)
+
 
 class TestGuestResolution:
     """Tests for provider-agnostic guest name resolution."""

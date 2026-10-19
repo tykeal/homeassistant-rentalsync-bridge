@@ -428,12 +428,7 @@ class SyncService:
                 room = await self._room_repo.get_by_pms_id(listing.id, pms_room_id)
                 db_room_id: int | None = room.id if room else None
                 if not room:
-                    logger.warning(
-                        "Room %s not found for booking %s - booking will "
-                        "not appear in room calendars. Sync rooms first.",
-                        pms_room_id,
-                        pms_booking_id,
-                    )
+                    await self._log_missing_room(listing, pms_room_id, pms_booking_id)
 
                 final_booking_data = {
                     **base_booking,
@@ -449,6 +444,43 @@ class SyncService:
                     updated += 1
 
         return inserted, updated, booking_ids
+
+    async def _log_missing_room(
+        self,
+        listing: Listing,
+        pms_room_id: str,
+        pms_booking_id: str,
+    ) -> None:
+        """Report a reservation whose room reference matches no known room.
+
+        A multi-unit reservation that the PMS has not yet allocated to a
+        physical unit reports the parent listing in the room position.  That
+        is a normal operating state, not a misconfiguration, so it is logged
+        at INFO as long as the listing already has rooms synced.  Anything
+        else keeps the actionable warning.
+
+        Args:
+            listing: The listing being synced.
+            pms_room_id: The unmatched room reference from the provider.
+            pms_booking_id: The PMS reservation ID.
+        """
+        if pms_room_id == listing.pms_id:
+            rooms = await self._room_repo.get_by_listing_id(listing.id)
+            if rooms:
+                logger.info(
+                    "Booking %s on listing %s is not assigned to a specific "
+                    "unit - it will appear in the listing calendar only",
+                    pms_booking_id,
+                    listing.pms_id,
+                )
+                return
+
+        logger.warning(
+            "Room %s not found for booking %s - booking will "
+            "not appear in room calendars. Sync rooms first.",
+            pms_room_id,
+            pms_booking_id,
+        )
 
     async def _upsert_single_booking(
         self,
