@@ -76,6 +76,9 @@ class SyncService:
     ) -> dict[str, int]:
         """Sync bookings for a single listing.
 
+        The booking snapshot and the resulting sync status are both committed
+        before this returns, so callers do not have to commit on its behalf.
+
         Args:
             listing: Listing to sync bookings for.
             provider: PMSProvider instance for API access.
@@ -118,9 +121,16 @@ class SyncService:
 
             counts = await self._process_reservations(listing, reservations)
 
-            # Update sync status on success
+            # Update sync status on success.  This has to be committed here
+            # rather than left pending for the caller: ``_process_reservations``
+            # has already committed the booking snapshot, so nothing else in
+            # this transaction is waiting to be grouped with the timestamp, and
+            # callers that loop over several listings (the scheduler) would
+            # otherwise discard the final listing's status when the session is
+            # closed without a trailing commit.
             listing.last_sync_at = datetime.now(UTC)
             listing.last_sync_error = None
+            await self._session.commit()
 
             return counts
 
