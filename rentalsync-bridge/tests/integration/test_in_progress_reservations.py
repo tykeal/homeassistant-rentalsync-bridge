@@ -8,6 +8,7 @@ asserts on the parsed ``.ics`` output.  A stay that started before today and
 ends after it must never disappear from the exported feed.
 """
 
+import json
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
@@ -308,7 +309,11 @@ async def test_guesty_http_pipeline(async_session, async_session_factory):
     captured: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        """Serve a single count-terminated page of Guesty reservations.
+        """Serve the listing document and one page of Guesty reservations.
+
+        The stays report the child sub-unit in ``listingId``, so the listing
+        document must advertise it as a child for the scope check to accept
+        them.
 
         Args:
             request: Outgoing request.
@@ -316,6 +321,15 @@ async def test_guesty_http_pipeline(async_session, async_session_factory):
         Returns:
             Mocked JSON response.
         """
+        if request.url.path.startswith("/v1/listings/"):
+            return httpx.Response(
+                200,
+                json={
+                    "_id": LISTING_PMS_ID,
+                    "title": "Prop",
+                    "childListings": [{"_id": ROOM_PMS_ID, "title": "Unit"}],
+                },
+            )
         captured.append(request)
         return httpx.Response(200, json={"results": results, "count": len(results)})
 
@@ -332,7 +346,16 @@ async def test_guesty_http_pipeline(async_session, async_session_factory):
     await provider.aclose()
 
     params = captured[0].url.params
-    assert params["listingId"] == LISTING_PMS_ID
+    # The listing scope is sent as Guesty's documented ``filters`` array:
+    # /v1/reservations has no top-level ``listingId`` parameter.
+    assert json.loads(params["filters"]) == [
+        {
+            "field": "listingId",
+            "operator": "$in",
+            "value": sorted([LISTING_PMS_ID, ROOM_PMS_ID]),
+        }
+    ]
+    assert "listingId" not in params
     # Undocumented stay-date filters must not be sent; the window is applied
     # client-side over the fetched superset instead.
     assert "checkIn" not in params

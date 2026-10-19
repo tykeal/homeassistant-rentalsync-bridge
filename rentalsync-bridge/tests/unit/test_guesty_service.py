@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for GuestyProvider."""
 
+import json
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -474,15 +475,17 @@ class TestGetReservations:
         assert r1.room_ids == ("L1",)
 
     @pytest.mark.asyncio
-    async def test_no_undocumented_date_filters_sent(
+    async def test_scopes_query_with_documented_filters(
         self, guesty_provider, mock_http_client
     ):
-        """Test that undocumented stay-date query params are not sent.
+        """Test the listing scope is sent as a documented ``filters`` array.
 
-        Guesty's v1 ``/reservations`` OpenAPI definition exposes only a
-        generic ``filters`` array -- there are no ``checkIn``/``checkOut``
-        or ``startDate``/``endDate`` query parameters -- and whether the API
-        rejects or silently ignores unknown parameters is undocumented.
+        Guesty's v1 ``/reservations`` endpoint exposes only ``viewId``,
+        ``filters``, ``fields``, ``sort``, ``limit`` and ``skip`` -- there is
+        no top-level ``listingId`` or ``status`` parameter, and no
+        ``checkIn``/``checkOut`` stay-window parameters.  Unknown parameters
+        are silently ignored, so sending them scoped nothing at all.
+        https://open-api-docs.guesty.com/reference/reservationsV2List
         """
         mock_http_client.request = AsyncMock(
             return_value=_make_response({"results": [], "count": 0})
@@ -494,8 +497,17 @@ class TestGetReservations:
 
         call_kwargs = mock_http_client.request.call_args
         params = call_kwargs.kwargs.get("params") or call_kwargs[1].get("params", {})
-        assert params["listingId"] == "L1"
-        for unsupported in ("checkIn", "checkOut", "startDate", "endDate"):
+        assert json.loads(params["filters"]) == [
+            {"field": "listingId", "operator": "$in", "value": ["L1"]}
+        ]
+        for unsupported in (
+            "listingId",
+            "status",
+            "checkIn",
+            "checkOut",
+            "startDate",
+            "endDate",
+        ):
             assert unsupported not in params
 
     @pytest.mark.asyncio
@@ -575,6 +587,290 @@ class TestGetReservations:
         assert "ANCIENT" not in ids
 
 
+def _scoped_provider(listing_json, reservations_json):
+    """Build a provider serving a listing document and one reservation page.
+
+    Args:
+        listing_json: Body returned for ``GET /v1/listings/{id}``.
+        reservations_json: Body returned for ``GET /v1/reservations``.
+
+    Returns:
+        Tuple of (GuestyProvider, list collecting reservation request URLs).
+    """
+    seen = []
+
+    def handler(request):
+        """Serve the listing document or the reservation page.
+
+        Args:
+            request: Outgoing request.
+
+        Returns:
+            Mocked JSON response.
+        """
+        if request.url.path.startswith("/v1/listings/"):
+            return httpx.Response(200, json=listing_json)
+        seen.append(request.url)
+        return httpx.Response(200, json=reservations_json)
+
+    token_manager = AsyncMock()
+    token_manager.get_token = AsyncMock(return_value="tok")
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url=GUESTY_BASE_URL,
+    )
+    return GuestyProvider(token_manager=token_manager, http_client=client), seen
+
+
+class TestReservationListingScope:
+    """Reservations must never leak between listings (issue #111).
+
+    Guesty's v1 ``/reservations`` endpoint has no top-level ``listingId``
+    parameter and silently ignores unknown query parameters, so an account's
+    entire reservation set was previously stored under every listing.
+    """
+
+    @staticmethod
+    def _stay(booking_id, listing_id, **extra):
+        """Build a raw in-window reservation for *listing_id*.
+
+        Args:
+            booking_id: Reservation ``_id``.
+            listing_id: Value for the top-level ``listingId``.
+            **extra: Additional raw reservation keys.
+
+        Returns:
+            Raw reservation dict.
+        """
+        return {
+            "_id": booking_id,
+            "status": "confirmed",
+            "checkIn": _rel(-1),
+            "checkOut": _rel(2),
+            "listingId": listing_id,
+            **extra,
+        }
+
+    @pytest.mark.asyncio
+    async def test_foreign_listing_reservations_discarded(self):
+        """Test only the synced listing's reservations are returned."""
+        account = {
+            "count": 3,
+            "results": [
+                self._stay("R-MINE", "L1"),
+                self._stay("R-OTHER", "L2"),
+                self._stay("R-THIRD", "L3"),
+            ],
+        }
+        provider, seen = _scoped_provider({"_id": "L1", "title": "Beach"}, account)
+
+        reservations = await provider.get_reservations("L1")
+        await provider.aclose()
+
+        assert [r.pms_booking_id for r in reservations] == ["R-MINE"]
+        assert json.loads(seen[0].params["filters"]) == [
+            {"field": "listingId", "operator": "$in", "value": ["L1"]}
+        ]
+
+    @pytest.mark.asyncio
+    async def test_multi_unit_child_reservation_retained(self):
+        """Test an assigned sub-unit stay still belongs to its parent.
+
+        Guesty computes a reservation's ``listingId`` as
+        ``unitId ?? unitTypeId``, so an assigned multi-unit stay reports the
+        child sub-unit rather than the parent listing being synced.
+        """
+        parent = {
+            "_id": "P1",
+            "title": "Lodge",
+            "childListings": [{"_id": "C1", "title": "Unit 1"}],
+        }
+        account = {
+            "count": 2,
+            "results": [
+                self._stay(
+                    "R-CHILD", "C1", stay=[{"unitTypeId": "P1", "unitId": "C1"}]
+                ),
+                self._stay("R-FOREIGN", "C9", stay=[{"unitTypeId": "P9"}]),
+            ],
+        }
+        provider, seen = _scoped_provider(parent, account)
+
+        reservations = await provider.get_reservations("P1")
+        await provider.aclose()
+
+        assert [r.pms_booking_id for r in reservations] == ["R-CHILD"]
+        assert reservations[0].room_ids == ("C1",)
+        assert reservations[0].listing_pms_id == "P1"
+        assert json.loads(seen[0].params["filters"])[0]["value"] == ["C1", "P1"]
+
+    @pytest.mark.asyncio
+    async def test_unattributable_reservation_raises(self):
+        """Test a reservation naming no listing aborts the fetch.
+
+        Accepting it is fail-open: ``_resolve_room_id()`` would substitute
+        the listing being synced and export a foreign stay into the wrong
+        calendar.  Dropping it is also unsafe because the sync prune logic
+        cancels any booking missing from the snapshot.
+        """
+        orphan = self._stay("R-ORPHAN", None)
+        orphan.pop("listingId")
+        account = {"count": 2, "results": [self._stay("R-MINE", "L1"), orphan]}
+        provider, _ = _scoped_provider({"_id": "L1", "title": "Beach"}, account)
+
+        with pytest.raises(PMSProviderError, match="R-ORPHAN") as excinfo:
+            await provider.get_reservations("L1")
+        await provider.aclose()
+
+        assert "L1" in str(excinfo.value)
+
+    @pytest.mark.asyncio
+    async def test_mismatched_reservation_excluded_quietly(self):
+        """Test a reservation naming another listing is filtered, not raised.
+
+        Only the "no usable reference whatsoever" case is exceptional; a
+        record that simply belongs elsewhere is a normal exclusion.
+        """
+        account = {
+            "count": 2,
+            "results": [
+                self._stay("R-MINE", "L1"),
+                self._stay("R-OTHER", "L2", parentListingId="P2"),
+            ],
+        }
+        provider, _ = _scoped_provider({"_id": "L1", "title": "Beach"}, account)
+
+        reservations = await provider.get_reservations("L1")
+        await provider.aclose()
+
+        assert [r.pms_booking_id for r in reservations] == ["R-MINE"]
+
+    @pytest.mark.asyncio
+    async def test_direct_child_listing_keeps_parent_keyed_stay(self):
+        """Test syncing an imported child still sees parent-keyed stays.
+
+        Guesty computes ``listingId`` as ``unitId ?? unitTypeId`` but some
+        payloads report the parent there and name the child only in
+        ``stay[].unitId``.  The server filter must therefore include the
+        parent, while the ownership scope stays child-specific so a sibling
+        sub-unit's stay is still excluded.  The mock honours the filter, so
+        an over-narrow scope loses the record entirely.
+        """
+        child_doc = {"_id": "C1", "title": "Unit 1", "mtl": {"p": "P1"}}
+        reservations = [
+            self._stay("R-MINE", "P1", stay=[{"unitTypeId": "P1", "unitId": "C1"}]),
+            self._stay("R-SIBLING", "P1", stay=[{"unitTypeId": "P1", "unitId": "C2"}]),
+            self._stay("R-ELSEWHERE", "L9"),
+        ]
+        seen = []
+
+        def handler(request):
+            """Serve the child document and a filter-honouring page.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            if request.url.path.startswith("/v1/listings/"):
+                return httpx.Response(200, json=child_doc)
+            wanted = set(json.loads(request.url.params["filters"])[0]["value"])
+            seen.append(wanted)
+            matched = [r for r in reservations if r["listingId"] in wanted]
+            return httpx.Response(200, json={"count": len(matched), "results": matched})
+
+        token_manager = AsyncMock()
+        token_manager.get_token = AsyncMock(return_value="tok")
+        provider = GuestyProvider(
+            token_manager=token_manager,
+            http_client=httpx.AsyncClient(
+                transport=httpx.MockTransport(handler),
+                base_url=GUESTY_BASE_URL,
+            ),
+        )
+
+        result = await provider.get_reservations("C1")
+        await provider.aclose()
+
+        assert seen[0] == {"C1", "P1"}
+        assert [r.pms_booking_id for r in result] == ["R-MINE"]
+        assert result[0].room_ids == ("C1",)
+
+    @pytest.mark.asyncio
+    async def test_scope_lookup_failure_raises(self):
+        """Test a failed scope lookup aborts rather than returning data.
+
+        Returning an unscoped or empty snapshot would make the sync prune
+        logic cancel live bookings, so the fetch must fail loudly instead.
+        """
+
+        def handler(request):
+            """Fail the listing lookup, serve reservations otherwise.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            if request.url.path.startswith("/v1/listings/"):
+                return httpx.Response(500, json={"error": "boom"})
+            return httpx.Response(200, json={"count": 0, "results": []})
+
+        token_manager = AsyncMock()
+        token_manager.get_token = AsyncMock(return_value="tok")
+        provider = GuestyProvider(
+            token_manager=token_manager,
+            http_client=httpx.AsyncClient(
+                transport=httpx.MockTransport(handler),
+                base_url=GUESTY_BASE_URL,
+            ),
+        )
+
+        with pytest.raises(PMSProviderError):
+            await provider.get_reservations("L1")
+        await provider.aclose()
+
+    @pytest.mark.asyncio
+    async def test_foreign_records_still_count_toward_pagination(self):
+        """Test discarded records do not fake an exhausted result set.
+
+        ``count`` describes the raw page sequence, so records dropped as
+        foreign must still advance pagination -- otherwise a truncated fetch
+        would look complete and retire every unseen booking.
+        """
+
+        def handler(request):
+            """Serve one full page of foreign records, then nothing.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            if request.url.path.startswith("/v1/listings/"):
+                return httpx.Response(200, json={"_id": "L1", "title": "Beach"})
+            skip = int(request.url.params["skip"])
+            page = [self._stay(f"R{i}", "L2") for i in range(100)] if skip == 0 else []
+            return httpx.Response(200, json={"count": 150, "results": page})
+
+        token_manager = AsyncMock()
+        token_manager.get_token = AsyncMock(return_value="tok")
+        provider = GuestyProvider(
+            token_manager=token_manager,
+            http_client=httpx.AsyncClient(
+                transport=httpx.MockTransport(handler),
+                base_url=GUESTY_BASE_URL,
+            ),
+        )
+
+        with pytest.raises(PMSProviderError, match="partial snapshot"):
+            await provider.get_reservations("L1")
+        await provider.aclose()
+
+
 # ---------------------------------------------------------------------------
 # get_reservations pagination
 # ---------------------------------------------------------------------------
@@ -602,16 +898,34 @@ def _reservation(booking_id):
 def _mock_provider(handler):
     """Build a GuestyProvider wired to a MockTransport handler.
 
+    Listing-detail requests (used by ``get_reservations`` to resolve the
+    listing's sub-unit scope) are answered with a single-unit listing so the
+    supplied *handler* only has to deal with reservation pages.
+
     Args:
         handler: Callable taking an httpx.Request and returning a Response.
 
     Returns:
         Configured GuestyProvider.
     """
+
+    def dispatch(request):
+        """Route listing-detail requests away from *handler*.
+
+        Args:
+            request: Outgoing request.
+
+        Returns:
+            Mocked JSON response.
+        """
+        if request.url.path.startswith("/v1/listings/"):
+            return httpx.Response(200, json={"_id": "L1", "title": "Beach House"})
+        return handler(request)
+
     token_manager = AsyncMock()
     token_manager.get_token = AsyncMock(return_value="tok")
     client = httpx.AsyncClient(
-        transport=httpx.MockTransport(handler),
+        transport=httpx.MockTransport(dispatch),
         base_url=GUESTY_BASE_URL,
     )
     return GuestyProvider(token_manager=token_manager, http_client=client)

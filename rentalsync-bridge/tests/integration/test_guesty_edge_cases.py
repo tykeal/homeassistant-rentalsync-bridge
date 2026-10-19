@@ -7,6 +7,7 @@ exhaustion and deferral, paginated multi-page results, and cancelled
 reservation handling.
 """
 
+import logging
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
@@ -23,7 +24,7 @@ from src.providers.guesty.service import GuestyProvider
 from src.services.calendar_service import CalendarCache
 from src.services.sync_service import SyncService
 
-from tests.conftest import make_listing
+from tests.conftest import make_listing, make_room
 
 
 class TestGuest404Fallback:
@@ -227,6 +228,7 @@ class TestPaginatedResults:
         ]
 
         responses = [
+            httpx.Response(200, json={"_id": "PROP001", "title": "Prop"}),
             httpx.Response(200, json={"results": page1}),
             httpx.Response(200, json={"results": page2}),
         ]
@@ -388,3 +390,92 @@ class TestCancelledReservation:
         booking = result.scalars().first()
         assert booking is not None
         assert booking.status == "cancelled"
+
+
+class TestCrossListingContamination:
+    """Reservations must not leak between listings (issue #111).
+
+    Guesty's ``/v1/reservations`` endpoint silently ignores query parameters
+    it does not recognise, so every listing used to receive -- and store --
+    the whole account's reservation set, producing N duplicate rows per real
+    booking and a spurious "Room X not found" warning for every foreign row.
+    """
+
+    async def test_each_listing_stores_only_its_own_bookings(
+        self, async_session, async_session_factory, caplog
+    ):
+        """Test syncing two listings from one account keeps them separate."""
+        now = datetime.now(UTC)
+        account = {
+            "count": 4,
+            "results": [
+                {
+                    "_id": f"RES-{listing_id}-{n}",
+                    "status": "confirmed",
+                    "guest": {"_id": f"g-{listing_id}-{n}", "fullName": "Guest"},
+                    "checkIn": (now + timedelta(days=n)).isoformat(),
+                    "checkOut": (now + timedelta(days=n + 2)).isoformat(),
+                    "listingId": listing_id,
+                }
+                for listing_id in ("cross_a", "cross_b")
+                for n in (1, 5)
+            ],
+        }
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            """Serve single-unit listing documents and the whole account.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            if request.url.path.startswith("/v1/listings/"):
+                listing_id = request.url.path.rsplit("/", 1)[-1]
+                return httpx.Response(200, json={"_id": listing_id, "title": "X"})
+            return httpx.Response(200, json=account)
+
+        token_manager = AsyncMock()
+        token_manager.get_token = AsyncMock(return_value="tok")
+        provider = GuestyProvider(
+            token_manager=token_manager,
+            http_client=httpx.AsyncClient(
+                transport=httpx.MockTransport(handler),
+                base_url="https://open-api.guesty.com",
+            ),
+        )
+        provider.get_custom_fields = AsyncMock(return_value={})
+
+        listings = []
+        for pms_id in ("cross_a", "cross_b"):
+            listing = make_listing(pms_id=pms_id, name=pms_id, slug=pms_id)
+            async_session.add(listing)
+            await async_session.commit()
+            await async_session.refresh(listing)
+            async_session.add(
+                make_room(listing_id=listing.id, pms_room_id=pms_id, slug=f"{pms_id}-r")
+            )
+            await async_session.commit()
+            listings.append(listing)
+
+        sync = SyncService(
+            async_session,
+            calendar_cache=CalendarCache(ttl_seconds=0),
+            session_factory=async_session_factory,
+        )
+        with caplog.at_level(logging.INFO, logger="src.services.sync_service"):
+            for listing in listings:
+                await sync.sync_listing(listing, provider)
+        await provider.aclose()
+
+        for listing in listings:
+            result = await async_session.execute(
+                select(Booking).where(Booking.listing_id == listing.id)
+            )
+            bookings = result.scalars().all()
+            assert len(bookings) == 2
+            assert all(listing.pms_id in b.pms_booking_id for b in bookings)
+            assert all(b.room_id is not None for b in bookings)
+
+        assert "not found for booking" not in caplog.text
