@@ -342,3 +342,85 @@ class TestPmsMigration:
 
         with pytest.raises(NotImplementedError):
             rev.module.downgrade()  # type: ignore[union-attr]
+
+
+class TestCrossListingDuplicatePurge:
+    """Tests for f5a6b7c8d9e0 - purging cross-listing duplicate bookings."""
+
+    @staticmethod
+    def _seed(engine):
+        """Seed two listings, a room each, and cross-listing duplicates.
+
+        Args:
+            engine: SQLAlchemy engine migrated to ``e4f5a6b7c8d9``.
+        """
+        stamp = "'2026-01-01', '2026-01-01'"
+        with engine.connect() as conn:
+            for pms_id, slug in (("P1", "p1"), ("P2", "p2")):
+                conn.execute(
+                    text(
+                        "INSERT INTO listings "
+                        "(pms_id, name, enabled, ical_url_slug, timezone,"
+                        " sync_enabled, created_at, updated_at)"
+                        f" VALUES ('{pms_id}', '{pms_id}', 1, '{slug}',"
+                        f" 'UTC', 1, {stamp})"
+                    )
+                )
+            for listing_id, room in ((1, "R1"), (2, "R2")):
+                conn.execute(
+                    text(
+                        "INSERT INTO rooms "
+                        "(listing_id, pms_room_id, room_name, ical_url_slug,"
+                        " enabled, created_at, updated_at)"
+                        f" VALUES ({listing_id}, '{room}', '{room}',"
+                        f" '{room.lower()}', 1, {stamp})"
+                    )
+                )
+            # BK1 is owned by listing 1 (room resolved) and duplicated onto
+            # listing 2.  SOLO belongs to listing 2 only and happens to have
+            # no room, so it must survive.
+            rows = (
+                "(1, 1, 'BK1::R1', 'A', '2026-03-01', '2026-03-05')",
+                "(2, NULL, 'BK1::R1', 'A', '2026-03-01', '2026-03-05')",
+                "(2, NULL, 'SOLO', 'B', '2026-04-01', '2026-04-05')",
+            )
+            for row in rows:
+                conn.execute(
+                    text(
+                        "INSERT INTO bookings "
+                        "(listing_id, room_id, pms_booking_id, guest_name,"
+                        " check_in_date, check_out_date, status,"
+                        " created_at, updated_at, last_fetched_at) VALUES "
+                        + row[:-1]
+                        + f", 'confirmed', {stamp}, '2026-01-01')"
+                    )
+                )
+            conn.commit()
+
+    def test_purges_only_foreign_duplicates(self, pre_migration_db):
+        """Verify duplicated room-less rows go and owned rows stay."""
+        engine = pre_migration_db
+        _run_migrations(engine, "e4f5a6b7c8d9")
+        self._seed(engine)
+
+        _run_migrations(engine, "f5a6b7c8d9e0")
+
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT listing_id, pms_booking_id FROM bookings"
+                    " ORDER BY listing_id, pms_booking_id"
+                )
+            ).fetchall()
+
+        assert [tuple(r) for r in rows] == [(1, "BK1::R1"), (2, "SOLO")]
+
+    def test_downgrade_raises_not_implemented(self):
+        """Verify downgrade raises NotImplementedError."""
+        cfg = Config(_ALEMBIC_INI)
+        cfg.set_main_option("script_location", str(_RENTALSYNC_DIR / "alembic"))
+        script = ScriptDirectory.from_config(cfg)
+        rev = script.get_revision("f5a6b7c8d9e0")
+
+        with pytest.raises(NotImplementedError):
+            rev.module.downgrade()  # type: ignore[union-attr]
