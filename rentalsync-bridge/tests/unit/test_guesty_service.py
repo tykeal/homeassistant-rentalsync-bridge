@@ -746,6 +746,58 @@ class TestReservationListingScope:
         assert [r.pms_booking_id for r in reservations] == ["R-MINE"]
 
     @pytest.mark.asyncio
+    async def test_direct_child_listing_keeps_parent_keyed_stay(self):
+        """Test syncing an imported child still sees parent-keyed stays.
+
+        Guesty computes ``listingId`` as ``unitId ?? unitTypeId`` but some
+        payloads report the parent there and name the child only in
+        ``stay[].unitId``.  The server filter must therefore include the
+        parent, while the ownership scope stays child-specific so a sibling
+        sub-unit's stay is still excluded.  The mock honours the filter, so
+        an over-narrow scope loses the record entirely.
+        """
+        child_doc = {"_id": "C1", "title": "Unit 1", "mtl": {"p": "P1"}}
+        reservations = [
+            self._stay("R-MINE", "P1", stay=[{"unitTypeId": "P1", "unitId": "C1"}]),
+            self._stay("R-SIBLING", "P1", stay=[{"unitTypeId": "P1", "unitId": "C2"}]),
+            self._stay("R-ELSEWHERE", "L9"),
+        ]
+        seen = []
+
+        def handler(request):
+            """Serve the child document and a filter-honouring page.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            if request.url.path.startswith("/v1/listings/"):
+                return httpx.Response(200, json=child_doc)
+            wanted = set(json.loads(request.url.params["filters"])[0]["value"])
+            seen.append(wanted)
+            matched = [r for r in reservations if r["listingId"] in wanted]
+            return httpx.Response(200, json={"count": len(matched), "results": matched})
+
+        token_manager = AsyncMock()
+        token_manager.get_token = AsyncMock(return_value="tok")
+        provider = GuestyProvider(
+            token_manager=token_manager,
+            http_client=httpx.AsyncClient(
+                transport=httpx.MockTransport(handler),
+                base_url=GUESTY_BASE_URL,
+            ),
+        )
+
+        result = await provider.get_reservations("C1")
+        await provider.aclose()
+
+        assert seen[0] == {"C1", "P1"}
+        assert [r.pms_booking_id for r in result] == ["R-MINE"]
+        assert result[0].room_ids == ("C1",)
+
+    @pytest.mark.asyncio
     async def test_scope_lookup_failure_raises(self):
         """Test a failed scope lookup aborts rather than returning data.
 

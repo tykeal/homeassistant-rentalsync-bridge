@@ -344,13 +344,13 @@ class GuestyProvider(PMSProvider):
         # before any reservation page is requested.  A failure here raises
         # out of ``get_rooms`` and aborts the whole fetch, so the sync prune
         # logic is never handed an unscoped or empty snapshot.
-        scope_ids = await self._listing_scope_ids(listing_pms_id)
+        fetch_ids, scope_ids = await self._listing_scopes(listing_pms_id)
         listing_filter = json.dumps(
             [
                 {
                     "field": "listingId",
                     "operator": "$in",
-                    "value": sorted(scope_ids),
+                    "value": sorted(fetch_ids),
                 }
             ],
             separators=(",", ":"),
@@ -480,27 +480,56 @@ class GuestyProvider(PMSProvider):
                 out.append(mapped)
         return foreign
 
-    async def _listing_scope_ids(self, listing_pms_id: str) -> frozenset[str]:
-        """Collect the Guesty listing IDs owned by a synced listing.
+    async def _listing_scopes(
+        self,
+        listing_pms_id: str,
+    ) -> tuple[frozenset[str], frozenset[str]]:
+        """Resolve the fetch scope and ownership scope for a listing.
 
-        For a single-unit listing this is just its own ID.  For a multi-unit
-        ("MTL") parent it also includes every child sub-unit listing ID,
-        because Guesty computes a reservation's ``listingId`` as
-        ``unitId ?? unitTypeId`` — an assigned stay reports the child, not
-        the parent we are syncing.
+        The two scopes differ on purpose:
+
+        * The **fetch** scope widens the server-side ``listingId`` filter to
+          include the parent unit type when the synced listing is itself an
+          imported child.  Guesty computes a reservation's ``listingId`` as
+          ``unitId ?? unitTypeId``, but not every payload carries ``unitId``
+          at the top level -- an assigned stay can report the parent there
+          and name the child only in ``stay[].unitId`` or ``mtl._id``.  If
+          the server honours the filter, a parent-keyed record would be
+          excluded from the snapshot and the sync prune logic would cancel a
+          live booking.
+        * The **ownership** scope stays specific to the synced listing and
+          its own sub-units, so widening the fetch never lets a sibling
+          sub-unit's reservation be stored against this listing.
 
         Args:
             listing_pms_id: Guesty listing ID being synced.
 
         Returns:
-            Frozen set of listing IDs whose reservations belong to this
-            listing.
+            Tuple of ``(fetch_ids, scope_ids)``.
 
         Raises:
             PMSProviderError: On API failure.
         """
-        rooms = await self.get_rooms(listing_pms_id)
-        return frozenset({listing_pms_id, *(room.pms_room_id for room in rooms)})
+        data = await self._listing_document(listing_pms_id)
+        rooms = _rooms_from_document(data, listing_pms_id)
+        scope_ids = frozenset({listing_pms_id, *(room.pms_room_id for room in rooms)})
+        return frozenset(scope_ids | _parent_listing_ids(data)), scope_ids
+
+    async def _listing_document(self, listing_pms_id: str) -> dict[str, Any]:
+        """Fetch the raw Guesty listing document.
+
+        Args:
+            listing_pms_id: Guesty listing ID.
+
+        Returns:
+            Decoded listing document.
+
+        Raises:
+            PMSProviderError: On API failure.
+        """
+        response = await self._request("GET", f"/v1/listings/{listing_pms_id}")
+        data: dict[str, Any] = response.json()
+        return data
 
     async def get_rooms(self, listing_pms_id: str) -> list[PMSRoom]:
         """Fetch rooms/units for a Guesty listing.
@@ -517,36 +546,8 @@ class GuestyProvider(PMSProvider):
         Raises:
             PMSProviderError: On API failure.
         """
-        response = await self._request(
-            "GET",
-            f"/v1/listings/{listing_pms_id}",
-        )
-        data = response.json()
-
-        children = data.get("childListings") or []
-        if children:
-            rooms: list[PMSRoom] = []
-            for child in children:
-                child_id = str(child.get("_id", ""))
-                if not child_id:
-                    continue
-                rooms.append(
-                    PMSRoom(
-                        pms_room_id=child_id,
-                        name=child.get("title") or child.get("nickname") or "",
-                        room_type=child.get("roomType"),
-                    )
-                )
-            return rooms
-
-        # Single-unit: create one implicit room
-        return [
-            PMSRoom(
-                pms_room_id=listing_pms_id,
-                name=data.get("title") or data.get("nickname") or "Main",
-                room_type=data.get("propertyType"),
-            )
-        ]
+        data = await self._listing_document(listing_pms_id)
+        return _rooms_from_document(data, listing_pms_id)
 
     async def get_guest(self, guest_id: str) -> PMSGuest | None:
         """Fetch guest details from the Guesty API.
@@ -790,6 +791,70 @@ class GuestyProvider(PMSProvider):
 
 
 _LISTING_REF_KEYS = ("listingId", "parentListingId", "unitTypeId", "unitId")
+
+# Keys on a *listing* document that name its parent unit type.  A Guesty
+# child listing points back at its parent through ``mtl.p``; the others are
+# defensive aliases seen across API generations.
+_LISTING_PARENT_KEYS = ("parentListingId", "parentId", "unitTypeId")
+
+
+def _rooms_from_document(data: dict[str, Any], listing_pms_id: str) -> list[PMSRoom]:
+    """Map a Guesty listing document to its rooms.
+
+    Args:
+        data: Raw listing document from ``GET /v1/listings/{id}``.
+        listing_pms_id: Guesty listing ID the document describes.
+
+    Returns:
+        One PMSRoom per child sub-unit, or a single implicit room for a
+        single-unit listing.
+    """
+    children = data.get("childListings") or []
+    if children:
+        rooms: list[PMSRoom] = []
+        for child in children:
+            child_id = str(child.get("_id", ""))
+            if not child_id:
+                continue
+            rooms.append(
+                PMSRoom(
+                    pms_room_id=child_id,
+                    name=child.get("title") or child.get("nickname") or "",
+                    room_type=child.get("roomType"),
+                )
+            )
+        return rooms
+
+    return [
+        PMSRoom(
+            pms_room_id=listing_pms_id,
+            name=data.get("title") or data.get("nickname") or "Main",
+            room_type=data.get("propertyType"),
+        )
+    ]
+
+
+def _parent_listing_ids(data: dict[str, Any]) -> set[str]:
+    """Collect the parent unit type IDs a listing document points at.
+
+    Args:
+        data: Raw listing document from ``GET /v1/listings/{id}``.
+
+    Returns:
+        Set of parent listing identifiers, empty for a listing with no
+        parent.
+    """
+    parents: set[str] = set()
+    for key in _LISTING_PARENT_KEYS:
+        value = data.get(key)
+        if value:
+            parents.add(str(value))
+
+    mtl = data.get("mtl")
+    if isinstance(mtl, dict) and mtl.get("p"):
+        parents.add(str(mtl["p"]))
+
+    return parents
 
 
 def _reservation_listing_refs(raw: dict[str, Any]) -> set[str]:
