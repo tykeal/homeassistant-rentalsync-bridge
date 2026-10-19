@@ -10,12 +10,29 @@ reservation in the account.
 Those foreign rows would otherwise linger: the sync prune loop only marks
 missing bookings ``cancelled``, and its in-progress guard deliberately keeps
 a stay that is currently underway, so a foreign reservation covering today
-would stay in the exported calendar until after its checkout date.
+would stay in a listing-level exported calendar until after its checkout
+date.
 
-Only rows that are provably foreign are removed: a booking is deleted when
-its reservation ID is stored under more than one listing AND at least one of
-those rows resolved to a room while this one did not.  The row that resolved
-a room is the one whose listing actually owns the reservation.
+Preservation bias (deliberate)
+------------------------------
+This migration is destructive and irreversible, so the two failure modes are
+not symmetric: a stale row left behind is cosmetic and the next sync or a
+later migration can clear it, while a deleted real booking is silently
+unrecoverable.  Every ambiguous row is therefore **kept**, and a row is
+deleted only on positive evidence that it duplicates a *current* room
+assignment held by a different listing:
+
+* the row carries no room of its own (``room_id IS NULL``), and
+* another listing holds a live, room-assigned row for the same reservation,
+  and
+* the row's own listing holds no room-assigned row for that reservation.
+
+A ``cancelled`` sibling never counts as evidence of current ownership: a
+historical room assignment does not prove who owns the stay now.  That is
+exactly the unassign/reassign case on a multi-unit listing, where the owner
+can retain a cancelled ``<id>::<room>`` row alongside its live, room-less
+``<id>`` row — the live row must survive.  Unassigned and reassigned
+bookings are preserved for the same reason.
 
 Revision ID: f5a6b7c8d9e0
 Revises: e4f5a6b7c8d9
@@ -40,6 +57,7 @@ WITH ids AS (
         id,
         listing_id,
         room_id,
+        status,
         CASE
             WHEN instr(pms_booking_id, '::') > 0
             THEN substr(pms_booking_id, 1, instr(pms_booking_id, '::') - 1)
@@ -47,28 +65,37 @@ WITH ids AS (
         END AS base_id
     FROM bookings
 ),
-shared AS (
-    SELECT base_id
+-- Positive evidence of current ownership: a live row that is assigned to a
+-- room right now.  Cancelled rows are excluded because a historical room
+-- assignment does not prove present ownership.
+owner_rows AS (
+    SELECT base_id, listing_id
     FROM ids
-    GROUP BY base_id
-    HAVING COUNT(DISTINCT listing_id) > 1
-),
-owned AS (
-    SELECT DISTINCT base_id FROM ids WHERE room_id IS NOT NULL
+    WHERE room_id IS NOT NULL
+      AND status <> 'cancelled'
 )
 DELETE FROM bookings
 WHERE id IN (
     SELECT ids.id
     FROM ids
-    JOIN shared ON shared.base_id = ids.base_id
-    JOIN owned ON owned.base_id = ids.base_id
     WHERE ids.room_id IS NULL
+      AND EXISTS (
+          SELECT 1 FROM owner_rows
+          WHERE owner_rows.base_id = ids.base_id
+            AND owner_rows.listing_id <> ids.listing_id
+      )
+      AND NOT EXISTS (
+          SELECT 1 FROM ids AS sibling
+          WHERE sibling.base_id = ids.base_id
+            AND sibling.listing_id = ids.listing_id
+            AND sibling.room_id IS NOT NULL
+      )
 )
 """
 
 
 def upgrade() -> None:
-    """Delete bookings duplicated onto listings that do not own them."""
+    """Delete bookings proven to duplicate another listing's assignment."""
     op.execute(_PURGE_SQL)
 
 

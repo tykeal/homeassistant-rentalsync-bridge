@@ -348,11 +348,13 @@ class TestCrossListingDuplicatePurge:
     """Tests for f5a6b7c8d9e0 - purging cross-listing duplicate bookings."""
 
     @staticmethod
-    def _seed(engine):
-        """Seed two listings, a room each, and cross-listing duplicates.
+    def _seed(engine, bookings):
+        """Seed two listings, a room each, and the given booking rows.
 
         Args:
             engine: SQLAlchemy engine migrated to ``e4f5a6b7c8d9``.
+            bookings: Tuples of ``(listing_id, room_id, pms_booking_id,
+                status)``.
         """
         stamp = "'2026-01-01', '2026-01-01'"
         with engine.connect() as conn:
@@ -366,7 +368,7 @@ class TestCrossListingDuplicatePurge:
                         f" 'UTC', 1, {stamp})"
                     )
                 )
-            for listing_id, room in ((1, "R1"), (2, "R2")):
+            for listing_id, room in ((1, "R1"), (1, "R1B"), (2, "R2")):
                 conn.execute(
                     text(
                         "INSERT INTO rooms "
@@ -376,35 +378,30 @@ class TestCrossListingDuplicatePurge:
                         f" '{room.lower()}', 1, {stamp})"
                     )
                 )
-            # BK1 is owned by listing 1 (room resolved) and duplicated onto
-            # listing 2.  SOLO belongs to listing 2 only and happens to have
-            # no room, so it must survive.
-            rows = (
-                "(1, 1, 'BK1::R1', 'A', '2026-03-01', '2026-03-05')",
-                "(2, NULL, 'BK1::R1', 'A', '2026-03-01', '2026-03-05')",
-                "(2, NULL, 'SOLO', 'B', '2026-04-01', '2026-04-05')",
-            )
-            for row in rows:
+            for listing_id, room_id, booking_id, status in bookings:
                 conn.execute(
                     text(
                         "INSERT INTO bookings "
                         "(listing_id, room_id, pms_booking_id, guest_name,"
                         " check_in_date, check_out_date, status,"
-                        " created_at, updated_at, last_fetched_at) VALUES "
-                        + row[:-1]
-                        + f", 'confirmed', {stamp}, '2026-01-01')"
+                        " created_at, updated_at, last_fetched_at)"
+                        f" VALUES ({listing_id}, {room_id or 'NULL'},"
+                        f" '{booking_id}', 'A', '2026-03-01', '2026-03-05',"
+                        f" '{status}', {stamp}, '2026-01-01')"
                     )
                 )
             conn.commit()
 
-    def test_purges_only_foreign_duplicates(self, pre_migration_db):
-        """Verify duplicated room-less rows go and owned rows stay."""
-        engine = pre_migration_db
-        _run_migrations(engine, "e4f5a6b7c8d9")
-        self._seed(engine)
+    @staticmethod
+    def _surviving(engine):
+        """Return the surviving ``(listing_id, pms_booking_id)`` rows.
 
-        _run_migrations(engine, "f5a6b7c8d9e0")
+        Args:
+            engine: Migrated SQLAlchemy engine.
 
+        Returns:
+            Sorted list of tuples.
+        """
         with engine.connect() as conn:
             rows = conn.execute(
                 text(
@@ -412,8 +409,103 @@ class TestCrossListingDuplicatePurge:
                     " ORDER BY listing_id, pms_booking_id"
                 )
             ).fetchall()
+        return [tuple(r) for r in rows]
 
-        assert [tuple(r) for r in rows] == [(1, "BK1::R1"), (2, "SOLO")]
+    def test_purges_only_foreign_duplicates(self, pre_migration_db):
+        """Verify duplicated room-less rows go and owned rows stay.
+
+        ``BK1`` is owned by listing 1, which currently holds it against a
+        room, and was duplicated onto listing 2.  ``SOLO`` exists only on
+        listing 2 with no room, so nothing proves it foreign.
+        """
+        engine = pre_migration_db
+        _run_migrations(engine, "e4f5a6b7c8d9")
+        self._seed(
+            engine,
+            (
+                (1, 1, "BK1::R1", "confirmed"),
+                (2, None, "BK1::R1", "confirmed"),
+                (2, None, "SOLO", "confirmed"),
+            ),
+        )
+
+        _run_migrations(engine, "f5a6b7c8d9e0")
+
+        assert self._surviving(engine) == [(1, "BK1::R1"), (2, "SOLO")]
+
+    def test_assigned_to_unassigned_row_survives(self, pre_migration_db):
+        """Verify an unassigned owner row is not purged (regression).
+
+        After a multi-unit stay is unassigned, its owner keeps a cancelled
+        ``BK1::R1`` row carrying the old room next to the live, room-less
+        ``BK1`` row.  A historical assignment is not current ownership, so
+        the live row must survive even though another listing holds a stale
+        foreign copy.
+        """
+        engine = pre_migration_db
+        _run_migrations(engine, "e4f5a6b7c8d9")
+        self._seed(
+            engine,
+            (
+                (1, 1, "BK1::R1", "cancelled"),
+                (1, None, "BK1", "confirmed"),
+                (2, None, "BK1", "confirmed"),
+            ),
+        )
+
+        _run_migrations(engine, "f5a6b7c8d9e0")
+
+        assert self._surviving(engine) == [
+            (1, "BK1"),
+            (1, "BK1::R1"),
+            (2, "BK1"),
+        ]
+
+    def test_unassigned_owner_row_survives(self, pre_migration_db):
+        """Verify a legitimately unassigned booking is preserved.
+
+        No listing currently holds the reservation against a room, so there
+        is no evidence of ownership and every ambiguous row is kept.
+        """
+        engine = pre_migration_db
+        _run_migrations(engine, "e4f5a6b7c8d9")
+        self._seed(
+            engine,
+            (
+                (1, None, "BK1", "confirmed"),
+                (2, None, "BK1", "confirmed"),
+            ),
+        )
+
+        _run_migrations(engine, "f5a6b7c8d9e0")
+
+        assert self._surviving(engine) == [(1, "BK1"), (2, "BK1")]
+
+    def test_reassigned_row_on_owning_listing_survives(self, pre_migration_db):
+        """Verify a room-less row is kept when its listing holds the room.
+
+        A reassignment can leave a stale room-less row beside the live
+        assigned row on the owning listing; deleting it on the strength of
+        another listing's assignment would risk removing real data.
+        """
+        engine = pre_migration_db
+        _run_migrations(engine, "e4f5a6b7c8d9")
+        self._seed(
+            engine,
+            (
+                (1, 2, "BK1::R1B", "confirmed"),
+                (1, None, "BK1", "confirmed"),
+                (2, 3, "BK1::R2", "confirmed"),
+            ),
+        )
+
+        _run_migrations(engine, "f5a6b7c8d9e0")
+
+        assert self._surviving(engine) == [
+            (1, "BK1"),
+            (1, "BK1::R1B"),
+            (2, "BK1::R2"),
+        ]
 
     def test_downgrade_raises_not_implemented(self):
         """Verify downgrade raises NotImplementedError."""
