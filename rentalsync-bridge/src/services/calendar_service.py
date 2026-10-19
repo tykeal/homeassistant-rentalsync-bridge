@@ -311,8 +311,11 @@ class CalendarService:
                 if value:
                     lines.append(f"{field.display_label}: {value}")
 
-        # Add booking ID for reference
-        lines.append(f"Booking ID: {booking.pms_booking_id}")
+        # Add booking ID for reference. Multi-room bookings use a composite
+        # ``{reservationID}::{roomID}`` identifier internally; only the base
+        # reservation ID is meaningful to guests, so strip the suffix here.
+        display_booking_id = booking.pms_booking_id.rsplit("::", 1)[0]
+        lines.append(f"Booking ID: {display_booking_id}")
 
         return "\n".join(lines)
 

@@ -1014,3 +1014,20 @@ class TestDescriptionFormatting:
 
         assert "Phone (last 4): 1234\\nNumber of guests" in unfolded
         assert "\\\\n" not in unfolded
+
+    def test_composite_booking_id_suffix_stripped(self, service, listing):
+        """A ``::roomID`` suffix is removed from the displayed Booking ID."""
+        booking = self._booking(listing, "6axxxxade0ef56::6a0cbxxxx14d2cc3d")
+
+        description = self._description(service.generate_ical(listing, [booking]))
+
+        assert "Booking ID: 6axxxxade0ef56" in description
+        assert "::" not in description
+
+    def test_plain_booking_id_unchanged(self, service, listing):
+        """A booking ID without ``::`` passes through unchanged."""
+        booking = self._booking(listing, "CB-98765")
+
+        description = self._description(service.generate_ical(listing, [booking]))
+
+        assert "Booking ID: CB-98765" in description
