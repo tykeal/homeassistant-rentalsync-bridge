@@ -2,12 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for sync scheduler."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from src.database import Base
+from src.models.listing import Listing
+from src.models.oauth_credential import OAuthCredential
 from src.models.system_settings import DEFAULT_SYNC_INTERVAL_MINUTES
+from src.providers.base import PMSProviderError
 from src.services.scheduler import (
     MAX_SYNC_INTERVAL_MINUTES,
     MIN_SYNC_INTERVAL_MINUTES,
@@ -271,3 +276,109 @@ class TestPurgeJob:
 
             mock_repo.purge_old_bookings.assert_called_once_with(days=90)
             mock_repo.purge_cancelled_bookings.assert_called_once_with(days=30)
+
+
+class TestScheduledSyncStatusPersistence:
+    """Tests that scheduled runs persist per-listing sync status."""
+
+    @pytest.fixture
+    async def engine(self):
+        """Create an in-memory database engine with the schema applied."""
+        engine = create_async_engine(
+            "sqlite+aiosqlite:///:memory:",
+            echo=False,
+            connect_args={"check_same_thread": False},
+        )
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        yield engine
+        await engine.dispose()
+
+    @pytest.fixture
+    def session_factory(self, engine):
+        """Create a session factory bound to the test engine."""
+        return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    @pytest.fixture
+    async def seeded_listings(self, session_factory):
+        """Seed three sync-enabled listings and a usable credential."""
+        async with session_factory() as session:
+            credential = OAuthCredential(client_id="client", pms_type="guesty")
+            credential.client_secret = "secret"
+            credential.access_token = "token"
+            credential.token_expires_at = datetime.now(UTC) + timedelta(hours=1)
+            session.add(credential)
+            for index in range(1, 4):
+                session.add(
+                    Listing(
+                        pms_id=f"PROP{index}",
+                        name=f"Property {index}",
+                        ical_url_slug=f"property-{index}",
+                        enabled=True,
+                        sync_enabled=True,
+                    )
+                )
+            await session.commit()
+
+    @staticmethod
+    def _provider(reservations_by_listing=None, failing_pms_id=None):
+        """Build a provider stub returning reservations per listing."""
+        provider = AsyncMock()
+
+        async def get_reservations(pms_id, *args, **kwargs):
+            """Return the stubbed reservations, or fail for one listing."""
+            if pms_id == failing_pms_id:
+                raise PMSProviderError(f"boom for {pms_id}")
+            return (reservations_by_listing or {}).get(pms_id, [])
+
+        provider.get_reservations = AsyncMock(side_effect=get_reservations)
+        return provider
+
+    @staticmethod
+    async def _sync_status(session_factory):
+        """Return {pms_id: (last_sync_at, last_sync_error)} from a new session."""
+        async with session_factory() as session:
+            result = await session.execute(select(Listing))
+            return {
+                listing.pms_id: (listing.last_sync_at, listing.last_sync_error)
+                for listing in result.scalars().all()
+            }
+
+    @pytest.mark.asyncio
+    async def test_scheduled_sync_persists_status_for_every_listing(
+        self, session_factory, seeded_listings
+    ):
+        """Every listing, including the last one, keeps its sync status."""
+        scheduler = SyncScheduler(session_factory)
+
+        with patch(
+            "src.services.scheduler.create_provider_for_credential",
+            return_value=self._provider(),
+        ):
+            await scheduler._sync_all_listings()
+
+        status = await self._sync_status(session_factory)
+        assert set(status) == {"PROP1", "PROP2", "PROP3"}
+        for pms_id, (last_sync_at, last_sync_error) in status.items():
+            assert last_sync_at is not None, f"{pms_id} lost its last_sync_at"
+            assert last_sync_error is None
+
+    @pytest.mark.asyncio
+    async def test_scheduled_sync_records_error_without_clearing_it(
+        self, session_factory, seeded_listings
+    ):
+        """A failing listing records its error; the others still succeed."""
+        scheduler = SyncScheduler(session_factory)
+
+        with patch(
+            "src.services.scheduler.create_provider_for_credential",
+            return_value=self._provider(failing_pms_id="PROP2"),
+        ):
+            await scheduler._sync_all_listings()
+
+        status = await self._sync_status(session_factory)
+        assert status["PROP2"][1] == "boom for PROP2"
+        assert status["PROP1"][1] is None
+        assert status["PROP3"][1] is None
+        assert status["PROP1"][0] is not None
+        assert status["PROP3"][0] is not None

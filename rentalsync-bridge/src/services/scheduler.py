@@ -225,6 +225,7 @@ class SyncScheduler:
                 sync_service = SyncService(
                     session=session,
                     calendar_cache=self._calendar_cache,
+                    session_factory=self._session_factory,
                 )
 
                 total_inserted = 0

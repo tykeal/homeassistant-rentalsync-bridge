@@ -1151,6 +1151,37 @@ class TestSyncStatusTracking:
         assert refreshed_listing.last_sync_error == "API rate limit exceeded"
         assert refreshed_listing.last_sync_at is not None
 
+    @pytest.mark.asyncio
+    async def test_sync_commits_status_without_caller_commit(
+        self, sync_session, sync_session_factory, mock_provider
+    ):
+        """Sync status is durable without the caller committing afterwards."""
+        listing = Listing(
+            pms_id="SYNC_COMMIT",
+            name="Sync Commit Test",
+            ical_url_slug="sync-commit",
+            enabled=True,
+            sync_enabled=True,
+            last_sync_at=None,
+            last_sync_error="Previous error",
+        )
+        sync_session.add(listing)
+        await sync_session.commit()
+        listing_id = listing.id
+
+        mock_provider.get_reservations = AsyncMock(return_value=[])
+
+        service = SyncService(sync_session, session_factory=sync_session_factory)
+        await service.sync_listing(listing, mock_provider)
+
+        async with sync_session_factory() as reader:
+            result = await reader.execute(
+                select(Listing).where(Listing.id == listing_id)
+            )
+            persisted = result.scalar_one()
+            assert persisted.last_sync_at is not None
+            assert persisted.last_sync_error is None
+
 
 class TestBookingChangeDetection:
     """Tests for booking change detection."""
