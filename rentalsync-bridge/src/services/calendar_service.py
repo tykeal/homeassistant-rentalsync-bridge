@@ -314,7 +314,7 @@ class CalendarService:
         # Add booking ID for reference
         lines.append(f"Booking ID: {booking.pms_booking_id}")
 
-        return "\\n".join(lines)
+        return "\n".join(lines)
 
     def _get_timezone(self, timezone_str: str) -> ZoneInfo:
         """Get ZoneInfo for timezone string with fallback to UTC.

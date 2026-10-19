@@ -928,3 +928,89 @@ class TestVTimezoneDynamicWindow:
         padding = timedelta(days=VTIMEZONE_PADDING_DAYS)
         assert first_date == date(2026, 7, 1) - padding
         assert last_date == date(2026, 7, 3) + padding
+
+
+class TestDescriptionFormatting:
+    """Tests for DESCRIPTION line separation and booking ID display."""
+
+    @pytest.fixture
+    def service(self):
+        """Create calendar service with a fresh cache."""
+        return CalendarService(cache=CalendarCache())
+
+    @pytest.fixture
+    def listing(self):
+        """Create test listing."""
+        listing = Listing(
+            pms_id="desc_prop",
+            name="Description Property",
+            ical_url_slug="description-property",
+            enabled=True,
+            sync_enabled=True,
+            timezone="America/New_York",
+        )
+        listing.id = 1
+        return listing
+
+    @staticmethod
+    def _booking(listing, pms_booking_id):
+        """Build a booking with a multi-line description."""
+        booking = Booking(
+            listing_id=listing.id,
+            pms_booking_id=pms_booking_id,
+            guest_name="John Smith",
+            guest_phone_last4="1234",
+            check_in_date=datetime(2026, 3, 1, 14, 0, tzinfo=UTC),
+            check_out_date=datetime(2026, 3, 5, 11, 0, tzinfo=UTC),
+            status="confirmed",
+            custom_data={"number_of_guests": "4"},
+        )
+        booking.id = 1
+        return booking
+
+    @staticmethod
+    def _custom_fields(listing):
+        """Build an enabled custom field for number_of_guests."""
+        field = CustomField(
+            listing_id=listing.id,
+            field_name="number_of_guests",
+            display_label="Number of guests",
+            enabled=True,
+            sort_order=0,
+        )
+        field.id = 1
+        return [field]
+
+    @staticmethod
+    def _description(ical):
+        """Parse the feed and return the first event's DESCRIPTION value."""
+        calendar = Calendar.from_ical(ical)
+        event = next(
+            component for component in calendar.walk() if component.name == "VEVENT"
+        )
+        return str(event.get("description"))
+
+    def test_description_uses_real_newlines(self, service, listing):
+        """Parsed DESCRIPTION contains real newlines, not literal ``\\n``."""
+        booking = self._booking(listing, "BK12345")
+
+        ical = service.generate_ical(listing, [booking], self._custom_fields(listing))
+        description = self._description(ical)
+
+        assert "\n" in description
+        assert "\\n" not in description
+        assert description.splitlines() == [
+            "Phone (last 4): 1234",
+            "Number of guests: 4",
+            "Booking ID: BK12345",
+        ]
+
+    def test_serialized_description_escape_is_single_backslash(self, service, listing):
+        """The serialized feed uses the RFC 5545 ``\\n`` escape, not ``\\\\n``."""
+        booking = self._booking(listing, "BK12345")
+
+        ical = service.generate_ical(listing, [booking], self._custom_fields(listing))
+        unfolded = ical.replace("\r\n ", "").replace("\n ", "")
+
+        assert "Phone (last 4): 1234\\nNumber of guests" in unfolded
+        assert "\\\\n" not in unfolded
