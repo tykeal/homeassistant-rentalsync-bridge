@@ -682,8 +682,7 @@ class GuestyProvider(PMSProvider):
             )
             return None
 
-        # Room IDs: Guesty may embed listingId as the room reference
-        room_id = str(raw.get("listingId") or listing_pms_id)
+        room_id = _resolve_room_id(raw, listing_pms_id)
 
         return PMSReservation(
             pms_booking_id=pms_booking_id,
@@ -699,6 +698,40 @@ class GuestyProvider(PMSProvider):
 
 
 # -- module-level helpers ------------------------------------------------------
+
+
+def _resolve_room_id(raw: dict[str, Any], listing_pms_id: str) -> str:
+    """Resolve the Guesty sub-unit ID a reservation is assigned to.
+
+    Guesty models a multi-unit property as a parent "unit type" (``MTL``)
+    listing with child sub-unit listings.  ``get_rooms()`` keys rooms by the
+    child listing IDs, but a reservation's top-level ``listingId`` is
+    computed by Guesty as ``unitId ?? unitTypeId`` — so it only names the
+    child while the reservation is assigned to a physical unit, and falls
+    back to the parent otherwise.  The authoritative assigned sub-unit is
+    carried on the stay segment as ``unitId`` (legacy alias: ``mtl._id``
+    guarded by ``mtl.assigned``).
+
+    Args:
+        raw: Raw reservation dict from the Guesty API.
+        listing_pms_id: Owning listing ID, used as a last resort.
+
+    Returns:
+        The assigned sub-unit ID when Guesty reports one, otherwise the
+        reservation's listing ID (which for an unassigned multi-unit
+        reservation is the parent unit type and matches no room).
+    """
+    stay = raw.get("stay")
+    if isinstance(stay, list):
+        for segment in stay:
+            if isinstance(segment, dict) and segment.get("unitId"):
+                return str(segment["unitId"])
+
+    mtl = raw.get("mtl")
+    if isinstance(mtl, dict) and mtl.get("assigned") and mtl.get("_id"):
+        return str(mtl["_id"])
+
+    return str(raw.get("listingId") or listing_pms_id)
 
 
 def _overlaps_window(

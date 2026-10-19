@@ -378,6 +378,102 @@ class TestGetReservations:
         assert "R3" not in booking_ids
 
     @pytest.mark.asyncio
+    async def test_assigned_sub_unit_wins_over_listing_id(
+        self, guesty_provider, mock_http_client
+    ):
+        """Test the assigned sub-unit is used as the room reference.
+
+        A multi-unit reservation carries the parent unit-type listing in
+        ``listingId`` while the assigned child unit lives on the stay
+        segment, so the room reference must come from the stay segment.
+        """
+        mock_http_client.request = AsyncMock(
+            return_value=_make_response(
+                {
+                    "results": [
+                        {
+                            "_id": "R10",
+                            "status": "checked_in",
+                            "checkIn": _rel(-1),
+                            "checkOut": _rel(2),
+                            "listingId": "L1",
+                            "stay": [{"unitTypeId": "L1", "unitId": "C2"}],
+                        }
+                    ]
+                }
+            )
+        )
+
+        reservations = await guesty_provider.get_reservations("L1")
+
+        assert reservations[0].room_ids == ("C2",)
+
+    @pytest.mark.asyncio
+    async def test_legacy_mtl_assignment_used(self, guesty_provider, mock_http_client):
+        """Test the legacy ``mtl`` block supplies the assigned sub-unit."""
+        mock_http_client.request = AsyncMock(
+            return_value=_make_response(
+                {
+                    "results": [
+                        {
+                            "_id": "R11",
+                            "status": "confirmed",
+                            "checkIn": _rel(-1),
+                            "checkOut": _rel(2),
+                            "listingId": "L1",
+                            "mtl": {"assigned": True, "_id": "C1"},
+                        }
+                    ]
+                }
+            )
+        )
+
+        reservations = await guesty_provider.get_reservations("L1")
+
+        assert reservations[0].room_ids == ("C1",)
+
+    @pytest.mark.asyncio
+    async def test_unassigned_multi_unit_falls_back_to_parent(
+        self, guesty_provider, mock_http_client
+    ):
+        """Test an unassigned multi-unit stay keeps the parent reference."""
+        mock_http_client.request = AsyncMock(
+            return_value=_make_response(
+                {
+                    "results": [
+                        {
+                            "_id": "R12",
+                            "status": "confirmed",
+                            "checkIn": _rel(-1),
+                            "checkOut": _rel(2),
+                            "listingId": "L1",
+                            "mtl": {"assigned": False},
+                            "stay": [{"unitTypeId": "L1"}],
+                        }
+                    ]
+                }
+            )
+        )
+
+        reservations = await guesty_provider.get_reservations("L1")
+
+        assert reservations[0].room_ids == ("L1",)
+
+    @pytest.mark.asyncio
+    async def test_single_unit_room_reference_unchanged(
+        self, guesty_provider, mock_http_client
+    ):
+        """Test a single-unit reservation still maps to the listing ID."""
+        mock_http_client.request = AsyncMock(
+            return_value=_make_response(SAMPLE_RESERVATIONS)
+        )
+
+        reservations = await guesty_provider.get_reservations("L1")
+        r1 = next(r for r in reservations if r.pms_booking_id == "R1")
+
+        assert r1.room_ids == ("L1",)
+
+    @pytest.mark.asyncio
     async def test_no_undocumented_date_filters_sent(
         self, guesty_provider, mock_http_client
     ):
