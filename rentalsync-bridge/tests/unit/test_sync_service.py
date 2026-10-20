@@ -21,7 +21,11 @@ from src.providers.base import (
 )
 from src.repositories.booking_repository import BookingRepository
 from src.services.calendar_service import CalendarCache
-from src.services.sync_service import SyncService, SyncServiceError
+from src.services.sync_service import (
+    GUEST_SOURCE_ID_KEY,
+    SyncService,
+    SyncServiceError,
+)
 
 
 @pytest.fixture
@@ -3037,6 +3041,168 @@ class TestCustomFieldEnrichmentChangeDetection:
         await service.sync_listing(listing, mock_provider)
 
         assert mock_provider.get_custom_fields.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_failed_lookup_drops_other_guests_details(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test a reassigned guest never inherits the old guest's code.
+
+        The stored phone last-4 becomes a physical lock code, so falling
+        back to it after a reassignment would leave the previous guest
+        with working access under the new guest's name.
+        """
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+        mock_provider.get_guest = AsyncMock(
+            return_value=PMSGuest(
+                guest_id="G_FIRST",
+                full_name="First Guest",
+                phone="+15550001111",
+                email="first@example.com",
+            )
+        )
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_SWAP",
+                    guest_id="G_FIRST",
+                    guest_name="First Guest",
+                    check_in=_test_date(3),
+                    check_out=_test_date(6),
+                    updated_at=_test_date(-5),
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        repo = BookingRepository(sync_session)
+        booking = await repo.get_by_pms_id(listing.id, "RES_SWAP")
+        assert booking is not None
+        assert booking.guest_phone_last4 == "1111"
+
+        # The reservation is reassigned and the new lookup fails.
+        mock_provider.get_guest = AsyncMock(
+            side_effect=PMSProviderError("rate limited"),
+        )
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_SWAP",
+                    guest_id="G_SECOND",
+                    guest_name="Second Guest",
+                    check_in=_test_date(3),
+                    check_out=_test_date(6),
+                    updated_at=_test_date(-1),
+                )
+            ]
+        )
+        await service.sync_listing(listing, mock_provider)
+
+        booking = await repo.get_by_pms_id(listing.id, "RES_SWAP")
+        assert booking is not None
+        assert booking.guest_name == "Second Guest"
+        assert booking.guest_phone_last4 is None
+        assert "guest_phone" not in booking.custom_data
+        assert "guest_email" not in booking.custom_data
+        assert booking.pms_updated_at is None
+
+    @pytest.mark.asyncio
+    async def test_same_guest_failure_keeps_details(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test an unchanged guest still keeps its details on failure."""
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+        mock_provider.get_guest = AsyncMock(
+            return_value=PMSGuest(
+                guest_id="G_SAME",
+                full_name="Same Guest",
+                phone="+15550002222",
+                email="same@example.com",
+            )
+        )
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_SAME",
+                    guest_id="G_SAME",
+                    guest_name="Same Guest",
+                    check_in=_test_date(3),
+                    check_out=_test_date(6),
+                    updated_at=_test_date(-5),
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        mock_provider.get_guest = AsyncMock(
+            side_effect=PMSProviderError("rate limited"),
+        )
+        await service.sync_listing(listing, mock_provider)
+
+        booking = await BookingRepository(sync_session).get_by_pms_id(
+            listing.id, "RES_SAME"
+        )
+        assert booking is not None
+        assert booking.guest_phone_last4 == "2222"
+        assert booking.custom_data["guest_email"] == "same@example.com"
+
+    @pytest.mark.asyncio
+    async def test_guest_bookkeeping_key_not_exported(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test the stored guest provenance never reaches custom data."""
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+        mock_provider.get_guest = AsyncMock(
+            return_value=PMSGuest(
+                guest_id="G_HIDDEN",
+                full_name="Hidden Guest",
+                phone="+15550003333",
+                email="hidden@example.com",
+            )
+        )
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_HIDDEN",
+                    guest_id="G_HIDDEN",
+                    check_in=_test_date(3),
+                    check_out=_test_date(6),
+                    updated_at=_test_date(-5),
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        enriched, payloads = await service._enrich_reservations(
+            mock_provider,
+            listing,
+            [
+                _make_reservation(
+                    pms_booking_id="RES_HIDDEN2",
+                    guest_id="G_HIDDEN",
+                    check_in=_test_date(3),
+                    check_out=_test_date(6),
+                )
+            ],
+        )
+        assert GUEST_SOURCE_ID_KEY not in enriched[0].custom_data
+        assert payloads["RES_HIDDEN2"][GUEST_SOURCE_ID_KEY] == "G_HIDDEN"
+
+        booking = await BookingRepository(sync_session).get_by_pms_id(
+            listing.id, "RES_HIDDEN"
+        )
+        assert booking is not None
+        assert GUEST_SOURCE_ID_KEY not in booking.custom_data
+        assert booking.enrichment_data[GUEST_SOURCE_ID_KEY] == "G_HIDDEN"
 
 
 def _sync_log_text(caplog) -> str:

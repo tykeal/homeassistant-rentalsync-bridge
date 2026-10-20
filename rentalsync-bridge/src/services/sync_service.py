@@ -62,7 +62,10 @@ ENRICHMENT_FRESH_LOOKAHEAD_DAYS = 30
 # Enrichment keys owned by the guest lookup rather than the custom-fields
 # endpoint.  Provenance matters: a failed fetch may only fall back to the
 # values that same source produced last time.
-GUEST_ENRICHMENT_KEYS = frozenset({"guest_phone", "guest_email", "guest_phone_last4"})
+GUEST_SOURCE_ID_KEY = "_guest_source_id"
+GUEST_ENRICHMENT_KEYS = frozenset(
+    {"guest_phone", "guest_email", "guest_phone_last4", GUEST_SOURCE_ID_KEY}
+)
 
 
 @dataclass(frozen=True)
@@ -102,6 +105,11 @@ def _guest_owned(data: dict) -> dict:
 def _enrichment_owned(data: dict) -> dict:
     """Return only the custom-fields-endpoint-owned enrichment values."""
     return {k: v for k, v in data.items() if k not in GUEST_ENRICHMENT_KEYS}
+
+
+def _exportable(data: dict) -> dict:
+    """Drop bookkeeping keys that must not reach a booking's custom data."""
+    return {k: v for k, v in data.items() if k != GUEST_SOURCE_ID_KEY}
 
 
 # The all-day vs timed export rules live in CalendarService; reuse them so
@@ -1024,18 +1032,21 @@ class SyncService:
 
         if guest_id in failed_guest_ids:
             # Keep the last-good contact details rather than blanking a
-            # door code on a transient provider error.
-            return (
-                _guest_owned(cached.data if cached and cached.data else {}),
-                (reservation.guest_name),
-                True,
-            )
+            # door code on a transient provider error -- but only when they
+            # demonstrably belong to this same guest.  After a guest
+            # reassignment the stored phone last-4 is the PREVIOUS guest's
+            # lock code, and publishing it would leave them working access
+            # under the new guest's name.
+            stored = cached.data if cached and cached.data else {}
+            if stored.get(GUEST_SOURCE_ID_KEY) != guest_id:
+                return {}, reservation.guest_name, True
+            return _guest_owned(stored), reservation.guest_name, True
 
         guest = guests.get(guest_id)
         if guest is None:
             return {}, reservation.guest_name, False
 
-        data: dict = {}
+        data: dict = {GUEST_SOURCE_ID_KEY: guest_id}
         phone_last4 = self.extract_phone_last4(guest.phone)
         if phone_last4:
             data["guest_phone_last4"] = phone_last4
@@ -1125,7 +1136,7 @@ class SyncService:
             check_out=reservation.check_out,
             status=reservation.status,
             room_ids=reservation.room_ids,
-            custom_data={**data, **reservation.custom_data},
+            custom_data={**_exportable(data), **reservation.custom_data},
             updated_at=updated_at,
         )
 
@@ -1206,6 +1217,13 @@ class SyncService:
             return False
         if reservation.guest_id is not None and reservation.guest_name is None:
             # Only a guest lookup can supply the missing name.
+            return False
+        if (
+            reservation.guest_id is not None
+            and cached.data.get(GUEST_SOURCE_ID_KEY) != reservation.guest_id
+        ):
+            # The stored contact details came from a different guest (or
+            # from no guest at all), so they cannot stand in for a lookup.
             return False
         return not cls._requires_fresh_enrichment(reservation, listing)
 
