@@ -11,6 +11,28 @@ if TYPE_CHECKING:
     from src.models.oauth_credential import OAuthCredential
 
 
+# Provider statuses we understand but deliberately never export.
+#
+# Each one means the stay is not happening: ``expired`` (an unpaid hold that
+# lapsed), ``closed`` (a reservation closed out without a stay), ``declined``
+# (a request the host turned down) and ``awaiting_payment`` (a booking that
+# has not been paid for yet).
+#
+# These are withheld, not retired: the sync stores them verbatim so the
+# reservation stays "seen" (the prune loop must not cancel it), while
+# ``BookingRepository.get_confirmed_for_listing`` keeps it out of the iCal
+# export.  Because they are expected on healthy accounts, every layer logs
+# them at DEBUG; only a status outside this set is WARNING-worthy evidence
+# that a provider's status mapping has drifted.
+#
+# This is the shared source of truth.  ``src/providers/guesty/service.py``
+# currently keeps its own ``_RECOGNISED_NON_EXPORT_STATUSES`` copy of the
+# same set; keep the two in sync (or have Guesty import this one).
+RECOGNISED_NON_EXPORT_STATUSES = frozenset(
+    {"expired", "closed", "declined", "awaiting_payment"}
+)
+
+
 # ---------------------------------------------------------------------------
 # Data Transfer Objects
 # ---------------------------------------------------------------------------

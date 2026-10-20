@@ -935,6 +935,40 @@ class TestExtractBookingDataFromDto:
         assert result["status"] == raw_status
         assert "withheld" not in caplog.text
 
+    @pytest.mark.parametrize(
+        "raw_status",
+        ["expired", "closed", "declined", "awaiting_payment"],
+    )
+    def test_extract_non_export_status_logs_debug(self, service, raw_status, caplog):
+        """Test expected non-stay statuses are withheld without warning."""
+        reservation = _make_reservation(status=raw_status)
+        with caplog.at_level(logging.DEBUG, logger="src.services.sync_service"):
+            result = service._extract_booking_data_from_dto(reservation)
+
+        assert result["status"] == raw_status
+        assert raw_status in caplog.text
+        assert not [
+            record for record in caplog.records if record.levelno >= logging.WARNING
+        ]
+        assert [
+            record
+            for record in caplog.records
+            if record.levelno == logging.DEBUG and raw_status in record.getMessage()
+        ]
+
+    def test_extract_genuinely_unknown_status_warns(self, service, caplog):
+        """Test an unknown status still warns about provider drift."""
+        reservation = _make_reservation(status="zzz_unknown")
+        with caplog.at_level(logging.DEBUG, logger="src.services.sync_service"):
+            result = service._extract_booking_data_from_dto(reservation)
+
+        assert result["status"] == "zzz_unknown"
+        warnings = [
+            record for record in caplog.records if record.levelno == logging.WARNING
+        ]
+        assert warnings
+        assert "'zzz_unknown'" in warnings[0].getMessage()
+
     def test_extract_status_overlong_truncated(self, service):
         """Test an absurd status cannot overflow the String(50) column."""
         reservation = _make_reservation(status="x" * 200)
@@ -994,6 +1028,54 @@ class TestUnrecognisedStatusWithheld:
         await service.sync_listing(listing, mock_provider)
         await sync_session.refresh(stored)
         assert stored.status == "canceled_by_channel"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "raw_status",
+        ["expired", "closed", "declined", "awaiting_payment"],
+    )
+    async def test_non_export_status_withheld_not_retired(
+        self, sync_session, mock_provider, caplog, raw_status
+    ):
+        """Test expected non-stay statuses are kept, quiet, and unexported."""
+        listing = Listing(
+            pms_id="PROP123",
+            name="Test Listing",
+            ical_url_slug="test-listing",
+            enabled=True,
+            sync_enabled=True,
+        )
+        sync_session.add(listing)
+        await sync_session.commit()
+        await sync_session.refresh(listing)
+
+        reservation = _make_reservation(status=raw_status)
+        mock_provider.get_reservations = AsyncMock(return_value=[reservation])
+        service = SyncService(sync_session)
+
+        with caplog.at_level(logging.DEBUG, logger="src.services.sync_service"):
+            result = await service.sync_listing(listing, mock_provider)
+
+        assert result["cancelled"] == 0
+        assert not [
+            record
+            for record in caplog.records
+            if record.levelno >= logging.WARNING and raw_status in record.getMessage()
+        ]
+
+        repo = BookingRepository(sync_session)
+        stored = await repo.get_by_pms_id(listing.id, "RES001")
+        assert stored is not None
+        assert stored.status == raw_status
+
+        exported = await repo.get_confirmed_for_listing(listing.id)
+        assert exported == []
+
+        # Second sync: still in the snapshot, so the prune loop must not
+        # retire it as cancelled.
+        await service.sync_listing(listing, mock_provider)
+        await sync_session.refresh(stored)
+        assert stored.status == raw_status
 
 
 class TestExtractPhoneLast4:
