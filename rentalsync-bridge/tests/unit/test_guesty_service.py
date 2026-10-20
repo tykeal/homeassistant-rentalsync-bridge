@@ -3,6 +3,7 @@
 """Unit tests for GuestyProvider."""
 
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -361,6 +362,40 @@ class TestGetReservations:
         assert statuses["R1"] == "confirmed"
         assert statuses["R2"] == "checked_in"
         assert statuses["R4"] == "cancelled"
+
+    def test_cancelled_two_l_spelling_mapped(self):
+        """Test the two-"l" cancelled spelling maps to cancelled."""
+        result = GuestyProvider._map_reservation(
+            {
+                "_id": "R9",
+                "status": "cancelled",
+                "checkIn": _rel(40),
+                "checkOut": _rel(44),
+            },
+            "L1",
+        )
+
+        assert result is not None
+        assert result.status == "cancelled"
+
+    def test_unrecognised_status_kept_and_warned(self, caplog):
+        """Test an unknown status is carried through with a warning."""
+        with caplog.at_level(logging.WARNING, logger="src.providers.guesty.service"):
+            result = GuestyProvider._map_reservation(
+                {
+                    "_id": "R9",
+                    "status": "Canceled_By_Channel",
+                    "checkIn": _rel(40),
+                    "checkOut": _rel(44),
+                },
+                "L1",
+            )
+
+        # Must NOT be None: dropping it would let the prune loop retire it.
+        assert result is not None
+        assert result.status == "canceled_by_channel"
+        assert "'canceled_by_channel'" in caplog.text
+        assert "R9" in caplog.text
 
     @pytest.mark.asyncio
     async def test_excludes_inquiry_and_reserved(
