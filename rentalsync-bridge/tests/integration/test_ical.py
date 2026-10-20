@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from icalendar import Calendar
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from src.database import Base, get_db
@@ -338,9 +339,12 @@ async def test_get_ical_empty_bookings(test_app, test_session):
         )
 
     assert response.status_code == 200
-    assert "BEGIN:VCALENDAR" in response.text
-    # Should have no VEVENT blocks
-    assert "BEGIN:VEVENT" not in response.text
+    assert response.headers["content-type"].startswith("text/calendar")
+
+    # Empty feed must still be a conformant, parseable calendar.
+    cal = Calendar.from_ical(response.content)
+    cal.validate()
+    assert list(cal.walk("VEVENT")) == []
 
 
 @pytest.mark.asyncio

@@ -9,7 +9,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from icalendar import Calendar, Event
+from icalendar import Calendar, Event, Timezone
 
 from src.models.booking import Booking
 from src.models.custom_field import CustomField
@@ -27,6 +27,10 @@ MIN_PHONE_DIGITS = 4
 # VTIMEZONE transitions, ensuring at least one transition brackets the
 # earliest referenced timestamp.
 VTIMEZONE_PADDING_DAYS = 365
+
+# Days of transition coverage emitted either side of today for the VTIMEZONE
+# used to keep an otherwise component-less feed RFC 5545 conformant.
+EMPTY_FEED_VTIMEZONE_DAYS = 365
 
 
 class CalendarCache:
@@ -180,6 +184,15 @@ class CalendarService:
         else:
             first_date, last_date = window
             cal.add_missing_timezones(first_date=first_date, last_date=last_date)
+
+        # RFC 5545 3.4 requires a VCALENDAR to hold at least one component.
+        # When no bookings survive filtering the calendar would otherwise be
+        # calprops-only, so emit the listing's VTIMEZONE.  This is a real,
+        # semantically meaningful component rather than a placeholder event:
+        # a synthetic VEVENT would propagate into Rental Control and could
+        # create a bogus door lock code.
+        if not cal.subcomponents:
+            cal.add_component(self._fallback_timezone(tz))
 
         # Convert to string
         ical_bytes = cal.to_ical()
@@ -378,6 +391,28 @@ class CalendarService:
         if dt.tzinfo is None:
             return dt.replace(tzinfo=UTC).astimezone(tz)
         return dt.astimezone(tz)
+
+    @staticmethod
+    def _fallback_timezone(tz: ZoneInfo) -> Timezone:
+        """Build a VTIMEZONE component for an otherwise empty feed.
+
+        Transitions are limited to a narrow window around today so the
+        component stays small; it exists only to satisfy the RFC 5545
+        at-least-one-component requirement.
+
+        Args:
+            tz: Listing timezone.
+
+        Returns:
+            VTIMEZONE component for the listing timezone.
+        """
+        today = datetime.now(tz).date()
+        padding = timedelta(days=EMPTY_FEED_VTIMEZONE_DAYS)
+        return Timezone.from_tzid(
+            str(tz),
+            first_date=today - padding,
+            last_date=today + padding,
+        )
 
     def _vtimezone_window(
         self,

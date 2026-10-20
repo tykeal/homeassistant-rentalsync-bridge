@@ -281,6 +281,71 @@ class TestRoomICalEndpoint:
         assert len(events) == 0
 
     @pytest.mark.asyncio
+    async def test_room_ical_valid_when_all_bookings_withheld(
+        self,
+        ical_app,
+        ical_session: AsyncSession,
+        listing_with_rooms: Listing,
+    ) -> None:
+        """Regression: a fully filtered feed is still a valid calendar.
+
+        In v0.5.2 a provider status-mapping gap stored every booking with a
+        status the iCal query excludes, so no events were exported.  The feed
+        must still be a structurally valid VCALENDAR rather than an error,
+        empty body, or truncated output.
+        """
+        withheld_room = Room(
+            listing_id=listing_with_rooms.id,
+            pms_room_id="room-withheld",
+            room_name="Withheld Room",
+            ical_url_slug="withheld-room",
+            enabled=True,
+        )
+        ical_session.add(withheld_room)
+        await ical_session.commit()
+        await ical_session.refresh(withheld_room)
+
+        now = datetime.now(UTC)
+        ical_session.add_all(
+            [
+                Booking(
+                    listing_id=listing_with_rooms.id,
+                    room_id=withheld_room.id,
+                    pms_booking_id="withheld-1",
+                    guest_name="Unmapped Status",
+                    check_in_date=now + timedelta(days=2),
+                    check_out_date=now + timedelta(days=4),
+                    status="reserved",
+                ),
+                Booking(
+                    listing_id=listing_with_rooms.id,
+                    room_id=withheld_room.id,
+                    pms_booking_id="withheld-2",
+                    guest_name="Cancelled Guest",
+                    check_in_date=now + timedelta(days=6),
+                    check_out_date=now + timedelta(days=8),
+                    status="cancelled",
+                ),
+            ]
+        )
+        await ical_session.commit()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=ical_app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                f"/ical/{listing_with_rooms.ical_url_slug}/"
+                f"{withheld_room.ical_url_slug}.ics"
+            )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/calendar")
+
+        cal = Calendar.from_ical(response.content)
+        cal.validate()
+        assert list(cal.walk("VEVENT")) == []
+
+    @pytest.mark.asyncio
     async def test_get_room_ical_feed_invalid_listing_slug(
         self, ical_app, room1: Room
     ) -> None:

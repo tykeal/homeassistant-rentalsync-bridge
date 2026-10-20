@@ -287,18 +287,100 @@ class TestRFC5545Compliance:
         assert "John" in summary
 
     def test_empty_calendar_valid(self, calendar_service, sample_listing):
-        """Calendar with no events should still be valid."""
+        """RFC 5545 3.4: an empty feed is still a conformant VCALENDAR.
+
+        ``icalbody = calprops component`` with ``component = 1*(...)``, so a
+        VCALENDAR carrying only PRODID/VERSION is non-conformant.  A feed with
+        no bookings must therefore still contain at least one component.
+        """
         ical_str = calendar_service.generate_ical(sample_listing, [])
 
         cal = Calendar.from_ical(ical_str)
 
-        # Should have required properties
-        assert "prodid" in cal
-        assert "version" in cal
+        # icalendar's own conformance check raises IncompleteComponent when
+        # PRODID, VERSION, or any component is missing.
+        cal.validate()
 
-        # Should have no events
-        events = list(cal.walk("VEVENT"))
-        assert len(events) == 0
+        assert str(cal["prodid"])
+        assert str(cal["version"]) == "2.0"
+
+        # At least one component, and no fabricated events: a synthetic VEVENT
+        # would flow into Rental Control and could create a bogus lock code.
+        assert cal.subcomponents
+        assert list(cal.walk("VEVENT")) == []
+
+        # The component is a real VTIMEZONE for the listing's own timezone.
+        timezones = list(cal.walk("VTIMEZONE"))
+        assert len(timezones) == 1
+        assert str(timezones[0]["TZID"]) == sample_listing.timezone
+
+        # RFC 5545 3.6.5: a VTIMEZONE MUST itself include at least one
+        # STANDARD or DAYLIGHT sub-component.  Calendar.validate() does not
+        # recurse into VTIMEZONE, so this is asserted structurally rather
+        # than delegated to the validator.
+        assert [
+            sub.name
+            for sub in timezones[0].subcomponents
+            if sub.name in {"STANDARD", "DAYLIGHT"}
+        ]
+
+        assert ical_str.startswith("BEGIN:VCALENDAR")
+        assert ical_str.rstrip("\r\n").endswith("END:VCALENDAR")
+
+    @pytest.mark.parametrize(
+        "timezone_name",
+        ["UTC", "America/Phoenix", "Asia/Kolkata", "Pacific/Honolulu"],
+    )
+    def test_empty_calendar_valid_for_fixed_offset_zone(
+        self, calendar_service, timezone_name
+    ):
+        """RFC 5545 3.6.5: the empty-feed VTIMEZONE is never sub-component-less.
+
+        Zones with no DST transitions in the emitted window could otherwise
+        yield a VTIMEZONE with nothing inside it, satisfying the VCALENDAR
+        at-least-one-component rule while still being invalid one level down.
+        UTC is covered explicitly as the most likely configured default.
+        """
+        listing = Listing(
+            id=2,
+            pms_id="TZ123",
+            name="Fixed Offset Property",
+            ical_url_slug=f"fixed-{timezone_name.lower().replace('/', '-')}",
+            enabled=True,
+            sync_enabled=True,
+            timezone=timezone_name,
+        )
+
+        ical_str = calendar_service.generate_ical(listing, [])
+
+        cal = Calendar.from_ical(ical_str)
+        cal.validate()
+
+        timezones = list(cal.walk("VTIMEZONE"))
+        assert len(timezones) == 1
+        assert str(timezones[0]["TZID"]) == timezone_name
+
+        observances = [
+            sub
+            for sub in timezones[0].subcomponents
+            if sub.name in {"STANDARD", "DAYLIGHT"}
+        ]
+        assert observances
+
+        # Each observance carries the properties RFC 5545 3.6.5 requires.
+        for observance in observances:
+            assert "DTSTART" in observance
+            assert "TZOFFSETFROM" in observance
+            assert "TZOFFSETTO" in observance
+
+    def test_empty_calendar_round_trips(self, calendar_service, sample_listing):
+        """An empty feed survives a serialize/parse/serialize round trip."""
+        ical_str = calendar_service.generate_ical(sample_listing, [])
+
+        reserialized = Calendar.from_ical(ical_str).to_ical().decode("utf-8")
+
+        Calendar.from_ical(reserialized).validate()
+        assert "BEGIN:VTIMEZONE" in reserialized
 
     def test_prodid_format(self, calendar_service, sample_listing, sample_booking):
         """RFC 5545 3.7.3: PRODID should identify the product."""
