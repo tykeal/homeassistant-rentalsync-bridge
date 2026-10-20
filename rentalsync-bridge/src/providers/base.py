@@ -25,9 +25,8 @@ if TYPE_CHECKING:
 # them at DEBUG; only a status outside this set is WARNING-worthy evidence
 # that a provider's status mapping has drifted.
 #
-# This is the shared source of truth.  ``src/providers/guesty/service.py``
-# currently keeps its own ``_RECOGNISED_NON_EXPORT_STATUSES`` copy of the
-# same set; keep the two in sync (or have Guesty import this one).
+# This is the shared source of truth: providers and the sync import it here
+# rather than keeping their own copies.
 RECOGNISED_NON_EXPORT_STATUSES = frozenset(
     {"expired", "closed", "declined", "awaiting_payment"}
 )

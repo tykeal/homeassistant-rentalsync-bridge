@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from src.providers.base import (
+    RECOGNISED_NON_EXPORT_STATUSES,
     PMSAuthenticationError,
     PMSConnectionError,
     PMSGuest,
@@ -69,32 +70,26 @@ _EXCLUDED_STATUSES = frozenset({"inquiry", "reserved"})
 # reservation is a withheld booking.
 _NORMALISED_STATUSES = frozenset(_STATUS_MAP.values())
 
-# Documented Guesty states that we understand but deliberately do not export.
+# Guesty's spelling of the shared non-export states.
 #
-# Each one means the stay is not happening: ``expired`` (an unpaid hold that
-# lapsed), ``closed`` (a reservation closed out without a stay), ``declined``
-# (a request the host turned down) and awaiting-payment (a booking that has
-# not been paid for yet).  The machine spelling of the awaiting-payment state
-# is INFERRED as ``awaiting_payment``; it is not confirmed by Guesty's docs,
-# so an unexpected spelling simply falls through to the unknown-status path.
+# The machine spelling of the awaiting-payment state is INFERRED as
+# ``awaiting_payment``; it is not confirmed by Guesty's docs, so an
+# unexpected spelling simply falls through to the unknown-status path.
 #
 # These are deliberately NOT in ``_STATUS_MAP`` (they must never reach the
 # calendar export) and NOT in ``_EXCLUDED_STATUSES`` (returning None would
-# drop them from the snapshot, and the sync prune loop would then retire them
-# as cancelled).  They are withheld, not retired: ``_map_reservation``
+# drop them from the snapshot, and the sync prune loop would then retire
+# them as cancelled).  They are withheld, not retired: ``_map_reservation``
 # returns a DTO carrying the raw status verbatim, and the booking repository
 # only serves ``confirmed``/``checked_in``/``checked_out`` to the export.
 #
-# They are listed here so the health-check guard counts them as classified: a
-# normal account accumulates many of these over its history, and treating
-# them as evidence of a broken status mapping would abort every sync.
-_RECOGNISED_NON_EXPORT_STATUSES = frozenset(
-    {"expired", "closed", "declined", "awaiting_payment"}
-)
+# They also count as classified for the health-check guard below: a normal
+# account accumulates many of these over its history, and treating them as
+# evidence of a broken status mapping would abort every sync.
 
 # Statuses the health check considers understood.  Only a status outside this
 # union counts as unclassified evidence of a broken mapping.
-_CLASSIFIED_STATUSES = _NORMALISED_STATUSES | _RECOGNISED_NON_EXPORT_STATUSES
+_CLASSIFIED_STATUSES = _NORMALISED_STATUSES | RECOGNISED_NON_EXPORT_STATUSES
 
 # Field projection for ``GET /v1/reservations``.
 #
@@ -945,7 +940,7 @@ class GuestyProvider(PMSProvider):
             # prune loop does not retire it) while holding it out of the
             # calendar export.  Returning None here would drop it from the
             # snapshot and have it cancelled instead.
-            if status_raw in _RECOGNISED_NON_EXPORT_STATUSES:
+            if status_raw in RECOGNISED_NON_EXPORT_STATUSES:
                 # Expected on healthy accounts, so DEBUG: warning on every
                 # sync would spam logs and alarm users about normal data.
                 logger.debug(
