@@ -65,6 +65,99 @@ _STATUS_MAP: dict[str, str] = {
 # Guesty statuses to exclude from results.
 _EXCLUDED_STATUSES = frozenset({"inquiry", "reserved"})
 
+# The normalised statuses we are able to export.  Anything else on a mapped
+# reservation is a withheld, unclassified booking.
+_NORMALISED_STATUSES = frozenset(_STATUS_MAP.values())
+
+# Field projection for ``GET /v1/reservations``.
+#
+# WHY THIS EXISTS: when ``fields`` is omitted, Guesty does NOT return the full
+# reservation document — it returns a fixed default projection that does not
+# include ``status``.  That silent omission is what shipped cancelled stays to
+# door locks (issue #121) and then emptied calendars in v0.5.2.
+# Reference: https://open-api-docs.guesty.com/docs/how-to-search-for-reservations
+#
+# DANGER: the same document states that once ``fields`` IS specified, nested
+# objects are truncated to their ``_id``.  ``listing.title`` and
+# ``guest.fullName`` are explicitly documented as NOT persisting unless named
+# individually.  Therefore **every** dotted path this provider reads must be
+# listed below; omitting one silently strips that data from every reservation
+# with no error, which is exactly the failure mode we are fixing.
+#
+# Rule for maintainers: if you add a ``raw.get(...)`` read anywhere in this
+# module's reservation path, add the corresponding path here.  Parent paths are
+# requested alongside nested ones because Guesty's truncation behaviour for
+# arrays of objects (``stay``, ``notes``) is not documented.
+#
+# The syntax is a space-separated string of dotted paths (confirmed by both the
+# prose docs and the ``reservationsV2List`` OpenAPI schema: "Selection of
+# fields, separated by space").
+_RESERVATION_FIELD_PATHS: tuple[str, ...] = (
+    # -- identity & classification (_map_reservation) ---------------------
+    "_id",  # pms_booking_id; also named in every error message
+    "status",  # the whole point: classification + cancellation propagation
+    # -- stay dates (_map_reservation / _overlaps_window) -----------------
+    "checkIn",
+    "checkOut",
+    "checkInDateLocalized",  # fallback when checkIn is absent
+    "checkOutDateLocalized",  # fallback when checkOut is absent
+    # -- guest (_map_reservation) -----------------------------------------
+    # ``guest`` alone would truncate to ``guest._id``; the name must be named.
+    "guest",
+    "guest._id",
+    "guest.fullName",
+    # -- listing attribution (_belongs_to_listing / _reservation_listing_refs)
+    # These decide which listing a reservation is stored against.  Losing one
+    # either mis-attributes a booking or aborts the sync outright.
+    "listingId",
+    "parentListingId",
+    "unitTypeId",
+    "unitId",
+    # -- multi-unit room assignment (_resolve_room_id, PRs #116/#119) ------
+    # Load-bearing: these decide WHICH physical door lock a code is issued
+    # for.  ``stay[].unitId`` is the authoritative assigned sub-unit.
+    "stay",
+    "stay.unitId",
+    "stay.unitTypeId",
+    "stay.listingId",
+    "stay.parentListingId",
+    "mtl",
+    "mtl._id",
+    "mtl.p",
+    "mtl.assigned",
+    # -- custom_data (_extract_custom_data / _CUSTOM_KEYS) -----------------
+    "source",
+    "confirmationCode",
+    "nightsCount",
+    "guestsCount",
+    # -- financial custom_data (_MONEY_KEYS) -------------------------------
+    "money",
+    "money.totalPaid",
+    "money.balanceDue",
+    "money.currency",
+    # -- notes (_extract_custom_data) --------------------------------------
+    "notes",
+    "notes.note",
+)
+
+RESERVATION_FIELDS = " ".join(_RESERVATION_FIELD_PATHS)
+
+# Systemic-failure guard for ``get_reservations``.
+#
+# A reservation whose ``status`` is present but unrecognised is withheld from
+# the calendar export (v0.5.2 behaviour).  That is correct for the odd record,
+# but if it happens to most of an account the mapping itself is broken and
+# returning the snapshot would hand the sync an almost-empty calendar.
+#
+# Small-N reasoning: a 1-3 reservation account can legitimately be 100%
+# "unrecognised" (e.g. a single booking in a Guesty state we have not mapped
+# yet), so a pure ratio test would abort those accounts spuriously.  The guard
+# therefore only applies once at least ``_UNCLASSIFIED_MIN_SAMPLE`` mapped
+# reservations are in hand, where a majority being unrecognised can no longer
+# be explained by one or two odd bookings.
+_UNCLASSIFIED_MIN_SAMPLE = 4
+_UNCLASSIFIED_MAX_RATIO = 0.5
+
 
 @provider("guesty")
 class GuestyProvider(PMSProvider):
@@ -327,9 +420,12 @@ class GuestyProvider(PMSProvider):
         Raises:
             PMSProviderError: On API failure (including the listing-scope
                 lookup), if a returned reservation names no listing at all,
-                if the API stops serving records before ``count`` is
-                reached, if ``count`` changes between pages, or if pagination
-                does not terminate within ``MAX_RESERVATION_PAGES``.
+                if a reservation carries no ``status`` key (our field
+                projection is wrong), if most mapped reservations have an
+                unrecognised status (the status mapping is broken), if the
+                API stops serving records before ``count`` is reached, if
+                ``count`` changes between pages, or if pagination does not
+                terminate within ``MAX_RESERVATION_PAGES``.
         """
         if start_date is None:
             start_date = datetime.now(UTC) - timedelta(days=DEFAULT_LOOKBACK_DAYS)
@@ -359,6 +455,8 @@ class GuestyProvider(PMSProvider):
 
         reservations: list[PMSReservation] = []
         foreign = 0
+        unclassified = 0
+        mapped_total = 0
         skip = 0
         fetched = 0
         total: int | None = None
@@ -371,6 +469,10 @@ class GuestyProvider(PMSProvider):
             # No stay-date filter is sent: see DEFAULT_LOOKBACK_DAYS above.
             params: dict[str, Any] = {
                 "filters": listing_filter,
+                # Without an explicit projection Guesty returns its default
+                # field set, which omits ``status`` entirely — see
+                # RESERVATION_FIELDS above.
+                "fields": RESERVATION_FIELDS,
                 "limit": DEFAULT_PAGE_LIMIT,
                 "skip": skip,
             }
@@ -398,13 +500,16 @@ class GuestyProvider(PMSProvider):
                     )
                     raise PMSProviderError(msg)
 
-            foreign += self._collect_page(
+            page_foreign, page_mapped, page_unclassified = self._collect_page(
                 results,
                 listing_pms_id,
                 scope_ids,
                 (start_date, end_date),
                 reservations,
             )
+            foreign += page_foreign
+            mapped_total += page_mapped
+            unclassified += page_unclassified
 
             fetched += len(results)
             skip += len(results)
@@ -432,6 +537,8 @@ class GuestyProvider(PMSProvider):
             )
             raise PMSProviderError(msg)
 
+        _guard_unclassified(unclassified, mapped_total, listing_pms_id)
+
         if foreign:
             logger.debug(
                 "Discarded %d reservation(s) belonging to another listing "
@@ -448,7 +555,7 @@ class GuestyProvider(PMSProvider):
         scope_ids: frozenset[str],
         window: tuple[datetime, datetime],
         out: list[PMSReservation],
-    ) -> int:
+    ) -> tuple[int, int, int]:
         """Map one reservation page into *out*, skipping foreign records.
 
         Guesty silently ignores query parameters it does not recognise, so
@@ -464,22 +571,33 @@ class GuestyProvider(PMSProvider):
             out: Accumulator the mapped reservations are appended to.
 
         Returns:
-            Number of records discarded as belonging to another listing.
+            Tuple of ``(foreign, mapped, unclassified)``: records discarded
+            as belonging to another listing, records mapped successfully
+            (regardless of stay window), and of those, records whose status
+            was present but unrecognised.
 
         Raises:
             PMSProviderError: If a reservation names no listing at all and
-                therefore cannot be attributed to any listing.
+                therefore cannot be attributed to any listing, or if a
+                reservation carries no ``status`` key at all.
         """
         start, end = window
         foreign = 0
+        mapped_count = 0
+        unclassified = 0
         for item in results:
             if not _belongs_to_listing(item, scope_ids, listing_pms_id):
                 foreign += 1
                 continue
             mapped = self._map_reservation(item, listing_pms_id)
-            if mapped is not None and _overlaps_window(mapped, start, end):
+            if mapped is None:
+                continue
+            mapped_count += 1
+            if mapped.status not in _NORMALISED_STATUSES:
+                unclassified += 1
+            if _overlaps_window(mapped, start, end):
                 out.append(mapped)
-        return foreign
+        return foreign, mapped_count, unclassified
 
     async def _listing_scopes(
         self,
@@ -743,7 +861,33 @@ class GuestyProvider(PMSProvider):
         Returns:
             PMSReservation DTO, or None if the status should be
             excluded.
+
+        Raises:
+            PMSProviderError: If the payload carries no ``status`` key at
+                all, which means our field projection is wrong or Guesty
+                changed its response shape.
         """
+        if "status" not in raw:
+            # Systemic, not per-booking: ``GET /v1/reservations`` omits
+            # ``status`` from its default projection, so an absent key means
+            # the ``fields`` parameter was dropped, ignored or is wrong.
+            # Every reservation would then be unclassified and withheld,
+            # emptying the calendar (issue #121).  Raising aborts the sync
+            # before SyncService receives a snapshot, so nothing is pruned
+            # and the previously-synced bookings keep serving.  We never
+            # guess "confirmed": a cancelled guest keeping a working door
+            # code is a fail-open failure, strictly worse than a stale
+            # calendar.
+            reservation_id = str(raw.get("_id") or "<unknown>")
+            msg = (
+                f"Guesty reservation {reservation_id} carries no 'status' "
+                f"field; the API returned its default projection, which "
+                f"omits 'status'. Refusing to classify reservations without "
+                f"it — the existing calendar data is kept instead of being "
+                f"replaced by an empty or unsafe snapshot"
+            )
+            raise PMSProviderError(msg)
+
         status_raw = (raw.get("status") or "").lower()
 
         if status_raw in _EXCLUDED_STATUSES:
@@ -757,10 +901,11 @@ class GuestyProvider(PMSProvider):
             # calendar export.  Returning None here would drop it from the
             # snapshot and have it cancelled instead.
             logger.warning(
-                "Unrecognised Guesty reservation status %r for reservation "
-                "%s; booking withheld from calendar export",
-                status_raw,
+                "Guesty reservation %s reports status %r, which is present "
+                "but unrecognised; booking withheld from calendar export "
+                "(per-booking issue, not a projection failure)",
                 raw.get("_id"),
+                status_raw,
             )
             status = status_raw
 
@@ -913,6 +1058,42 @@ def _reservation_listing_refs(raw: dict[str, Any]) -> set[str]:
         _add(mtl, ("_id", "p"))
 
     return refs
+
+
+def _guard_unclassified(
+    unclassified: int,
+    mapped_total: int,
+    listing_pms_id: str,
+) -> None:
+    """Abort the fetch when too many reservations are unclassified.
+
+    Every unclassified reservation is withheld from the calendar export, so
+    returning such a snapshot would publish a gutted calendar.  A majority
+    being unrecognised is a status-mapping failure rather than a handful of
+    odd bookings, so the run is aborted and the last-good data keeps
+    serving.
+
+    Args:
+        unclassified: Mapped reservations whose status was present but
+            unrecognised.
+        mapped_total: Mapped reservations in the whole snapshot.
+        listing_pms_id: Guesty listing ID being synced, named in the error.
+
+    Raises:
+        PMSProviderError: If the unclassified proportion is implausible.
+    """
+    if mapped_total < _UNCLASSIFIED_MIN_SAMPLE:
+        return
+    if unclassified <= mapped_total * _UNCLASSIFIED_MAX_RATIO:
+        return
+    msg = (
+        f"Guesty returned {unclassified} unrecognised reservation status(es) "
+        f"out of {mapped_total} mapped reservations for listing "
+        f"{listing_pms_id}; this looks like a status-mapping failure rather "
+        f"than individual odd bookings, so the snapshot is refused rather "
+        f"than exporting an incomplete calendar"
+    )
+    raise PMSProviderError(msg)
 
 
 def _belongs_to_listing(
