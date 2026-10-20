@@ -2973,6 +2973,71 @@ class TestCustomFieldEnrichmentChangeDetection:
         assert booking is not None
         assert booking.custom_data["door_code"] == "2222"
 
+    @pytest.mark.asyncio
+    async def test_successful_empty_response_is_reused(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test an empty but successful read still suppresses re-fetching.
+
+        Accounts that configure no custom fields otherwise gain nothing.
+        """
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+        mock_provider.get_custom_fields = AsyncMock(return_value={})
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_EMPTY",
+                    check_in=_test_date(-40),
+                    check_out=_test_date(-35),
+                    updated_at=_test_date(-40),
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+        assert mock_provider.get_custom_fields.await_count == 1
+
+        await service.sync_listing(listing, mock_provider)
+
+        assert mock_provider.get_custom_fields.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_unstored_enrichment_is_not_reused(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test a row predating the enrichment column is always re-fetched.
+
+        A NULL column means "never stored", which must not be mistaken for
+        a successful empty read: reusing it would drop a published code.
+        """
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_LEGACY",
+                    check_in=_test_date(-40),
+                    check_out=_test_date(-35),
+                    updated_at=_test_date(-40),
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        repo = BookingRepository(sync_session)
+        booking = await repo.get_by_pms_id(listing.id, "RES_LEGACY")
+        assert booking is not None
+        booking.enrichment_data = None
+        await sync_session.commit()
+
+        await service.sync_listing(listing, mock_provider)
+
+        assert mock_provider.get_custom_fields.await_count == 2
+
 
 def _sync_log_text(caplog) -> str:
     """Join log records emitted by the sync service only.

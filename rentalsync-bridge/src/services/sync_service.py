@@ -72,10 +72,16 @@ class _StoredEnrichment:
     ``updated_at`` is the provider's reservation "last modified" timestamp
     as of that sync, or None when it was unknown or a fetch failed — either
     way the next sync must re-fetch rather than reuse ``data``.
+
+    ``data`` is None when nothing has ever been stored (a row written
+    before the enrichment column existed), as distinct from ``{}``, a
+    successful read that genuinely returned no values.  Only the former
+    forbids reuse; conflating the two would let a pre-migration row be
+    reused as empty and drop a published door code.
     """
 
     updated_at: datetime | None
-    data: dict
+    data: dict | None
 
 
 def _as_utc(value: datetime | None) -> datetime | None:
@@ -837,7 +843,9 @@ class SyncService:
             "room_ids": list(reservation.room_ids),
             "base_custom_data": base_custom_data,
             "pms_updated_at": reservation.updated_at,
-            "enrichment_data": enrichment_data or None,
+            # Kept as-is: an empty dict is a successful, empty read and
+            # must stay distinguishable from NULL ("never stored").
+            "enrichment_data": enrichment_data,
         }
 
     @staticmethod
@@ -920,7 +928,7 @@ class SyncService:
             cached = stored.get(r.pms_booking_id)
 
             if r.pms_booking_id in reusable:
-                data = dict(cached.data) if cached else {}
+                data = dict(cached.data) if cached and cached.data else {}
                 payloads[r.pms_booking_id] = data
                 enriched.append(self._with_enrichment(r, data, r.updated_at))
                 continue
@@ -1018,7 +1026,7 @@ class SyncService:
             # Keep the last-good contact details rather than blanking a
             # door code on a transient provider error.
             return (
-                _guest_owned(cached.data if cached else {}),
+                _guest_owned(cached.data if cached and cached.data else {}),
                 (reservation.guest_name),
                 True,
             )
@@ -1072,7 +1080,10 @@ class SyncService:
                 reservation.pms_booking_id,
                 exc_info=True,
             )
-            return _enrichment_owned(cached.data if cached else {}), True
+            return (
+                _enrichment_owned(cached.data if cached and cached.data else {}),
+                True,
+            )
 
     @staticmethod
     def _with_enrichment(
@@ -1159,9 +1170,10 @@ class SyncService:
             if reservation_id in ranks and ranks[reservation_id] >= rank:
                 continue
             ranks[reservation_id] = rank
+            data = booking.enrichment_data
             state[reservation_id] = _StoredEnrichment(
                 updated_at,
-                dict(booking.enrichment_data or {}),
+                None if data is None else dict(data),
             )
         return state
 
@@ -1182,8 +1194,9 @@ class SyncService:
         Returns:
             True when the fetches can safely be skipped.
         """
-        if cached is None or not cached.data:
-            # Never synced, or the last sync stored nothing to reuse.
+        if cached is None or cached.data is None:
+            # Never synced, or synced before enrichment output was stored.
+            # An empty dict is fine: that is a successful, empty read.
             return False
         if reservation.updated_at is None or cached.updated_at is None:
             # No change-detection signal, or the last sync's fetch failed:
