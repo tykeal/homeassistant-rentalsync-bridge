@@ -2898,6 +2898,81 @@ class TestCustomFieldEnrichmentChangeDetection:
         # The enrichment-owned value is still kept.
         assert booking.custom_data["door_code"] == "1234"
 
+    @pytest.mark.asyncio
+    async def test_reassignment_fallback_uses_current_row(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test a retired room row never supplies the fallback values.
+
+        A room reassignment leaves the previous row behind as cancelled;
+        reusing its obsolete door code would publish a stale lock code.
+        """
+        from src.models.room import Room
+
+        listing = await self._persisted_listing(sync_session, test_listing)
+        sync_session.add_all(
+            [
+                Room(
+                    listing_id=listing.id,
+                    pms_room_id="RM-0",
+                    room_name="Room A",
+                    ical_url_slug="rm-a",
+                    enabled=True,
+                ),
+                Room(
+                    listing_id=listing.id,
+                    pms_room_id="RM-1",
+                    room_name="Room B",
+                    ical_url_slug="rm-b",
+                    enabled=True,
+                ),
+            ]
+        )
+        await sync_session.commit()
+        self._custom_field_provider(mock_provider)
+
+        def _payload(room, check_in_offset, stamp_offset):
+            """Build a single-reservation provider response."""
+            return [
+                _make_reservation(
+                    pms_booking_id="RES_MOVE",
+                    check_in=_test_date(check_in_offset),
+                    check_out=_test_date(check_in_offset + 5),
+                    updated_at=_test_date(stamp_offset),
+                    room_ids=(room,),
+                )
+            ]
+
+        service = SyncService(sync_session)
+        mock_provider.get_custom_fields = AsyncMock(return_value={"door_code": "1111"})
+        mock_provider.get_reservations = AsyncMock(
+            return_value=_payload("RM-0", -45, -45)
+        )
+        await service.sync_listing(listing, mock_provider)
+
+        # Reassigned to a later room and a later date: the retired row now
+        # sorts first by check-in date.
+        mock_provider.get_custom_fields = AsyncMock(return_value={"door_code": "2222"})
+        mock_provider.get_reservations = AsyncMock(
+            return_value=_payload("RM-1", -43, -20)
+        )
+        await service.sync_listing(listing, mock_provider)
+
+        # The reservation changes again and the fetch fails.
+        mock_provider.get_custom_fields = AsyncMock(
+            side_effect=PMSProviderError("rate limited"),
+        )
+        mock_provider.get_reservations = AsyncMock(
+            return_value=_payload("RM-1", -43, -10)
+        )
+        await service.sync_listing(listing, mock_provider)
+
+        booking = await BookingRepository(sync_session).get_by_pms_id(
+            listing.id, "RES_MOVE::RM-1"
+        )
+        assert booking is not None
+        assert booking.custom_data["door_code"] == "2222"
+
 
 def _sync_log_text(caplog) -> str:
     """Join log records emitted by the sync service only.

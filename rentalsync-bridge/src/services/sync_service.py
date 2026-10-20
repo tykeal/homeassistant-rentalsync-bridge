@@ -78,6 +78,16 @@ class _StoredEnrichment:
     data: dict
 
 
+def _as_utc(value: datetime | None) -> datetime | None:
+    """Return a stored datetime as timezone-aware UTC.
+
+    SQLite hands back naive datetimes holding UTC values.
+    """
+    if value is None or value.tzinfo is not None:
+        return value
+    return value.replace(tzinfo=UTC)
+
+
 def _guest_owned(data: dict) -> dict:
     """Return only the guest-lookup-owned values of an enrichment dict."""
     return {k: v for k, v in data.items() if k in GUEST_ENRICHMENT_KEYS}
@@ -1116,7 +1126,12 @@ class SyncService:
 
         Keyed by the base reservation ID so multi-room bookings (stored as
         ``{reservationID}::{roomID}``) resolve to the reservation that
-        produced them.
+        produced them.  Several rows can share that ID — a room
+        reassignment retires the previous ``{reservationID}::{roomID}`` row
+        rather than deleting it — so rows are ranked and the most recently
+        fetched one wins.  Retired rows are not filtered by status: this
+        map records what was last successfully fetched, and a cancelled row
+        can legitimately be the newest state.
 
         Args:
             listing: Listing being synced.
@@ -1125,17 +1140,28 @@ class SyncService:
             Mapping of reservation ID to its stored enrichment state.
         """
         state: dict[str, _StoredEnrichment] = {}
+        ranks: dict[str, tuple[datetime, datetime, int]] = {}
         for booking in await self._booking_repo.get_for_listing(listing.id):
             reservation_id = self._extract_base_reservation_id(
                 booking.pms_booking_id,
             )
-            updated_at = booking.pms_updated_at
-            if updated_at is not None and updated_at.tzinfo is None:
-                # SQLite returns naive datetimes holding UTC values.
-                updated_at = updated_at.replace(tzinfo=UTC)
-            state.setdefault(
-                reservation_id,
-                _StoredEnrichment(updated_at, dict(booking.enrichment_data or {})),
+            updated_at = _as_utc(booking.pms_updated_at)
+            # Rank on last_fetched_at first: it is non-nullable and bumped
+            # on every upsert, so a retired row — which the sync no longer
+            # upserts — can never outrank the live one.  pms_updated_at
+            # breaks ties between rows fetched in the same sync, and the
+            # primary key makes the result deterministic when both match.
+            rank = (
+                _as_utc(booking.last_fetched_at) or datetime.min.replace(tzinfo=UTC),
+                updated_at or datetime.min.replace(tzinfo=UTC),
+                booking.id or 0,
+            )
+            if reservation_id in ranks and ranks[reservation_id] >= rank:
+                continue
+            ranks[reservation_id] = rank
+            state[reservation_id] = _StoredEnrichment(
+                updated_at,
+                dict(booking.enrichment_data or {}),
             )
         return state
 
