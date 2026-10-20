@@ -314,8 +314,64 @@ class TestRFC5545Compliance:
         assert len(timezones) == 1
         assert str(timezones[0]["TZID"]) == sample_listing.timezone
 
+        # RFC 5545 3.6.5: a VTIMEZONE MUST itself include at least one
+        # STANDARD or DAYLIGHT sub-component.  Calendar.validate() does not
+        # recurse into VTIMEZONE, so this is asserted structurally rather
+        # than delegated to the validator.
+        assert [
+            sub.name
+            for sub in timezones[0].subcomponents
+            if sub.name in {"STANDARD", "DAYLIGHT"}
+        ]
+
         assert ical_str.startswith("BEGIN:VCALENDAR")
         assert ical_str.rstrip("\r\n").endswith("END:VCALENDAR")
+
+    @pytest.mark.parametrize(
+        "timezone_name",
+        ["UTC", "America/Phoenix", "Asia/Kolkata", "Pacific/Honolulu"],
+    )
+    def test_empty_calendar_valid_for_fixed_offset_zone(
+        self, calendar_service, timezone_name
+    ):
+        """RFC 5545 3.6.5: the empty-feed VTIMEZONE is never sub-component-less.
+
+        Zones with no DST transitions in the emitted window could otherwise
+        yield a VTIMEZONE with nothing inside it, satisfying the VCALENDAR
+        at-least-one-component rule while still being invalid one level down.
+        UTC is covered explicitly as the most likely configured default.
+        """
+        listing = Listing(
+            id=2,
+            pms_id="TZ123",
+            name="Fixed Offset Property",
+            ical_url_slug=f"fixed-{timezone_name.lower().replace('/', '-')}",
+            enabled=True,
+            sync_enabled=True,
+            timezone=timezone_name,
+        )
+
+        ical_str = calendar_service.generate_ical(listing, [])
+
+        cal = Calendar.from_ical(ical_str)
+        cal.validate()
+
+        timezones = list(cal.walk("VTIMEZONE"))
+        assert len(timezones) == 1
+        assert str(timezones[0]["TZID"]) == timezone_name
+
+        observances = [
+            sub
+            for sub in timezones[0].subcomponents
+            if sub.name in {"STANDARD", "DAYLIGHT"}
+        ]
+        assert observances
+
+        # Each observance carries the properties RFC 5545 3.6.5 requires.
+        for observance in observances:
+            assert "DTSTART" in observance
+            assert "TZOFFSETFROM" in observance
+            assert "TZOFFSETTO" in observance
 
     def test_empty_calendar_round_trips(self, calendar_service, sample_listing):
         """An empty feed survives a serialize/parse/serialize round trip."""
