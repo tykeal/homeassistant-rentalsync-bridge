@@ -161,10 +161,19 @@ class TestRoomLevelICalGeneration:
         cal = Calendar.from_ical(ical)
         events = [c for c in cal.walk() if c.name == "VEVENT"]
 
-        # Should have no events
+        # No events, but still a conformant VCALENDAR (RFC 5545 3.4 requires
+        # at least one component).
         assert len(events) == 0
-        assert "BEGIN:VCALENDAR" in ical
-        assert "END:VCALENDAR" in ical
+        cal.validate()
+        assert [c.name for c in cal.subcomponents] == ["VTIMEZONE"]
+
+    def test_empty_feed_vtimezone_window_is_narrow(self, listing: Listing) -> None:
+        """The empty-feed VTIMEZONE stays small (no #110 size regression)."""
+        service = CalendarService(cache=CalendarCache())
+
+        ical = service.generate_ical(listing=listing, bookings=[], custom_fields=None)
+
+        assert len(ical.encode("utf-8")) < 1024
 
     def test_cache_uses_room_level_keys(
         self, listing: Listing, room: Room, bookings_with_rooms: list[Booking]
