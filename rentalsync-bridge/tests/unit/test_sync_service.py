@@ -3204,6 +3204,175 @@ class TestCustomFieldEnrichmentChangeDetection:
         assert GUEST_SOURCE_ID_KEY not in booking.custom_data
         assert booking.enrichment_data[GUEST_SOURCE_ID_KEY] == "G_HIDDEN"
 
+    @pytest.mark.asyncio
+    async def test_upgrade_failure_keeps_published_values(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test a failed first post-upgrade fetch keeps published codes.
+
+        Rows written before the enrichment column carry NULL provenance;
+        an empty fallback there would delete live door codes.
+        """
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_UPGRADE",
+                    check_in=_test_date(3),
+                    check_out=_test_date(6),
+                    updated_at=_test_date(-5),
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        repo = BookingRepository(sync_session)
+        booking = await repo.get_by_pms_id(listing.id, "RES_UPGRADE")
+        assert booking is not None
+        # Simulate a row that predates migration a7b8c9d0e1f2.
+        booking.enrichment_data = None
+        booking.pms_updated_at = None
+        await sync_session.commit()
+
+        mock_provider.get_custom_fields = AsyncMock(
+            side_effect=PMSProviderError("rate limited"),
+        )
+        await service.sync_listing(listing, mock_provider)
+
+        booking = await repo.get_by_pms_id(listing.id, "RES_UPGRADE")
+        assert booking is not None
+        assert booking.custom_data["door_code"] == "1234"
+        assert booking.pms_updated_at is None
+
+    @pytest.mark.asyncio
+    async def test_upgrade_failure_keeps_deletions(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test bootstrap recovery never revives a cleared payload field.
+
+        The key stays visible on the listing's other reservations, which
+        is what marks it as reservation-owned rather than endpoint-owned.
+        """
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+        other = _make_reservation(
+            pms_booking_id="RES_UPGRADE_OTHER",
+            check_in=_test_date(3),
+            check_out=_test_date(6),
+            updated_at=_test_date(-5),
+            custom_data={"notes": "ring the bell"},
+        )
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_UPGRADE_NOTES",
+                    check_in=_test_date(3),
+                    check_out=_test_date(6),
+                    updated_at=_test_date(-5),
+                    custom_data={"notes": "leave key under mat"},
+                ),
+                other,
+            ]
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        repo = BookingRepository(sync_session)
+        booking = await repo.get_by_pms_id(listing.id, "RES_UPGRADE_NOTES")
+        assert booking is not None
+        booking.enrichment_data = None
+        booking.pms_updated_at = None
+        await sync_session.commit()
+
+        # The note is cleared and the first post-upgrade fetch fails.
+        mock_provider.get_custom_fields = AsyncMock(
+            side_effect=PMSProviderError("rate limited"),
+        )
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_UPGRADE_NOTES",
+                    check_in=_test_date(3),
+                    check_out=_test_date(6),
+                    updated_at=_test_date(-1),
+                    custom_data={},
+                ),
+                other,
+            ]
+        )
+        await service.sync_listing(listing, mock_provider)
+
+        booking = await repo.get_by_pms_id(listing.id, "RES_UPGRADE_NOTES")
+        assert booking is not None
+        assert "notes" not in booking.custom_data
+        assert booking.custom_data["door_code"] == "1234"
+
+    @pytest.mark.asyncio
+    async def test_upgrade_failure_drops_unattributed_guest(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test legacy guest values are not recovered on a failed lookup.
+
+        A pre-upgrade row records no source guest ID, so the stored phone
+        cannot be proven to belong to the current guest.  Publishing no
+        lock code is safer than publishing someone else's.
+        """
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+        mock_provider.get_guest = AsyncMock(
+            return_value=PMSGuest(
+                guest_id="G_LEGACY",
+                full_name="Legacy Guest",
+                phone="+15550007777",
+                email="legacy@example.com",
+            )
+        )
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_UPGRADE_GUEST",
+                    guest_id="G_LEGACY",
+                    guest_name="Legacy Guest",
+                    check_in=_test_date(3),
+                    check_out=_test_date(6),
+                    updated_at=_test_date(-5),
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        repo = BookingRepository(sync_session)
+        booking = await repo.get_by_pms_id(listing.id, "RES_UPGRADE_GUEST")
+        assert booking is not None
+        assert booking.guest_phone_last4 == "7777"
+        booking.enrichment_data = None
+        booking.pms_updated_at = None
+        await sync_session.commit()
+
+        mock_provider.get_guest = AsyncMock(
+            side_effect=PMSProviderError("rate limited"),
+        )
+        # The custom-field fetch fails too, so bootstrap recovery runs and
+        # must not smuggle the unattributed guest values back in.
+        mock_provider.get_custom_fields = AsyncMock(
+            side_effect=PMSProviderError("rate limited"),
+        )
+        await service.sync_listing(listing, mock_provider)
+
+        booking = await repo.get_by_pms_id(listing.id, "RES_UPGRADE_GUEST")
+        assert booking is not None
+        assert booking.guest_phone_last4 is None
+        assert "guest_phone" not in booking.custom_data
+        assert "guest_email" not in booking.custom_data
+        assert booking.custom_data["door_code"] == "1234"
+        assert booking.pms_updated_at is None
+
 
 def _sync_log_text(caplog) -> str:
     """Join log records emitted by the sync service only.

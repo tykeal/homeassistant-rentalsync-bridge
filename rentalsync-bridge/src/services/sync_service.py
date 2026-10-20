@@ -81,10 +81,16 @@ class _StoredEnrichment:
     successful read that genuinely returned no values.  Only the former
     forbids reuse; conflating the two would let a pre-migration row be
     reused as empty and drop a published door code.
+
+    ``legacy`` carries the booking's stored custom data, but only for
+    rows written before the enrichment column existed.  It exists purely
+    so the first post-upgrade sync can survive a failed fetch without
+    wiping already-published values; see ``_bootstrap_custom_fields``.
     """
 
     updated_at: datetime | None
     data: dict | None
+    legacy: dict | None = None
 
 
 def _as_utc(value: datetime | None) -> datetime | None:
@@ -921,6 +927,10 @@ class SyncService:
             and self._can_reuse_enrichment(r, listing, stored.get(r.pms_booking_id))
         }
 
+        # Every custom-data key this listing's payloads currently supply.
+        # Used only to keep bootstrap recovery off reservation-owned keys.
+        payload_keys = {k for r in reservations for k in r.custom_data}
+
         guests, failed_guest_ids = await self._resolve_guests(
             provider,
             [r for r in reservations if r.pms_booking_id not in reusable],
@@ -945,7 +955,7 @@ class SyncService:
                 r, guests, failed_guest_ids, cached
             )
             custom_data, custom_failed = await self._custom_field_enrichment(
-                provider, r, cached
+                provider, r, cached, payload_keys
             )
 
             data = {**custom_data, **guest_data}
@@ -1061,6 +1071,7 @@ class SyncService:
         provider: PMSProvider,
         reservation: PMSReservation,
         cached: "_StoredEnrichment | None",
+        payload_keys: set[str],
     ) -> tuple[dict, bool]:
         """Fetch the custom-field values for a reservation.
 
@@ -1071,6 +1082,8 @@ class SyncService:
             provider: Active PMS provider instance.
             reservation: Reservation being enriched.
             cached: Enrichment state stored by the previous sync.
+            payload_keys: Custom-data keys this sync's reservation
+                payloads supply, used for bootstrap recovery only.
 
         Returns:
             Tuple of ``(custom field values, fetch failed)``.
@@ -1091,10 +1104,49 @@ class SyncService:
                 reservation.pms_booking_id,
                 exc_info=True,
             )
-            return (
-                _enrichment_owned(cached.data if cached and cached.data else {}),
-                True,
-            )
+            if cached is None:
+                return {}, True
+            if cached.data is not None:
+                return _enrichment_owned(cached.data), True
+            return self._bootstrap_custom_fields(cached, payload_keys), True
+
+    @staticmethod
+    def _bootstrap_custom_fields(
+        cached: "_StoredEnrichment",
+        payload_keys: set[str],
+    ) -> dict:
+        """Recover published values for a row written before the upgrade.
+
+        Rows that predate the enrichment column have no recorded
+        provenance, so a failed first post-upgrade fetch would otherwise
+        write an empty custom-field set and delete door codes that are
+        already published.  The custom-field keys cannot be identified
+        exactly: ``available_fields`` is discovered from the merged custom
+        data, so it describes reservation-payload keys and endpoint keys
+        alike and cannot separate them.
+
+        Recovery is therefore limited to stored keys that no reservation
+        payload in this sync supplies: clearing a value on one booking
+        leaves the key present on the others, so a deletion is not revived,
+        while an endpoint-only key such as a door code is.  Guest keys are
+        never recovered here -- the stored values carry no guest ID, and
+        publishing another guest's lock code is worse than publishing none.
+
+        The residual case is a key that disappears from every payload at
+        once, during the single bootstrap sync, with a concurrent fetch
+        failure.  It then survives one more sync and self-heals: a failed
+        fetch stores no comparison timestamp, so the next sync re-fetches
+        and writes the correct set with real provenance.
+
+        Args:
+            cached: Stored state whose ``data`` is None (pre-upgrade row).
+            payload_keys: Keys supplied by this sync's reservations.
+
+        Returns:
+            Values worth preserving for this one bootstrap sync.
+        """
+        legacy = _enrichment_owned(cached.legacy or {})
+        return {k: v for k, v in legacy.items() if k not in payload_keys}
 
     @staticmethod
     def _with_enrichment(
@@ -1185,6 +1237,7 @@ class SyncService:
             state[reservation_id] = _StoredEnrichment(
                 updated_at,
                 None if data is None else dict(data),
+                dict(booking.custom_data or {}) if data is None else None,
             )
         return state
 
