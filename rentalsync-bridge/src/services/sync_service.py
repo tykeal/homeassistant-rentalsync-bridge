@@ -13,6 +13,7 @@ from src.database import get_session_factory
 from src.models.booking import OLD_BOOKING_RETENTION_DAYS, Booking
 from src.models.listing import Listing
 from src.providers.base import (
+    RECOGNISED_NON_EXPORT_STATUSES,
     PMSGuest,
     PMSProvider,
     PMSProviderError,
@@ -32,6 +33,9 @@ PHONE_LAST_DIGITS = 4
 
 # Statuses the rest of the system understands.  Anything else is stored
 # verbatim and withheld from the calendar export rather than guessed at.
+# Note that ``RECOGNISED_NON_EXPORT_STATUSES`` members are deliberately NOT
+# listed here: they are understood but must never reach the export, so they
+# take the withheld path (quietly, at DEBUG) just like an unknown status.
 KNOWN_BOOKING_STATUSES = frozenset(
     {"confirmed", "checked_in", "checked_out", "cancelled"}
 )
@@ -687,6 +691,12 @@ class SyncService:
         the iCal export.  Statuses are never coerced to ``confirmed``: that
         would export a door code for a guest who may have cancelled.
 
+        A status in ``RECOGNISED_NON_EXPORT_STATUSES`` is an understood
+        non-stay state that healthy accounts accumulate, so it is logged at
+        DEBUG; warning every sync would spam the log forever.  A genuinely
+        unknown status still warns — that is our only signal of provider
+        drift.
+
         Args:
             raw_status: Status value from the provider DTO.
             pms_booking_id: Reservation ID, logged to locate the booking.
@@ -705,6 +715,15 @@ class SyncService:
             return status
 
         status = status[:_MAX_STATUS_LENGTH]
+        if status in RECOGNISED_NON_EXPORT_STATUSES:
+            logger.debug(
+                "Reservation %s reports status %r, an expected non-stay "
+                "state; booking withheld from calendar export as expected",
+                pms_booking_id,
+                status,
+            )
+            return status
+
         logger.warning(
             "Unrecognised reservation status %r for reservation %s; "
             "booking withheld from calendar export",
