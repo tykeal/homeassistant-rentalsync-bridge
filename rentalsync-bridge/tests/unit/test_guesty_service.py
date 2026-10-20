@@ -2243,3 +2243,137 @@ class TestUnclassifiedSystemicGuard:
         with pytest.raises(PMSProviderError, match="status-mapping failure"):
             await provider.get_reservations("L1")
         await provider.aclose()
+
+
+def _out_of_window_reservation(booking_id, status):
+    """Build a long-past reservation carrying *status*.
+
+    ``get_reservations`` sends no stay-date filter, so Guesty returns the
+    listing's entire history and these records are filtered client-side.
+
+    Args:
+        booking_id: Reservation ``_id``.
+        status: Raw Guesty status value.
+
+    Returns:
+        Raw reservation dict outside the default stay window.
+    """
+    raw = _status_reservation(booking_id, status)
+    raw["checkIn"] = _rel(-900)
+    raw["checkOut"] = _rel(-897)
+    return raw
+
+
+class TestRecognisedNonExportStatuses:
+    """Documented non-stay states are withheld, not treated as failures."""
+
+    @pytest.mark.asyncio
+    async def test_mixed_real_world_statuses_do_not_abort(self):
+        """Test a realistic declined/expired/closed mix still syncs.
+
+        A normal account accumulates these, so counting them as evidence of
+        a broken status mapping would abort every sync permanently and the
+        cancellation below would never reach SyncService.
+        """
+        reservations = [
+            _status_reservation("R-DECLINED", "declined"),
+            _status_reservation("R-EXPIRED", "expired"),
+            _status_reservation("R-CLOSED", "closed"),
+            _status_reservation("R-CANCELED", "canceled"),
+        ]
+        provider = TestUnclassifiedSystemicGuard._serve(reservations)
+
+        result = await provider.get_reservations("L1")
+        await provider.aclose()
+
+        statuses = {r.pms_booking_id: r.status for r in result}
+        assert statuses["R-CANCELED"] == "cancelled"
+        assert len(result) == 4
+
+    @pytest.mark.parametrize(
+        "status",
+        ["expired", "closed", "declined", "awaiting_payment"],
+    )
+    def test_non_stay_state_is_withheld_verbatim(self, status):
+        """Test the DTO survives carrying its raw status.
+
+        Returning None would drop the record from the snapshot and the sync
+        prune loop would retire it as cancelled; policy is withhold, not
+        retire.
+
+        Args:
+            status: Raw Guesty status value.
+        """
+        result = GuestyProvider._map_reservation(
+            _status_reservation(f"R-{status}", status),
+            "L1",
+        )
+
+        assert result is not None
+        assert result.status == status
+
+    def test_non_stay_state_does_not_warn(self, caplog):
+        """Test an expected non-stay state logs at DEBUG, not WARNING."""
+        with caplog.at_level(logging.DEBUG):
+            GuestyProvider._map_reservation(
+                _status_reservation("R-DECLINED", "declined"),
+                "L1",
+            )
+
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert any("known non-stay state" in r.message for r in caplog.records)
+
+    def test_genuinely_unknown_status_still_warns(self, caplog):
+        """Test real drift keeps its WARNING signal."""
+        with caplog.at_level(logging.DEBUG):
+            GuestyProvider._map_reservation(
+                _status_reservation("R-ODD", "zzz_unknown"),
+                "L1",
+            )
+
+        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert warnings
+        assert "per-booking issue" in warnings[0].message
+
+
+class TestGuardCountsOnlyInWindow:
+    """The guard judges the returned snapshot, not the whole history."""
+
+    @pytest.mark.asyncio
+    async def test_out_of_window_unknowns_do_not_trip_the_guard(self):
+        """Test ancient odd records cannot abort a healthy current sync.
+
+        Counting history would let four stale unknowns plus one current
+        cancellation abort the sync, stranding a revoked booking in the
+        exported calendar.
+        """
+        reservations = [
+            _out_of_window_reservation(f"OLD{i}", "zzz_unknown") for i in range(4)
+        ]
+        reservations.append(_status_reservation("R-CANCELED", "canceled"))
+        provider = TestUnclassifiedSystemicGuard._serve(reservations)
+
+        result = await provider.get_reservations("L1")
+        await provider.aclose()
+
+        assert [r.pms_booking_id for r in result] == ["R-CANCELED"]
+        assert result[0].status == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_historical_confirmed_cannot_mask_a_broken_window(self):
+        """Test a pile of old confirmed records does not defang the guard.
+
+        The current window is entirely unknown here, which is exactly the
+        mapping failure the guard exists to catch.
+        """
+        reservations = [
+            _out_of_window_reservation(f"OLD{i}", "confirmed") for i in range(50)
+        ]
+        reservations += [
+            _status_reservation(f"NEW{i}", "zzz_unknown") for i in range(4)
+        ]
+        provider = TestUnclassifiedSystemicGuard._serve(reservations)
+
+        with pytest.raises(PMSProviderError, match="status-mapping failure"):
+            await provider.get_reservations("L1")
+        await provider.aclose()

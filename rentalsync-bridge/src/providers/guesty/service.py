@@ -66,8 +66,35 @@ _STATUS_MAP: dict[str, str] = {
 _EXCLUDED_STATUSES = frozenset({"inquiry", "reserved"})
 
 # The normalised statuses we are able to export.  Anything else on a mapped
-# reservation is a withheld, unclassified booking.
+# reservation is a withheld booking.
 _NORMALISED_STATUSES = frozenset(_STATUS_MAP.values())
+
+# Documented Guesty states that we understand but deliberately do not export.
+#
+# Each one means the stay is not happening: ``expired`` (an unpaid hold that
+# lapsed), ``closed`` (a reservation closed out without a stay), ``declined``
+# (a request the host turned down) and awaiting-payment (a booking that has
+# not been paid for yet).  The machine spelling of the awaiting-payment state
+# is INFERRED as ``awaiting_payment``; it is not confirmed by Guesty's docs,
+# so an unexpected spelling simply falls through to the unknown-status path.
+#
+# These are deliberately NOT in ``_STATUS_MAP`` (they must never reach the
+# calendar export) and NOT in ``_EXCLUDED_STATUSES`` (returning None would
+# drop them from the snapshot, and the sync prune loop would then retire them
+# as cancelled).  They are withheld, not retired: ``_map_reservation``
+# returns a DTO carrying the raw status verbatim, and the booking repository
+# only serves ``confirmed``/``checked_in``/``checked_out`` to the export.
+#
+# They are listed here so the health-check guard counts them as classified: a
+# normal account accumulates many of these over its history, and treating
+# them as evidence of a broken status mapping would abort every sync.
+_RECOGNISED_NON_EXPORT_STATUSES = frozenset(
+    {"expired", "closed", "declined", "awaiting_payment"}
+)
+
+# Statuses the health check considers understood.  Only a status outside this
+# union counts as unclassified evidence of a broken mapping.
+_CLASSIFIED_STATUSES = _NORMALISED_STATUSES | _RECOGNISED_NON_EXPORT_STATUSES
 
 # Field projection for ``GET /v1/reservations``.
 #
@@ -144,17 +171,22 @@ RESERVATION_FIELDS = " ".join(_RESERVATION_FIELD_PATHS)
 
 # Systemic-failure guard for ``get_reservations``.
 #
-# A reservation whose ``status`` is present but unrecognised is withheld from
-# the calendar export (v0.5.2 behaviour).  That is correct for the odd record,
-# but if it happens to most of an account the mapping itself is broken and
-# returning the snapshot would hand the sync an almost-empty calendar.
+# A reservation whose ``status`` is present but unknown to us is withheld
+# from the calendar export (v0.5.2 behaviour).  That is correct for the odd
+# record, but if it happens to most of a snapshot the mapping itself is
+# broken and returning it would hand the sync an almost-empty calendar.
 #
-# Small-N reasoning: a 1-3 reservation account can legitimately be 100%
-# "unrecognised" (e.g. a single booking in a Guesty state we have not mapped
-# yet), so a pure ratio test would abort those accounts spuriously.  The guard
-# therefore only applies once at least ``_UNCLASSIFIED_MIN_SAMPLE`` mapped
-# reservations are in hand, where a majority being unrecognised can no longer
-# be explained by one or two odd bookings.
+# Only reservations in the requested stay window are counted, so the guard
+# judges the snapshot actually being returned rather than the listing's whole
+# history.  Statuses in ``_CLASSIFIED_STATUSES`` are understood — including
+# the recognised non-exportable ones — and never count as unclassified.
+#
+# Small-N reasoning: a 1-3 reservation window can legitimately be 100%
+# unknown (e.g. a single booking in a Guesty state we have not mapped yet),
+# so a pure ratio test would abort those spuriously.  The guard therefore
+# only applies once at least ``_UNCLASSIFIED_MIN_SAMPLE`` in-window mapped
+# reservations are in hand, where a majority being unknown can no longer be
+# explained by one or two odd bookings.
 _UNCLASSIFIED_MIN_SAMPLE = 4
 _UNCLASSIFIED_MAX_RATIO = 0.5
 
@@ -421,8 +453,9 @@ class GuestyProvider(PMSProvider):
             PMSProviderError: On API failure (including the listing-scope
                 lookup), if a returned reservation names no listing at all,
                 if a reservation carries no ``status`` key (our field
-                projection is wrong), if most mapped reservations have an
-                unrecognised status (the status mapping is broken), if the
+                projection is wrong), if most in-window mapped reservations
+                have an unrecognised status (the status mapping is broken),
+                if the
                 API stops serving records before ``count`` is reached, if
                 ``count`` changes between pages, or if pagination does not
                 terminate within ``MAX_RESERVATION_PAGES``.
@@ -573,8 +606,9 @@ class GuestyProvider(PMSProvider):
         Returns:
             Tuple of ``(foreign, mapped, unclassified)``: records discarded
             as belonging to another listing, records mapped successfully
-            (regardless of stay window), and of those, records whose status
-            was present but unrecognised.
+            AND overlapping the stay window (out-of-window records are not
+            counted), and of those, records whose status was present but
+            not understood.
 
         Raises:
             PMSProviderError: If a reservation names no listing at all and
@@ -592,10 +626,13 @@ class GuestyProvider(PMSProvider):
             mapped = self._map_reservation(item, listing_pms_id)
             if mapped is None:
                 continue
-            mapped_count += 1
-            if mapped.status not in _NORMALISED_STATUSES:
-                unclassified += 1
+            # Count only the snapshot we actually return: out-of-window
+            # history must neither trip the health check nor mask a wholly
+            # unclassified current window.
             if _overlaps_window(mapped, start, end):
+                mapped_count += 1
+                if mapped.status not in _CLASSIFIED_STATUSES:
+                    unclassified += 1
                 out.append(mapped)
         return foreign, mapped_count, unclassified
 
@@ -900,13 +937,25 @@ class GuestyProvider(PMSProvider):
             # prune loop does not retire it) while holding it out of the
             # calendar export.  Returning None here would drop it from the
             # snapshot and have it cancelled instead.
-            logger.warning(
-                "Guesty reservation %s reports status %r, which is present "
-                "but unrecognised; booking withheld from calendar export "
-                "(per-booking issue, not a projection failure)",
-                raw.get("_id"),
-                status_raw,
-            )
+            if status_raw in _RECOGNISED_NON_EXPORT_STATUSES:
+                # Expected on healthy accounts, so DEBUG: warning on every
+                # sync would spam logs and alarm users about normal data.
+                logger.debug(
+                    "Guesty reservation %s reports status %r, a known "
+                    "non-stay state; booking withheld from calendar export "
+                    "as expected",
+                    raw.get("_id"),
+                    status_raw,
+                )
+            else:
+                logger.warning(
+                    "Guesty reservation %s reports status %r, which is "
+                    "present but unrecognised; booking withheld from "
+                    "calendar export (per-booking issue, not a projection "
+                    "failure)",
+                    raw.get("_id"),
+                    status_raw,
+                )
             status = status_raw
 
         pms_booking_id = str(raw.get("_id", ""))
@@ -1069,14 +1118,17 @@ def _guard_unclassified(
 
     Every unclassified reservation is withheld from the calendar export, so
     returning such a snapshot would publish a gutted calendar.  A majority
-    being unrecognised is a status-mapping failure rather than a handful of
-    odd bookings, so the run is aborted and the last-good data keeps
-    serving.
+    being unknown is a status-mapping failure rather than a handful of odd
+    bookings, so the run is aborted and the last-good data keeps serving.
+
+    Counts cover only in-window reservations, i.e. the snapshot actually
+    being returned; statuses we recognise but deliberately do not export are
+    classified and never counted as unclassified.
 
     Args:
-        unclassified: Mapped reservations whose status was present but
-            unrecognised.
-        mapped_total: Mapped reservations in the whole snapshot.
+        unclassified: In-window mapped reservations whose status was present
+            but not in ``_CLASSIFIED_STATUSES``.
+        mapped_total: In-window mapped reservations in the snapshot.
         listing_pms_id: Guesty listing ID being synced, named in the error.
 
     Raises:
