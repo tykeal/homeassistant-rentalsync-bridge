@@ -61,6 +61,19 @@ class Booking(Base):
     check_out_date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="confirmed")
     custom_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # Provider-reported "last modified" instant for the reservation, when the
+    # provider exposes one (Guesty's ``lastUpdatedAt``).  Persisted so the
+    # next sync can tell an unchanged reservation from a changed one and skip
+    # redundant per-reservation enrichment calls (issue #128).  NULL means
+    # "unknown", which always forces a re-fetch.
+    pms_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # The subset of ``custom_data`` that came from provider enrichment
+    # endpoints (the custom-fields endpoint and the guest lookup) rather than
+    # from the reservation payload itself.  Stored separately because reuse
+    # must not resurrect reservation fields the user has since deleted:
+    # merging the whole of ``custom_data`` would restore, say, a cleared note
+    # (issue #128).  NULL means nothing is available to reuse.
+    enrichment_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     last_fetched_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=_utc_now
     )

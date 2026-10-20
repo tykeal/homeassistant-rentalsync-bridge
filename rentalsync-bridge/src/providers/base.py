@@ -25,9 +25,8 @@ if TYPE_CHECKING:
 # them at DEBUG; only a status outside this set is WARNING-worthy evidence
 # that a provider's status mapping has drifted.
 #
-# This is the shared source of truth.  ``src/providers/guesty/service.py``
-# currently keeps its own ``_RECOGNISED_NON_EXPORT_STATUSES`` copy of the
-# same set; keep the two in sync (or have Guesty import this one).
+# This is the shared source of truth: providers and the sync import it here
+# rather than keeping their own copies.
 RECOGNISED_NON_EXPORT_STATUSES = frozenset(
     {"expired", "closed", "declined", "awaiting_payment"}
 )
@@ -81,6 +80,12 @@ class PMSReservation:
     # a raw provider value we do not recognise (withheld from export)
     room_ids: tuple[str, ...]
     custom_data: dict[str, Any]
+    # Provider-reported "last modified" instant for the reservation, when the
+    # provider exposes one.  Used by the sync as a change-detection signal so
+    # unchanged reservations can skip redundant enrichment calls.  Providers
+    # without such a field leave this None, which disables the optimisation
+    # for them (never skip) rather than guessing that nothing changed.
+    updated_at: datetime | None = None
 
 
 @dataclass(frozen=True)

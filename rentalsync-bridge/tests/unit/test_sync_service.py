@@ -21,7 +21,11 @@ from src.providers.base import (
 )
 from src.repositories.booking_repository import BookingRepository
 from src.services.calendar_service import CalendarCache
-from src.services.sync_service import SyncService, SyncServiceError
+from src.services.sync_service import (
+    GUEST_SOURCE_ID_KEY,
+    SyncService,
+    SyncServiceError,
+)
 
 
 @pytest.fixture
@@ -111,6 +115,7 @@ def _make_reservation(
     status: str = "confirmed",
     room_ids: tuple[str, ...] = (),
     custom_data: dict | None = None,
+    updated_at: datetime | None = None,
 ) -> PMSReservation:
     """Build a PMSReservation DTO for tests."""
     return PMSReservation(
@@ -123,6 +128,7 @@ def _make_reservation(
         status=status,
         room_ids=room_ids,
         custom_data=custom_data or {},
+        updated_at=updated_at,
     )
 
 
@@ -2157,7 +2163,9 @@ class TestGuestResolution:
         assert SyncService.extract_phone_last4("12") is None
 
     @pytest.mark.asyncio
-    async def test_guest_email_added_to_custom_data(self, sync_session, mock_provider):
+    async def test_guest_email_added_to_custom_data(
+        self, sync_session, test_listing, mock_provider
+    ):
         """Test guest email is added to custom_data during resolution."""
         listing = Listing(
             pms_id="GUEST_EMAIL",
@@ -2196,7 +2204,9 @@ class TestGuestResolution:
                 guest_id="GE1",
             ),
         ]
-        resolved = await service._resolve_guest_names(mock_provider, reservations)
+        resolved, _ = await service._enrich_reservations(
+            mock_provider, test_listing, reservations
+        )
 
         r = resolved[0]
         assert r.custom_data["guest_email"] == "guest@example.com"
@@ -2204,7 +2214,9 @@ class TestGuestResolution:
         assert r.custom_data["guest_phone_last4"] == "0000"
 
     @pytest.mark.asyncio
-    async def test_enrichment_with_existing_name(self, sync_session, mock_provider):
+    async def test_enrichment_with_existing_name(
+        self, sync_session, test_listing, mock_provider
+    ):
         """Enrichment adds phone/email even when name is present."""
         service = SyncService(sync_session)
         mock_provider.get_guest = AsyncMock(
@@ -2222,7 +2234,9 @@ class TestGuestResolution:
                 guest_id="G1",
             ),
         ]
-        resolved = await service._resolve_guest_names(mock_provider, reservations)
+        resolved, _ = await service._enrich_reservations(
+            mock_provider, test_listing, reservations
+        )
 
         r = resolved[0]
         # Original name kept
@@ -2234,7 +2248,9 @@ class TestGuestResolution:
         mock_provider.get_guest.assert_called_once_with("G1")
 
     @pytest.mark.asyncio
-    async def test_no_guest_id_skips_enrichment(self, sync_session, mock_provider):
+    async def test_no_guest_id_skips_enrichment(
+        self, sync_session, test_listing, mock_provider
+    ):
         """Reservation without guest_id is returned unchanged."""
         service = SyncService(sync_session)
         reservations = [
@@ -2244,7 +2260,9 @@ class TestGuestResolution:
                 guest_id=None,
             ),
         ]
-        resolved = await service._resolve_guest_names(mock_provider, reservations)
+        resolved, _ = await service._enrich_reservations(
+            mock_provider, test_listing, reservations
+        )
 
         r = resolved[0]
         assert r.guest_name == "Bob"
@@ -2253,7 +2271,9 @@ class TestGuestResolution:
         mock_provider.get_guest.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_already_enriched_skips_get_guest(self, sync_session, mock_provider):
+    async def test_already_enriched_skips_get_guest(
+        self, sync_session, test_listing, mock_provider
+    ):
         """Skip get_guest() when phone and email already present."""
         service = SyncService(sync_session)
         reservations = [
@@ -2267,7 +2287,9 @@ class TestGuestResolution:
                 },
             ),
         ]
-        resolved = await service._resolve_guest_names(mock_provider, reservations)
+        resolved, _ = await service._enrich_reservations(
+            mock_provider, test_listing, reservations
+        )
 
         r = resolved[0]
         assert r.guest_name == "Carol"
@@ -2277,7 +2299,7 @@ class TestGuestResolution:
 
     @pytest.mark.asyncio
     async def test_enrichment_preserves_existing_custom_data(
-        self, sync_session, mock_provider
+        self, sync_session, test_listing, mock_provider
     ):
         """Existing custom_data values are not overwritten."""
         service = SyncService(sync_session)
@@ -2297,7 +2319,9 @@ class TestGuestResolution:
                 custom_data={"guest_phone": "+15550001111"},
             ),
         ]
-        resolved = await service._resolve_guest_names(mock_provider, reservations)
+        resolved, _ = await service._enrich_reservations(
+            mock_provider, test_listing, reservations
+        )
 
         r = resolved[0]
         # Existing phone kept, API email filled in
@@ -2309,7 +2333,9 @@ class TestCustomFieldEnrichment:
     """Tests for custom field enrichment step."""
 
     @pytest.mark.asyncio
-    async def test_enrichment_merges_custom_fields(self, sync_session, mock_provider):
+    async def test_enrichment_merges_custom_fields(
+        self, sync_session, test_listing, mock_provider
+    ):
         """Test custom fields are merged into custom_data."""
         mock_provider.has_separate_custom_fields = True
         mock_provider.get_custom_fields = AsyncMock(
@@ -2323,7 +2349,9 @@ class TestCustomFieldEnrichment:
                 custom_data={"source": "airbnb"},
             ),
         ]
-        enriched = await service._enrich_custom_fields(mock_provider, reservations)
+        enriched, _ = await service._enrich_reservations(
+            mock_provider, test_listing, reservations
+        )
 
         assert len(enriched) == 1
         assert enriched[0].custom_data["cf_1"] == "val1"
@@ -2332,7 +2360,9 @@ class TestCustomFieldEnrichment:
         assert enriched[0].custom_data["source"] == "airbnb"
 
     @pytest.mark.asyncio
-    async def test_enrichment_noop_when_empty(self, sync_session, mock_provider):
+    async def test_enrichment_noop_when_empty(
+        self, sync_session, test_listing, mock_provider
+    ):
         """Test enrichment is a no-op when provider returns empty."""
         mock_provider.has_separate_custom_fields = True
         mock_provider.get_custom_fields = AsyncMock(return_value={})
@@ -2344,12 +2374,16 @@ class TestCustomFieldEnrichment:
                 custom_data={"existing": "data"},
             ),
         ]
-        enriched = await service._enrich_custom_fields(mock_provider, reservations)
+        enriched, _ = await service._enrich_reservations(
+            mock_provider, test_listing, reservations
+        )
 
         assert enriched[0].custom_data == {"existing": "data"}
 
     @pytest.mark.asyncio
-    async def test_enrichment_handles_provider_error(self, sync_session, mock_provider):
+    async def test_enrichment_handles_provider_error(
+        self, sync_session, test_listing, mock_provider
+    ):
         """Test enrichment handles provider errors gracefully."""
         mock_provider.has_separate_custom_fields = True
         mock_provider.get_custom_fields = AsyncMock(
@@ -2360,14 +2394,16 @@ class TestCustomFieldEnrichment:
         reservations = [
             _make_reservation(pms_booking_id="RES_ERR"),
         ]
-        enriched = await service._enrich_custom_fields(mock_provider, reservations)
+        enriched, _ = await service._enrich_reservations(
+            mock_provider, test_listing, reservations
+        )
 
         assert len(enriched) == 1
         assert enriched[0].pms_booking_id == "RES_ERR"
 
     @pytest.mark.asyncio
     async def test_enrichment_skipped_when_not_supported(
-        self, sync_session, mock_provider
+        self, sync_session, test_listing, mock_provider
     ):
         """Test enrichment is skipped for providers without separate fields."""
         mock_provider.has_separate_custom_fields = False
@@ -2376,10 +2412,966 @@ class TestCustomFieldEnrichment:
         reservations = [
             _make_reservation(pms_booking_id="RES_SKIP"),
         ]
-        enriched = await service._enrich_custom_fields(mock_provider, reservations)
+        enriched, _ = await service._enrich_reservations(
+            mock_provider, test_listing, reservations
+        )
 
-        assert enriched is reservations
+        assert enriched == reservations
         mock_provider.get_custom_fields.assert_not_called()
+
+
+class TestCustomFieldEnrichmentChangeDetection:
+    """Tests for skipping redundant custom-field fetches (issue #128)."""
+
+    @staticmethod
+    async def _persisted_listing(sync_session, test_listing):
+        """Persist and return the shared test listing."""
+        sync_session.add(test_listing)
+        await sync_session.commit()
+        await sync_session.refresh(test_listing)
+        return test_listing
+
+    @staticmethod
+    def _custom_field_provider(mock_provider):
+        """Configure the mock provider to expose separate custom fields."""
+        mock_provider.has_separate_custom_fields = True
+        mock_provider.provider_type = "guesty"
+        mock_provider.get_custom_fields = AsyncMock(
+            return_value={"door_code": "1234"},
+        )
+        return mock_provider
+
+    @pytest.mark.asyncio
+    async def test_unchanged_past_reservation_not_refetched(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test an unchanged, long-past stay is enriched only once."""
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+
+        reservation = _make_reservation(
+            pms_booking_id="RES_PAST",
+            check_in=_test_date(-40),
+            check_out=_test_date(-35),
+            updated_at=_test_date(-40),
+        )
+        mock_provider.get_reservations = AsyncMock(return_value=[reservation])
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+        assert mock_provider.get_custom_fields.await_count == 1
+
+        await service.sync_listing(listing, mock_provider)
+
+        assert mock_provider.get_custom_fields.await_count == 1
+        booking = await BookingRepository(sync_session).get_by_pms_id(
+            listing.id, "RES_PAST"
+        )
+        assert booking is not None
+        assert booking.custom_data["door_code"] == "1234"
+
+    @pytest.mark.asyncio
+    async def test_near_future_reservation_always_refetched(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test an imminent stay is re-enriched even when unchanged.
+
+        Door codes depend on this data, so change detection is never
+        trusted inside the freshness window.
+        """
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+
+        reservation = _make_reservation(
+            pms_booking_id="RES_SOON",
+            check_in=_test_date(2),
+            check_out=_test_date(5),
+            updated_at=_test_date(-10),
+        )
+        mock_provider.get_reservations = AsyncMock(return_value=[reservation])
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+        await service.sync_listing(listing, mock_provider)
+
+        assert mock_provider.get_custom_fields.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_in_progress_reservation_always_refetched(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test a stay underway is re-enriched even when unchanged."""
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+
+        reservation = _make_reservation(
+            pms_booking_id="RES_NOW",
+            check_in=_test_date(-1),
+            check_out=_test_date(2),
+            updated_at=_test_date(-20),
+        )
+        mock_provider.get_reservations = AsyncMock(return_value=[reservation])
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+        await service.sync_listing(listing, mock_provider)
+
+        assert mock_provider.get_custom_fields.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_changed_reservation_is_refetched(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test a reservation with a newer timestamp is re-enriched."""
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_CHANGED",
+                    check_in=_test_date(-40),
+                    check_out=_test_date(-35),
+                    updated_at=_test_date(-40),
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        mock_provider.get_custom_fields = AsyncMock(
+            return_value={"door_code": "9999"},
+        )
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_CHANGED",
+                    check_in=_test_date(-40),
+                    check_out=_test_date(-35),
+                    updated_at=_test_date(-1),
+                )
+            ]
+        )
+        await service.sync_listing(listing, mock_provider)
+
+        assert mock_provider.get_custom_fields.await_count == 1
+        booking = await BookingRepository(sync_session).get_by_pms_id(
+            listing.id, "RES_CHANGED"
+        )
+        assert booking is not None
+        assert booking.custom_data["door_code"] == "9999"
+
+    @pytest.mark.asyncio
+    async def test_missing_timestamp_disables_skipping(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test providers without a change signal keep fetching every sync."""
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_NO_TS",
+                    check_in=_test_date(-40),
+                    check_out=_test_date(-35),
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+        await service.sync_listing(listing, mock_provider)
+
+        assert mock_provider.get_custom_fields.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_enrichment_failure_keeps_booking_and_last_good_data(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test an enrichment failure neither prunes nor blanks a booking."""
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_FAIL",
+                    check_in=_test_date(1),
+                    check_out=_test_date(4),
+                    updated_at=_test_date(-2),
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        mock_provider.get_custom_fields = AsyncMock(
+            side_effect=PMSProviderError("rate limited"),
+        )
+        counts = await service.sync_listing(listing, mock_provider)
+
+        assert counts["cancelled"] == 0
+        booking = await BookingRepository(sync_session).get_by_pms_id(
+            listing.id, "RES_FAIL"
+        )
+        assert booking is not None
+        assert booking.status == "confirmed"
+        assert booking.custom_data["door_code"] == "1234"
+
+    @pytest.mark.asyncio
+    async def test_updated_at_survives_guest_resolution(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test the change signal survives the whole enrichment pipeline.
+
+        Guest resolution rebuilds the DTO, and a dropped ``updated_at``
+        there silently disables reuse for every reservation with a guest.
+        """
+        self._custom_field_provider(mock_provider)
+        mock_provider.get_guest = AsyncMock(
+            return_value=PMSGuest(
+                guest_id="G_TS",
+                full_name="Pipeline Guest",
+                phone="+15550001234",
+                email="pipeline@example.com",
+            )
+        )
+        stamp = _test_date(-40)
+        reservations = [
+            _make_reservation(
+                pms_booking_id="RES_PIPE",
+                guest_id="G_TS",
+                check_in=_test_date(-40),
+                check_out=_test_date(-35),
+                updated_at=stamp,
+            )
+        ]
+
+        service = SyncService(sync_session)
+        enriched, _ = await service._enrich_reservations(
+            mock_provider, test_listing, reservations
+        )
+
+        assert enriched[0].updated_at == stamp
+        assert enriched[0].custom_data["guest_phone"] == "+15550001234"
+        assert enriched[0].custom_data["door_code"] == "1234"
+
+    @pytest.mark.asyncio
+    async def test_guest_lookup_skipped_when_unchanged(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test an unchanged out-of-window stay skips both enrichments."""
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+        mock_provider.get_guest = AsyncMock(
+            return_value=PMSGuest(
+                guest_id="G_SKIP",
+                full_name="Past Guest",
+                phone="+15550009876",
+                email="past@example.com",
+            )
+        )
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_GUEST_PAST",
+                    guest_id="G_SKIP",
+                    check_in=_test_date(-40),
+                    check_out=_test_date(-35),
+                    updated_at=_test_date(-40),
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+        assert mock_provider.get_guest.await_count == 1
+        assert mock_provider.get_custom_fields.await_count == 1
+
+        await service.sync_listing(listing, mock_provider)
+
+        assert mock_provider.get_guest.await_count == 1
+        assert mock_provider.get_custom_fields.await_count == 1
+        booking = await BookingRepository(sync_session).get_by_pms_id(
+            listing.id, "RES_GUEST_PAST"
+        )
+        assert booking is not None
+        assert booking.guest_phone_last4 == "9876"
+        assert booking.custom_data["guest_email"] == "past@example.com"
+
+    @pytest.mark.asyncio
+    async def test_guest_lookup_always_runs_in_window(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test an imminent stay re-fetches guest data every sync.
+
+        Rental Control turns the guest phone last-4 into a lock code, so
+        this is the same door-code constraint as the custom fields.
+        """
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+        mock_provider.get_guest = AsyncMock(
+            return_value=PMSGuest(
+                guest_id="G_SOON",
+                full_name="Soon Guest",
+                phone="+15550005555",
+                email="soon@example.com",
+            )
+        )
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_GUEST_SOON",
+                    guest_id="G_SOON",
+                    check_in=_test_date(3),
+                    check_out=_test_date(6),
+                    updated_at=_test_date(-10),
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+        await service.sync_listing(listing, mock_provider)
+
+        assert mock_provider.get_guest.await_count == 2
+        assert mock_provider.get_custom_fields.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_failed_enrichment_retried_next_sync(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test a failed fetch does not suppress the next sync's retry."""
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_RETRY",
+                    check_in=_test_date(-40),
+                    check_out=_test_date(-35),
+                    updated_at=_test_date(-40),
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        # Second sync: the reservation changed and the fetch fails.
+        mock_provider.get_custom_fields = AsyncMock(
+            side_effect=PMSProviderError("rate limited"),
+        )
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_RETRY",
+                    check_in=_test_date(-40),
+                    check_out=_test_date(-35),
+                    updated_at=_test_date(-2),
+                )
+            ]
+        )
+        await service.sync_listing(listing, mock_provider)
+
+        booking = await BookingRepository(sync_session).get_by_pms_id(
+            listing.id, "RES_RETRY"
+        )
+        assert booking is not None
+        assert booking.pms_updated_at is None
+        assert booking.custom_data["door_code"] == "1234"
+
+        # Third sync: the fetch succeeds again and must have been retried.
+        mock_provider.get_custom_fields = AsyncMock(
+            return_value={"door_code": "4321"},
+        )
+        await service.sync_listing(listing, mock_provider)
+
+        assert mock_provider.get_custom_fields.await_count == 1
+        booking = await BookingRepository(sync_session).get_by_pms_id(
+            listing.id, "RES_RETRY"
+        )
+        assert booking is not None
+        assert booking.custom_data["door_code"] == "4321"
+
+    @pytest.mark.asyncio
+    async def test_first_sync_failure_is_not_cached(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test a first-sync failure is retried even with payload data.
+
+        Reservation payload fields make ``custom_data`` nonempty, which
+        must not be mistaken for a successful enrichment read.
+        """
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+        mock_provider.get_custom_fields = AsyncMock(
+            side_effect=PMSProviderError("rate limited"),
+        )
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_FIRST_FAIL",
+                    check_in=_test_date(-40),
+                    check_out=_test_date(-35),
+                    updated_at=_test_date(-40),
+                    custom_data={"source": "airbnb"},
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        booking = await BookingRepository(sync_session).get_by_pms_id(
+            listing.id, "RES_FIRST_FAIL"
+        )
+        assert booking is not None
+        assert booking.custom_data["source"] == "airbnb"
+        assert booking.pms_updated_at is None
+
+        mock_provider.get_custom_fields = AsyncMock(
+            return_value={"door_code": "1234"},
+        )
+        await service.sync_listing(listing, mock_provider)
+
+        assert mock_provider.get_custom_fields.await_count == 1
+        booking = await BookingRepository(sync_session).get_by_pms_id(
+            listing.id, "RES_FIRST_FAIL"
+        )
+        assert booking is not None
+        assert booking.custom_data["door_code"] == "1234"
+
+    @pytest.mark.asyncio
+    async def test_cleared_payload_field_not_resurrected(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test a failed fetch does not restore a deleted reservation field.
+
+        Only enrichment-owned values may be reused: clearing a note in the
+        PMS must stay cleared even when enrichment then fails.
+        """
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_NOTES",
+                    check_in=_test_date(-40),
+                    check_out=_test_date(-35),
+                    updated_at=_test_date(-40),
+                    custom_data={"notes": "leave key under mat"},
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        booking = await BookingRepository(sync_session).get_by_pms_id(
+            listing.id, "RES_NOTES"
+        )
+        assert booking is not None
+        assert booking.custom_data["notes"] == "leave key under mat"
+
+        # The note is cleared in the PMS and enrichment then fails.
+        mock_provider.get_custom_fields = AsyncMock(
+            side_effect=PMSProviderError("rate limited"),
+        )
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_NOTES",
+                    check_in=_test_date(-40),
+                    check_out=_test_date(-35),
+                    updated_at=_test_date(-1),
+                    custom_data={},
+                )
+            ]
+        )
+        await service.sync_listing(listing, mock_provider)
+
+        booking = await BookingRepository(sync_session).get_by_pms_id(
+            listing.id, "RES_NOTES"
+        )
+        assert booking is not None
+        assert "notes" not in booking.custom_data
+        # The enrichment-owned value is still kept.
+        assert booking.custom_data["door_code"] == "1234"
+
+    @pytest.mark.asyncio
+    async def test_reassignment_fallback_uses_current_row(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test a retired room row never supplies the fallback values.
+
+        A room reassignment leaves the previous row behind as cancelled;
+        reusing its obsolete door code would publish a stale lock code.
+        """
+        from src.models.room import Room
+
+        listing = await self._persisted_listing(sync_session, test_listing)
+        sync_session.add_all(
+            [
+                Room(
+                    listing_id=listing.id,
+                    pms_room_id="RM-0",
+                    room_name="Room A",
+                    ical_url_slug="rm-a",
+                    enabled=True,
+                ),
+                Room(
+                    listing_id=listing.id,
+                    pms_room_id="RM-1",
+                    room_name="Room B",
+                    ical_url_slug="rm-b",
+                    enabled=True,
+                ),
+            ]
+        )
+        await sync_session.commit()
+        self._custom_field_provider(mock_provider)
+
+        def _payload(room, check_in_offset, stamp_offset):
+            """Build a single-reservation provider response."""
+            return [
+                _make_reservation(
+                    pms_booking_id="RES_MOVE",
+                    check_in=_test_date(check_in_offset),
+                    check_out=_test_date(check_in_offset + 5),
+                    updated_at=_test_date(stamp_offset),
+                    room_ids=(room,),
+                )
+            ]
+
+        service = SyncService(sync_session)
+        mock_provider.get_custom_fields = AsyncMock(return_value={"door_code": "1111"})
+        mock_provider.get_reservations = AsyncMock(
+            return_value=_payload("RM-0", -45, -45)
+        )
+        await service.sync_listing(listing, mock_provider)
+
+        # Reassigned to a later room and a later date: the retired row now
+        # sorts first by check-in date.
+        mock_provider.get_custom_fields = AsyncMock(return_value={"door_code": "2222"})
+        mock_provider.get_reservations = AsyncMock(
+            return_value=_payload("RM-1", -43, -20)
+        )
+        await service.sync_listing(listing, mock_provider)
+
+        # The reservation changes again and the fetch fails.
+        mock_provider.get_custom_fields = AsyncMock(
+            side_effect=PMSProviderError("rate limited"),
+        )
+        mock_provider.get_reservations = AsyncMock(
+            return_value=_payload("RM-1", -43, -10)
+        )
+        await service.sync_listing(listing, mock_provider)
+
+        booking = await BookingRepository(sync_session).get_by_pms_id(
+            listing.id, "RES_MOVE::RM-1"
+        )
+        assert booking is not None
+        assert booking.custom_data["door_code"] == "2222"
+
+    @pytest.mark.asyncio
+    async def test_successful_empty_response_is_reused(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test an empty but successful read still suppresses re-fetching.
+
+        Accounts that configure no custom fields otherwise gain nothing.
+        """
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+        mock_provider.get_custom_fields = AsyncMock(return_value={})
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_EMPTY",
+                    check_in=_test_date(-40),
+                    check_out=_test_date(-35),
+                    updated_at=_test_date(-40),
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+        assert mock_provider.get_custom_fields.await_count == 1
+
+        await service.sync_listing(listing, mock_provider)
+
+        assert mock_provider.get_custom_fields.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_unstored_enrichment_is_not_reused(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test a row predating the enrichment column is always re-fetched.
+
+        A NULL column means "never stored", which must not be mistaken for
+        a successful empty read: reusing it would drop a published code.
+        """
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_LEGACY",
+                    check_in=_test_date(-40),
+                    check_out=_test_date(-35),
+                    updated_at=_test_date(-40),
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        repo = BookingRepository(sync_session)
+        booking = await repo.get_by_pms_id(listing.id, "RES_LEGACY")
+        assert booking is not None
+        booking.enrichment_data = None
+        await sync_session.commit()
+
+        await service.sync_listing(listing, mock_provider)
+
+        assert mock_provider.get_custom_fields.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_failed_lookup_drops_other_guests_details(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test a reassigned guest never inherits the old guest's code.
+
+        The stored phone last-4 becomes a physical lock code, so falling
+        back to it after a reassignment would leave the previous guest
+        with working access under the new guest's name.
+        """
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+        mock_provider.get_guest = AsyncMock(
+            return_value=PMSGuest(
+                guest_id="G_FIRST",
+                full_name="First Guest",
+                phone="+15550001111",
+                email="first@example.com",
+            )
+        )
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_SWAP",
+                    guest_id="G_FIRST",
+                    guest_name="First Guest",
+                    check_in=_test_date(3),
+                    check_out=_test_date(6),
+                    updated_at=_test_date(-5),
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        repo = BookingRepository(sync_session)
+        booking = await repo.get_by_pms_id(listing.id, "RES_SWAP")
+        assert booking is not None
+        assert booking.guest_phone_last4 == "1111"
+
+        # The reservation is reassigned and the new lookup fails.
+        mock_provider.get_guest = AsyncMock(
+            side_effect=PMSProviderError("rate limited"),
+        )
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_SWAP",
+                    guest_id="G_SECOND",
+                    guest_name="Second Guest",
+                    check_in=_test_date(3),
+                    check_out=_test_date(6),
+                    updated_at=_test_date(-1),
+                )
+            ]
+        )
+        await service.sync_listing(listing, mock_provider)
+
+        booking = await repo.get_by_pms_id(listing.id, "RES_SWAP")
+        assert booking is not None
+        assert booking.guest_name == "Second Guest"
+        assert booking.guest_phone_last4 is None
+        assert "guest_phone" not in booking.custom_data
+        assert "guest_email" not in booking.custom_data
+        assert booking.pms_updated_at is None
+
+    @pytest.mark.asyncio
+    async def test_same_guest_failure_keeps_details(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test an unchanged guest still keeps its details on failure."""
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+        mock_provider.get_guest = AsyncMock(
+            return_value=PMSGuest(
+                guest_id="G_SAME",
+                full_name="Same Guest",
+                phone="+15550002222",
+                email="same@example.com",
+            )
+        )
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_SAME",
+                    guest_id="G_SAME",
+                    guest_name="Same Guest",
+                    check_in=_test_date(3),
+                    check_out=_test_date(6),
+                    updated_at=_test_date(-5),
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        mock_provider.get_guest = AsyncMock(
+            side_effect=PMSProviderError("rate limited"),
+        )
+        await service.sync_listing(listing, mock_provider)
+
+        booking = await BookingRepository(sync_session).get_by_pms_id(
+            listing.id, "RES_SAME"
+        )
+        assert booking is not None
+        assert booking.guest_phone_last4 == "2222"
+        assert booking.custom_data["guest_email"] == "same@example.com"
+
+    @pytest.mark.asyncio
+    async def test_guest_bookkeeping_key_not_exported(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test the stored guest provenance never reaches custom data."""
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+        mock_provider.get_guest = AsyncMock(
+            return_value=PMSGuest(
+                guest_id="G_HIDDEN",
+                full_name="Hidden Guest",
+                phone="+15550003333",
+                email="hidden@example.com",
+            )
+        )
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_HIDDEN",
+                    guest_id="G_HIDDEN",
+                    check_in=_test_date(3),
+                    check_out=_test_date(6),
+                    updated_at=_test_date(-5),
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        enriched, payloads = await service._enrich_reservations(
+            mock_provider,
+            listing,
+            [
+                _make_reservation(
+                    pms_booking_id="RES_HIDDEN2",
+                    guest_id="G_HIDDEN",
+                    check_in=_test_date(3),
+                    check_out=_test_date(6),
+                )
+            ],
+        )
+        assert GUEST_SOURCE_ID_KEY not in enriched[0].custom_data
+        assert payloads["RES_HIDDEN2"][GUEST_SOURCE_ID_KEY] == "G_HIDDEN"
+
+        booking = await BookingRepository(sync_session).get_by_pms_id(
+            listing.id, "RES_HIDDEN"
+        )
+        assert booking is not None
+        assert GUEST_SOURCE_ID_KEY not in booking.custom_data
+        assert booking.enrichment_data[GUEST_SOURCE_ID_KEY] == "G_HIDDEN"
+
+    @pytest.mark.asyncio
+    async def test_upgrade_failure_keeps_published_values(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test a failed first post-upgrade fetch keeps published codes.
+
+        Rows written before the enrichment column carry NULL provenance;
+        an empty fallback there would delete live door codes.
+        """
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_UPGRADE",
+                    check_in=_test_date(3),
+                    check_out=_test_date(6),
+                    updated_at=_test_date(-5),
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        repo = BookingRepository(sync_session)
+        booking = await repo.get_by_pms_id(listing.id, "RES_UPGRADE")
+        assert booking is not None
+        # Simulate a row that predates migration a7b8c9d0e1f2.
+        booking.enrichment_data = None
+        booking.pms_updated_at = None
+        await sync_session.commit()
+
+        mock_provider.get_custom_fields = AsyncMock(
+            side_effect=PMSProviderError("rate limited"),
+        )
+        await service.sync_listing(listing, mock_provider)
+
+        booking = await repo.get_by_pms_id(listing.id, "RES_UPGRADE")
+        assert booking is not None
+        assert booking.custom_data["door_code"] == "1234"
+        assert booking.pms_updated_at is None
+
+    @pytest.mark.asyncio
+    async def test_upgrade_failure_keeps_deletions(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test bootstrap recovery never revives a cleared payload field.
+
+        The key stays visible on the listing's other reservations, which
+        is what marks it as reservation-owned rather than endpoint-owned.
+        """
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+        other = _make_reservation(
+            pms_booking_id="RES_UPGRADE_OTHER",
+            check_in=_test_date(3),
+            check_out=_test_date(6),
+            updated_at=_test_date(-5),
+            custom_data={"notes": "ring the bell"},
+        )
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_UPGRADE_NOTES",
+                    check_in=_test_date(3),
+                    check_out=_test_date(6),
+                    updated_at=_test_date(-5),
+                    custom_data={"notes": "leave key under mat"},
+                ),
+                other,
+            ]
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        repo = BookingRepository(sync_session)
+        booking = await repo.get_by_pms_id(listing.id, "RES_UPGRADE_NOTES")
+        assert booking is not None
+        booking.enrichment_data = None
+        booking.pms_updated_at = None
+        await sync_session.commit()
+
+        # The note is cleared and the first post-upgrade fetch fails.
+        mock_provider.get_custom_fields = AsyncMock(
+            side_effect=PMSProviderError("rate limited"),
+        )
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_UPGRADE_NOTES",
+                    check_in=_test_date(3),
+                    check_out=_test_date(6),
+                    updated_at=_test_date(-1),
+                    custom_data={},
+                ),
+                other,
+            ]
+        )
+        await service.sync_listing(listing, mock_provider)
+
+        booking = await repo.get_by_pms_id(listing.id, "RES_UPGRADE_NOTES")
+        assert booking is not None
+        assert "notes" not in booking.custom_data
+        assert booking.custom_data["door_code"] == "1234"
+
+    @pytest.mark.asyncio
+    async def test_upgrade_failure_drops_unattributed_guest(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Test legacy guest values are not recovered on a failed lookup.
+
+        A pre-upgrade row records no source guest ID, so the stored phone
+        cannot be proven to belong to the current guest.  Publishing no
+        lock code is safer than publishing someone else's.
+        """
+        listing = await self._persisted_listing(sync_session, test_listing)
+        self._custom_field_provider(mock_provider)
+        mock_provider.get_guest = AsyncMock(
+            return_value=PMSGuest(
+                guest_id="G_LEGACY",
+                full_name="Legacy Guest",
+                phone="+15550007777",
+                email="legacy@example.com",
+            )
+        )
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id="RES_UPGRADE_GUEST",
+                    guest_id="G_LEGACY",
+                    guest_name="Legacy Guest",
+                    check_in=_test_date(3),
+                    check_out=_test_date(6),
+                    updated_at=_test_date(-5),
+                )
+            ]
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        repo = BookingRepository(sync_session)
+        booking = await repo.get_by_pms_id(listing.id, "RES_UPGRADE_GUEST")
+        assert booking is not None
+        assert booking.guest_phone_last4 == "7777"
+        booking.enrichment_data = None
+        booking.pms_updated_at = None
+        await sync_session.commit()
+
+        mock_provider.get_guest = AsyncMock(
+            side_effect=PMSProviderError("rate limited"),
+        )
+        # The custom-field fetch fails too, so bootstrap recovery runs and
+        # must not smuggle the unattributed guest values back in.
+        mock_provider.get_custom_fields = AsyncMock(
+            side_effect=PMSProviderError("rate limited"),
+        )
+        await service.sync_listing(listing, mock_provider)
+
+        booking = await repo.get_by_pms_id(listing.id, "RES_UPGRADE_GUEST")
+        assert booking is not None
+        assert booking.guest_phone_last4 is None
+        assert "guest_phone" not in booking.custom_data
+        assert "guest_email" not in booking.custom_data
+        assert booking.custom_data["door_code"] == "1234"
+        assert booking.pms_updated_at is None
 
 
 def _sync_log_text(caplog) -> str:

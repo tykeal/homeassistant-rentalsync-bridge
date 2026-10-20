@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from src.providers.base import (
+    RECOGNISED_NON_EXPORT_STATUSES,
     PMSAuthenticationError,
     PMSConnectionError,
     PMSGuest,
@@ -69,32 +70,26 @@ _EXCLUDED_STATUSES = frozenset({"inquiry", "reserved"})
 # reservation is a withheld booking.
 _NORMALISED_STATUSES = frozenset(_STATUS_MAP.values())
 
-# Documented Guesty states that we understand but deliberately do not export.
+# Guesty's spelling of the shared non-export states.
 #
-# Each one means the stay is not happening: ``expired`` (an unpaid hold that
-# lapsed), ``closed`` (a reservation closed out without a stay), ``declined``
-# (a request the host turned down) and awaiting-payment (a booking that has
-# not been paid for yet).  The machine spelling of the awaiting-payment state
-# is INFERRED as ``awaiting_payment``; it is not confirmed by Guesty's docs,
-# so an unexpected spelling simply falls through to the unknown-status path.
+# The machine spelling of the awaiting-payment state is INFERRED as
+# ``awaiting_payment``; it is not confirmed by Guesty's docs, so an
+# unexpected spelling simply falls through to the unknown-status path.
 #
 # These are deliberately NOT in ``_STATUS_MAP`` (they must never reach the
 # calendar export) and NOT in ``_EXCLUDED_STATUSES`` (returning None would
-# drop them from the snapshot, and the sync prune loop would then retire them
-# as cancelled).  They are withheld, not retired: ``_map_reservation``
+# drop them from the snapshot, and the sync prune loop would then retire
+# them as cancelled).  They are withheld, not retired: ``_map_reservation``
 # returns a DTO carrying the raw status verbatim, and the booking repository
 # only serves ``confirmed``/``checked_in``/``checked_out`` to the export.
 #
-# They are listed here so the health-check guard counts them as classified: a
-# normal account accumulates many of these over its history, and treating
-# them as evidence of a broken status mapping would abort every sync.
-_RECOGNISED_NON_EXPORT_STATUSES = frozenset(
-    {"expired", "closed", "declined", "awaiting_payment"}
-)
+# They also count as classified for the health-check guard below: a normal
+# account accumulates many of these over its history, and treating them as
+# evidence of a broken status mapping would abort every sync.
 
 # Statuses the health check considers understood.  Only a status outside this
 # union counts as unclassified evidence of a broken mapping.
-_CLASSIFIED_STATUSES = _NORMALISED_STATUSES | _RECOGNISED_NON_EXPORT_STATUSES
+_CLASSIFIED_STATUSES = _NORMALISED_STATUSES | RECOGNISED_NON_EXPORT_STATUSES
 
 # Field projection for ``GET /v1/reservations``.
 #
@@ -165,6 +160,14 @@ _RESERVATION_FIELD_PATHS: tuple[str, ...] = (
     # -- notes (_extract_custom_data) --------------------------------------
     "notes",
     "notes.note",
+    # -- change detection (_map_reservation -> PMSReservation.updated_at) ---
+    # Guesty's documented "last modified" timestamp for the reservation
+    # document.  The sync uses it to skip re-enriching reservations that
+    # have not changed, which is what keeps a multi-listing account under
+    # Guesty's 120 req/min ceiling (issue #128).  If Guesty ever stops
+    # returning it the field is simply absent, enrichment is never skipped
+    # and behaviour falls back to the pre-#128 always-fetch path.
+    "lastUpdatedAt",
 )
 
 RESERVATION_FIELDS = " ".join(_RESERVATION_FIELD_PATHS)
@@ -937,7 +940,7 @@ class GuestyProvider(PMSProvider):
             # prune loop does not retire it) while holding it out of the
             # calendar export.  Returning None here would drop it from the
             # snapshot and have it cancelled instead.
-            if status_raw in _RECOGNISED_NON_EXPORT_STATUSES:
+            if status_raw in RECOGNISED_NON_EXPORT_STATUSES:
                 # Expected on healthy accounts, so DEBUG: warning on every
                 # sync would spam logs and alarm users about normal data.
                 logger.debug(
@@ -992,6 +995,7 @@ class GuestyProvider(PMSProvider):
             status=status,
             room_ids=(room_id,),
             custom_data=_extract_custom_data(raw),
+            updated_at=_parse_optional_date(raw.get("lastUpdatedAt")),
         )
 
 
@@ -1330,6 +1334,28 @@ def _parse_date(value: str | datetime | None) -> datetime:
             msg = f"Cannot parse date value: {value!r}"
             raise PMSProviderError(msg) from exc
     return ensure_utc(dt)
+
+
+def _parse_optional_date(value: str | datetime | None) -> datetime | None:
+    """Parse an optional timestamp, returning None when unusable.
+
+    Used for advisory metadata such as ``lastUpdatedAt``: the reservation is
+    perfectly valid without it, so an absent or malformed value must never
+    abort the sync.  Returning None simply disables change detection for
+    that reservation, which falls back to always re-enriching it.
+
+    Args:
+        value: ISO-format timestamp string, datetime, or None/empty.
+
+    Returns:
+        Timezone-aware UTC datetime, or None if absent/unparseable.
+    """
+    if not value:
+        return None
+    try:
+        return _parse_date(value)
+    except PMSProviderError:
+        return None
 
 
 def _parse_retry_after(response: httpx.Response) -> float | None:
