@@ -81,6 +81,12 @@ class PMSReservation:
     # a raw provider value we do not recognise (withheld from export)
     room_ids: tuple[str, ...]
     custom_data: dict[str, Any]
+    # Provider-reported "last modified" instant for the reservation, when the
+    # provider exposes one.  Used by the sync as a change-detection signal so
+    # unchanged reservations can skip redundant enrichment calls.  Providers
+    # without such a field leave this None, which disables the optimisation
+    # for them (never skip) rather than guessing that nothing changed.
+    updated_at: datetime | None = None
 
 
 @dataclass(frozen=True)

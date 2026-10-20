@@ -27,6 +27,7 @@ from src.providers.guesty.auth import GuestyTokenManager
 from src.providers.guesty.service import (
     DEFAULT_LOOKBACK_DAYS,
     GUESTY_BASE_URL,
+    RESERVATION_FIELDS,
     GuestyProvider,
     _extract_custom_data,
     _format_address,
@@ -1377,6 +1378,56 @@ class TestReservationWindowBounds:
         await provider.aclose()
 
         assert reservations == []
+
+
+# ---------------------------------------------------------------------------
+# lastUpdatedAt change-detection signal (issue #128)
+# ---------------------------------------------------------------------------
+
+
+class TestReservationUpdatedAt:
+    """Tests for the reservation change-detection timestamp."""
+
+    def test_last_updated_at_is_requested(self):
+        """Test the projection names lastUpdatedAt.
+
+        Guesty returns only the paths named in ``fields``, so the sync's
+        change detection silently dies if this path is dropped.
+        """
+        assert "lastUpdatedAt" in RESERVATION_FIELDS.split(" ")
+
+    def test_last_updated_at_mapped(self):
+        """Test lastUpdatedAt is surfaced as PMSReservation.updated_at."""
+        result = GuestyProvider._map_reservation(
+            {
+                "_id": "R_TS",
+                "status": "confirmed",
+                "checkIn": _rel(40),
+                "checkOut": _rel(44),
+                "lastUpdatedAt": "2026-08-17T07:00:00.000Z",
+            },
+            "L1",
+        )
+
+        assert result is not None
+        assert result.updated_at == datetime(2026, 8, 17, 7, 0, tzinfo=UTC)
+
+    @pytest.mark.parametrize("value", [None, "", "not-a-date"])
+    def test_unusable_last_updated_at_is_none(self, value):
+        """Test an absent or malformed timestamp never aborts mapping."""
+        result = GuestyProvider._map_reservation(
+            {
+                "_id": "R_TS",
+                "status": "confirmed",
+                "checkIn": _rel(40),
+                "checkOut": _rel(44),
+                "lastUpdatedAt": value,
+            },
+            "L1",
+        )
+
+        assert result is not None
+        assert result.updated_at is None
 
 
 # ---------------------------------------------------------------------------

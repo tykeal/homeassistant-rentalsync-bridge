@@ -165,6 +165,14 @@ _RESERVATION_FIELD_PATHS: tuple[str, ...] = (
     # -- notes (_extract_custom_data) --------------------------------------
     "notes",
     "notes.note",
+    # -- change detection (_map_reservation -> PMSReservation.updated_at) ---
+    # Guesty's documented "last modified" timestamp for the reservation
+    # document.  The sync uses it to skip re-enriching reservations that
+    # have not changed, which is what keeps a multi-listing account under
+    # Guesty's 120 req/min ceiling (issue #128).  If Guesty ever stops
+    # returning it the field is simply absent, enrichment is never skipped
+    # and behaviour falls back to the pre-#128 always-fetch path.
+    "lastUpdatedAt",
 )
 
 RESERVATION_FIELDS = " ".join(_RESERVATION_FIELD_PATHS)
@@ -992,6 +1000,7 @@ class GuestyProvider(PMSProvider):
             status=status,
             room_ids=(room_id,),
             custom_data=_extract_custom_data(raw),
+            updated_at=_parse_optional_date(raw.get("lastUpdatedAt")),
         )
 
 
@@ -1330,6 +1339,28 @@ def _parse_date(value: str | datetime | None) -> datetime:
             msg = f"Cannot parse date value: {value!r}"
             raise PMSProviderError(msg) from exc
     return ensure_utc(dt)
+
+
+def _parse_optional_date(value: str | datetime | None) -> datetime | None:
+    """Parse an optional timestamp, returning None when unusable.
+
+    Used for advisory metadata such as ``lastUpdatedAt``: the reservation is
+    perfectly valid without it, so an absent or malformed value must never
+    abort the sync.  Returning None simply disables change detection for
+    that reservation, which falls back to always re-enriching it.
+
+    Args:
+        value: ISO-format timestamp string, datetime, or None/empty.
+
+    Returns:
+        Timezone-aware UTC datetime, or None if absent/unparseable.
+    """
+    if not value:
+        return None
+    try:
+        return _parse_date(value)
+    except PMSProviderError:
+        return None
 
 
 def _parse_retry_after(response: httpx.Response) -> float | None:

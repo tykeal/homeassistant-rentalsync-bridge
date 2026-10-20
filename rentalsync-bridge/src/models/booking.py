@@ -61,6 +61,12 @@ class Booking(Base):
     check_out_date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="confirmed")
     custom_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # Provider-reported "last modified" instant for the reservation, when the
+    # provider exposes one (Guesty's ``lastUpdatedAt``).  Persisted so the
+    # next sync can tell an unchanged reservation from a changed one and skip
+    # redundant per-reservation enrichment calls (issue #128).  NULL means
+    # "unknown", which always forces a re-fetch.
+    pms_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_fetched_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=_utc_now
     )

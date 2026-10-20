@@ -44,6 +44,18 @@ KNOWN_BOOKING_STATUSES = frozenset(
 # malformed payload cannot abort a sync with a database error.
 _MAX_STATUS_LENGTH = 50
 
+# Freshness boundary for custom-field enrichment (issue #128).
+#
+# Custom fields can feed data the Rental Control integration turns into
+# physical door lock codes, so provider change detection is never trusted
+# for a stay a lock could be acting on.  The lookback matches
+# ``BookingRepository.get_confirmed_for_listing``, which keeps publishing a
+# stay for 7 days after checkout; the lookahead covers the run-up during
+# which a code is plausibly already issued.  Reservations inside this window
+# are re-enriched on every sync regardless of whether they changed.
+CUSTOM_FIELD_FRESH_LOOKBACK_DAYS = 7
+CUSTOM_FIELD_FRESH_LOOKAHEAD_DAYS = 30
+
 # The all-day vs timed export rules live in CalendarService; reuse them so
 # the prune guard agrees with what the exported calendar actually shows.
 _CALENDAR_RULES = CalendarService()
@@ -131,7 +143,9 @@ class SyncService:
             reservations = await self._resolve_guest_names(provider, reservations)
 
             # Enrich with provider custom fields (e.g. Guesty v3)
-            reservations = await self._enrich_custom_fields(provider, reservations)
+            reservations = await self._enrich_custom_fields(
+                provider, listing, reservations
+            )
 
             counts = await self._process_reservations(listing, reservations)
 
@@ -423,6 +437,7 @@ class SyncService:
             "check_in_date": booking_data["check_in_date"],
             "check_out_date": booking_data["check_out_date"],
             "status": booking_data["status"],
+            "pms_updated_at": booking_data.get("pms_updated_at"),
         }
 
         # If no rooms specified, create booking without room association
@@ -534,6 +549,7 @@ class SyncService:
             check_out_date=booking_data["check_out_date"],
             status=booking_data["status"],
             custom_data=booking_data["custom_data"],
+            pms_updated_at=booking_data.get("pms_updated_at"),
         )
         _, was_created = await self._booking_repo.upsert(booking)
         return was_created
@@ -770,6 +786,7 @@ class SyncService:
             "status": status,
             "room_ids": list(reservation.room_ids),
             "base_custom_data": base_custom_data,
+            "pms_updated_at": reservation.updated_at,
         }
 
     @staticmethod
@@ -877,6 +894,7 @@ class SyncService:
     async def _enrich_custom_fields(
         self,
         provider: PMSProvider,
+        listing: Listing,
         reservations: list[PMSReservation],
     ) -> list[PMSReservation]:
         """Fetch and merge provider custom fields into reservations.
@@ -886,8 +904,20 @@ class SyncService:
         Providers that embed custom fields directly in reservation
         payloads (e.g. Cloudbeds) are skipped entirely.
 
+        One API call per reservation per sync is what pushes a multi-listing
+        account through Guesty's 120 req/min ceiling (issue #128), so a
+        reservation is re-fetched only when it can matter:
+
+        * Anything inside the freshness window defined by
+          ``_requires_fresh_custom_fields`` is ALWAYS re-fetched, because
+          its custom fields can feed physical door lock codes.
+        * Everything else is re-fetched only when the provider's own
+          "last modified" timestamp differs from the one stored on the last
+          sync, or when either timestamp is unknown.
+
         Args:
             provider: Active PMS provider instance.
+            listing: Listing being synced, used for stored comparison state.
             reservations: Reservations to enrich.
 
         Returns:
@@ -896,12 +926,24 @@ class SyncService:
         if not provider.has_separate_custom_fields:
             return reservations
 
-        # TODO: add bounded concurrency (asyncio.gather + semaphore)
-        # for listings with many reservations.
+        stored = await self._stored_enrichment_state(listing)
+
         enriched: list[PMSReservation] = []
+        skipped = 0
         for r in reservations:
             if not r.pms_booking_id:
                 enriched.append(r)
+                continue
+
+            cached_updated_at, cached_custom_data = stored.get(
+                r.pms_booking_id, (None, None)
+            )
+
+            if self._can_reuse_custom_fields(
+                r, listing, cached_updated_at, cached_custom_data
+            ):
+                skipped += 1
+                enriched.append(self._with_custom_fields(r, cached_custom_data or {}))
                 continue
 
             try:
@@ -909,28 +951,165 @@ class SyncService:
                     r.pms_booking_id,
                 )
             except PMSProviderError:
+                # Deliberately not fatal and deliberately not empty: the
+                # reservation itself was fetched successfully, so the
+                # snapshot is complete and pruning stays correct.  Falling
+                # back to the last-good custom data keeps a door code that
+                # is already published from being blanked out by a transient
+                # provider error; an empty dict would silently drop it.
                 logger.warning(
-                    "Failed to fetch custom fields for %s",
+                    "Failed to fetch custom fields for %s; reusing last known values",
                     r.pms_booking_id,
                     exc_info=True,
                 )
-                extra = {}
+                extra = cached_custom_data or {}
 
-            if extra:
-                merged = {**extra, **r.custom_data}
-                enriched.append(
-                    PMSReservation(
-                        pms_booking_id=r.pms_booking_id,
-                        listing_pms_id=r.listing_pms_id,
-                        guest_name=r.guest_name,
-                        guest_id=r.guest_id,
-                        check_in=r.check_in,
-                        check_out=r.check_out,
-                        status=r.status,
-                        room_ids=r.room_ids,
-                        custom_data=merged,
-                    )
-                )
-            else:
-                enriched.append(r)
+            enriched.append(self._with_custom_fields(r, extra))
+
+        if skipped:
+            logger.debug(
+                "Skipped custom-field enrichment for %d unchanged "
+                "reservation(s) on listing %s",
+                skipped,
+                listing.pms_id,
+            )
         return enriched
+
+    @staticmethod
+    def _with_custom_fields(
+        reservation: PMSReservation,
+        extra: dict,
+    ) -> PMSReservation:
+        """Return *reservation* with *extra* merged under its custom data.
+
+        Reservation-provided values win, matching the long-standing merge
+        order so enrichment can only add keys, never overwrite the
+        reservation payload.
+
+        Args:
+            reservation: Reservation to enrich.
+            extra: Custom fields to merge beneath the reservation's own.
+
+        Returns:
+            The original DTO when there is nothing to merge, else a copy.
+        """
+        if not extra:
+            return reservation
+
+        return PMSReservation(
+            pms_booking_id=reservation.pms_booking_id,
+            listing_pms_id=reservation.listing_pms_id,
+            guest_name=reservation.guest_name,
+            guest_id=reservation.guest_id,
+            check_in=reservation.check_in,
+            check_out=reservation.check_out,
+            status=reservation.status,
+            room_ids=reservation.room_ids,
+            custom_data={**extra, **reservation.custom_data},
+            updated_at=reservation.updated_at,
+        )
+
+    async def _stored_enrichment_state(
+        self,
+        listing: Listing,
+    ) -> dict[str, tuple[datetime | None, dict | None]]:
+        """Load the last-synced enrichment state for a listing.
+
+        Keyed by the base reservation ID so multi-room bookings (stored as
+        ``{reservationID}::{roomID}``) resolve to the reservation that
+        produced them.
+
+        Args:
+            listing: Listing being synced.
+
+        Returns:
+            Mapping of reservation ID to ``(pms_updated_at, custom_data)``.
+        """
+        state: dict[str, tuple[datetime | None, dict | None]] = {}
+        for booking in await self._booking_repo.get_for_listing(listing.id):
+            reservation_id = self._extract_base_reservation_id(
+                booking.pms_booking_id,
+            )
+            updated_at = booking.pms_updated_at
+            if updated_at is not None and updated_at.tzinfo is None:
+                # SQLite returns naive datetimes holding UTC values.
+                updated_at = updated_at.replace(tzinfo=UTC)
+            state.setdefault(reservation_id, (updated_at, booking.custom_data))
+        return state
+
+    @classmethod
+    def _can_reuse_custom_fields(
+        cls,
+        reservation: PMSReservation,
+        listing: Listing,
+        cached_updated_at: datetime | None,
+        cached_custom_data: dict | None,
+    ) -> bool:
+        """Decide whether stored custom fields may stand in for a fetch.
+
+        Args:
+            reservation: Reservation being enriched.
+            listing: Listing being synced (supplies the timezone).
+            cached_updated_at: ``pms_updated_at`` stored on the last sync.
+            cached_custom_data: ``custom_data`` stored on the last sync.
+
+        Returns:
+            True when the fetch can safely be skipped.
+        """
+        if not cached_custom_data:
+            # Never synced, or nothing worth reusing.
+            return False
+        if reservation.updated_at is None or cached_updated_at is None:
+            # No change-detection signal: behave exactly as before #128.
+            return False
+        if reservation.updated_at != cached_updated_at:
+            return False
+        return not cls._requires_fresh_custom_fields(reservation, listing)
+
+    @staticmethod
+    def _requires_fresh_custom_fields(
+        reservation: PMSReservation,
+        listing: Listing | None = None,
+        now: datetime | None = None,
+    ) -> bool:
+        """Check whether a reservation must be re-enriched unconditionally.
+
+        SAFETY: custom fields are user-configurable and feed data the Rental
+        Control integration uses to issue physical door lock codes.  A
+        provider's "last modified" timestamp describes the reservation
+        document; whether editing a custom field bumps it is not guaranteed
+        by Guesty's documentation.  Change detection is therefore never
+        trusted for a stay where stale data could reach a lock: anything
+        in progress, starting within ``CUSTOM_FIELD_FRESH_LOOKAHEAD_DAYS``,
+        or checked out within ``CUSTOM_FIELD_FRESH_LOOKBACK_DAYS`` (the
+        window ``BookingRepository.get_confirmed_for_listing`` still
+        publishes) is always re-fetched.
+
+        Only stays wholly outside that window — long-past history and
+        far-future bookings that no lock is acting on yet — can be skipped,
+        and they re-enter the window well before check-in.
+
+        Args:
+            reservation: Reservation to inspect.
+            listing: Listing being synced (unused today, accepted so the
+                caller need not care how the boundary is computed).
+            now: Optional reference time (defaults to now in UTC).
+
+        Returns:
+            True when custom fields must be fetched fresh.
+        """
+        del listing
+        reference = now or datetime.now(UTC)
+        if reference.tzinfo is None:
+            reference = reference.replace(tzinfo=UTC)
+
+        check_in = reservation.check_in
+        check_out = reservation.check_out
+        if check_in.tzinfo is None:
+            check_in = check_in.replace(tzinfo=UTC)
+        if check_out.tzinfo is None:
+            check_out = check_out.replace(tzinfo=UTC)
+
+        lookback = reference - timedelta(days=CUSTOM_FIELD_FRESH_LOOKBACK_DAYS)
+        lookahead = reference + timedelta(days=CUSTOM_FIELD_FRESH_LOOKAHEAD_DAYS)
+        return check_out >= lookback and check_in <= lookahead
