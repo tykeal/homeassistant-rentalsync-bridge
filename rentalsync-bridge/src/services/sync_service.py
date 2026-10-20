@@ -30,6 +30,16 @@ logger = logging.getLogger(__name__)
 
 PHONE_LAST_DIGITS = 4
 
+# Statuses the rest of the system understands.  Anything else is stored
+# verbatim and withheld from the calendar export rather than guessed at.
+KNOWN_BOOKING_STATUSES = frozenset(
+    {"confirmed", "checked_in", "checked_out", "cancelled"}
+)
+
+# ``Booking.status`` is a String(50); bound raw provider values so a
+# malformed payload cannot abort a sync with a database error.
+_MAX_STATUS_LENGTH = 50
+
 # The all-day vs timed export rules live in CalendarService; reuse them so
 # the prune guard agrees with what the exported calendar actually shows.
 _CALENDAR_RULES = CalendarService()
@@ -664,6 +674,46 @@ class SyncService:
         return check_in <= reference < check_out
 
     @staticmethod
+    def _normalize_booking_status(
+        raw_status: object,
+        pms_booking_id: str | None,
+    ) -> str:
+        """Normalise a reservation status for storage.
+
+        Recognised statuses are stored unchanged.  Anything else is stored
+        verbatim (lower-cased, stripped and length-bounded) so the booking is
+        still seen by the sync and therefore not retired by the prune loop,
+        while ``BookingRepository.get_confirmed_for_listing`` keeps it out of
+        the iCal export.  Statuses are never coerced to ``confirmed``: that
+        would export a door code for a guest who may have cancelled.
+
+        Args:
+            raw_status: Status value from the provider DTO.
+            pms_booking_id: Reservation ID, logged to locate the booking.
+
+        Returns:
+            The recognised status, or the raw value withheld from export.
+        """
+        if isinstance(raw_status, str):
+            status = raw_status.strip().lower()
+        elif raw_status is None:
+            status = ""
+        else:
+            status = str(raw_status).strip().lower()
+
+        if status in KNOWN_BOOKING_STATUSES:
+            return status
+
+        status = status[:_MAX_STATUS_LENGTH]
+        logger.warning(
+            "Unrecognised reservation status %r for reservation %s; "
+            "booking withheld from calendar export",
+            status,
+            pms_booking_id,
+        )
+        return status
+
+    @staticmethod
     def _extract_booking_data_from_dto(
         reservation: PMSReservation,
     ) -> dict:
@@ -675,14 +725,9 @@ class SyncService:
         Returns:
             Dict with booking fields for database.
         """
-        status = reservation.status or "confirmed"
-        if status not in (
-            "confirmed",
-            "checked_in",
-            "checked_out",
-            "cancelled",
-        ):
-            status = "confirmed"
+        status = SyncService._normalize_booking_status(
+            reservation.status, reservation.pms_booking_id
+        )
 
         # Build base custom data — include phone_last4 if available
         base_custom_data: dict = {}

@@ -19,6 +19,7 @@ from src.providers.base import (
     PMSProviderError,
     PMSReservation,
 )
+from src.repositories.booking_repository import BookingRepository
 from src.services.calendar_service import CalendarCache
 from src.services.sync_service import SyncService, SyncServiceError
 
@@ -901,12 +902,45 @@ class TestExtractBookingDataFromDto:
 
         assert result["status"] == "confirmed"
 
-    def test_extract_status_unknown_defaults_confirmed(self, service):
-        """Test unknown status defaults to confirmed."""
-        reservation = _make_reservation(status="UNKNOWN_STATUS")
+    def test_extract_status_unknown_kept_verbatim(self, service, caplog):
+        """Test unknown status is stored verbatim and warned about."""
+        reservation = _make_reservation(status="  CANCELED_BY_CHANNEL ")
+        with caplog.at_level(logging.WARNING, logger="src.services.sync_service"):
+            result = service._extract_booking_data_from_dto(reservation)
+
+        assert result["status"] == "canceled_by_channel"
+        assert "'canceled_by_channel'" in caplog.text
+        assert "RES001" in caplog.text
+
+    @pytest.mark.parametrize("raw_status", ["", None])
+    def test_extract_status_missing_not_confirmed(self, service, raw_status, caplog):
+        """Test an empty/missing status is withheld, never confirmed."""
+        reservation = _make_reservation(status=raw_status)
+        with caplog.at_level(logging.WARNING, logger="src.services.sync_service"):
+            result = service._extract_booking_data_from_dto(reservation)
+
+        assert result["status"] == ""
+        assert "booking withheld from calendar export" in caplog.text
+
+    @pytest.mark.parametrize(
+        "raw_status",
+        ["confirmed", "checked_in", "checked_out", "cancelled"],
+    )
+    def test_extract_known_statuses_unchanged(self, service, raw_status, caplog):
+        """Test recognised statuses pass through without a warning."""
+        reservation = _make_reservation(status=raw_status)
+        with caplog.at_level(logging.WARNING, logger="src.services.sync_service"):
+            result = service._extract_booking_data_from_dto(reservation)
+
+        assert result["status"] == raw_status
+        assert "withheld" not in caplog.text
+
+    def test_extract_status_overlong_truncated(self, service):
+        """Test an absurd status cannot overflow the String(50) column."""
+        reservation = _make_reservation(status="x" * 200)
         result = service._extract_booking_data_from_dto(reservation)
 
-        assert result["status"] == "confirmed"
+        assert result["status"] == "x" * 50
 
     def test_room_ids_from_dto(self, service):
         """Test room IDs come from DTO tuple."""
@@ -916,6 +950,50 @@ class TestExtractBookingDataFromDto:
         result = service._extract_booking_data_from_dto(reservation)
 
         assert result["room_ids"] == ["ROOM_A", "ROOM_B"]
+
+
+class TestUnrecognisedStatusWithheld:
+    """Tests for the withhold-do-not-retire policy (issue #121)."""
+
+    @pytest.mark.asyncio
+    async def test_unknown_status_stored_and_withheld(
+        self, sync_session, mock_provider, caplog
+    ):
+        """Test unknown status is stored, kept, and not exported."""
+        listing = Listing(
+            pms_id="PROP123",
+            name="Test Listing",
+            ical_url_slug="test-listing",
+            enabled=True,
+            sync_enabled=True,
+        )
+        sync_session.add(listing)
+        await sync_session.commit()
+        await sync_session.refresh(listing)
+
+        reservation = _make_reservation(status="canceled_by_channel")
+        mock_provider.get_reservations = AsyncMock(return_value=[reservation])
+        service = SyncService(sync_session)
+
+        with caplog.at_level(logging.WARNING, logger="src.services.sync_service"):
+            result = await service.sync_listing(listing, mock_provider)
+
+        assert result["cancelled"] == 0
+        assert "'canceled_by_channel'" in caplog.text
+
+        repo = BookingRepository(sync_session)
+        stored = await repo.get_by_pms_id(listing.id, "RES001")
+        assert stored is not None
+        assert stored.status == "canceled_by_channel"
+
+        exported = await repo.get_confirmed_for_listing(listing.id)
+        assert exported == []
+
+        # Second sync: still present in the provider snapshot, so the prune
+        # loop must leave it alone rather than retiring it.
+        await service.sync_listing(listing, mock_provider)
+        await sync_session.refresh(stored)
+        assert stored.status == "canceled_by_channel"
 
 
 class TestExtractPhoneLast4:

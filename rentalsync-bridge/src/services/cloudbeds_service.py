@@ -44,8 +44,7 @@ MAX_RESERVATION_PAGES = 200
 # propagated instead of silently vanishing from the response.
 #
 # ``not_confirmed`` is the one status we must drop client-side: it is an
-# unfulfilled hold rather than a stay, and ``_normalize_status`` falls back
-# to "confirmed" for unrecognised values, which would export it.
+# unfulfilled hold rather than a stay, so it is never a booking at all.
 EXCLUDED_RESERVATION_STATUSES = frozenset({"not_confirmed"})
 
 

@@ -47,15 +47,28 @@ _STATUS_MAP: dict[str, str] = {
 def _normalize_status(raw_status: Any) -> str:
     """Normalize a Cloudbeds reservation status.
 
+    Unrecognised and missing statuses are returned as-is rather than being
+    assumed live: the sync stores them verbatim so the reservation is still
+    seen (and therefore not retired), while the calendar export filters it
+    out.  Guessing ``confirmed`` here would publish a stay — and a door
+    code — for a booking we do not understand.
+
     Args:
         raw_status: Raw ``status`` value from the Cloudbeds API.
 
     Returns:
-        Normalized status; unknown values fall back to ``confirmed``.
+        Normalized status, or the raw value withheld from export.
     """
-    if not raw_status:
-        return "confirmed"
-    return _STATUS_MAP.get(str(raw_status).lower(), "confirmed")
+    status_raw = "" if raw_status is None else str(raw_status).strip().lower()
+    status = _STATUS_MAP.get(status_raw)
+    if status is None:
+        logger.warning(
+            "Unrecognised Cloudbeds reservation status %r; "
+            "booking withheld from calendar export",
+            status_raw,
+        )
+        return status_raw
+    return status
 
 
 @provider("cloudbeds")

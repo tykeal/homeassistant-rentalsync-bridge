@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for the Cloudbeds provider implementation."""
 
+import logging
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -236,9 +237,54 @@ class TestGetReservations:
 
         reservations = await provider.get_reservations("P1")
 
-        # Without the mapping this would fall back to "confirmed" and the
-        # booking would persist in the exported calendar.
+        # Without the mapping this would be withheld from the export rather
+        # than retired through the normal cancellation path.
         assert reservations[0].status == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_unknown_status_kept_and_warned(self, provider, mock_service, caplog):
+        """Test an unknown Cloudbeds status is kept verbatim with a warning."""
+        mock_service.get_reservations = AsyncMock(
+            return_value=[
+                {
+                    "reservationID": "RES_U",
+                    "startDate": "2026-05-01",
+                    "endDate": "2026-05-04",
+                    "status": "Held_By_Channel",
+                    "roomID": "R1",
+                }
+            ]
+        )
+
+        with caplog.at_level(
+            logging.WARNING, logger="src.providers.cloudbeds.provider"
+        ):
+            reservations = await provider.get_reservations("P1")
+
+        assert reservations[0].status == "held_by_channel"
+        assert "'held_by_channel'" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_missing_status_not_confirmed(self, provider, mock_service, caplog):
+        """Test a missing status is withheld rather than assumed live."""
+        mock_service.get_reservations = AsyncMock(
+            return_value=[
+                {
+                    "reservationID": "RES_M",
+                    "startDate": "2026-05-01",
+                    "endDate": "2026-05-04",
+                    "roomID": "R1",
+                }
+            ]
+        )
+
+        with caplog.at_level(
+            logging.WARNING, logger="src.providers.cloudbeds.provider"
+        ):
+            reservations = await provider.get_reservations("P1")
+
+        assert reservations[0].status == ""
+        assert "withheld from calendar export" in caplog.text
 
     @pytest.mark.asyncio
     async def test_single_room_id_from_top_level(self, provider, mock_service):

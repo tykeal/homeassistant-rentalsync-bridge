@@ -55,7 +55,8 @@ class PMSReservation:
     guest_id: str | None
     check_in: datetime
     check_out: datetime
-    status: str  # "confirmed" | "checked_in" | "checked_out" | "cancelled"
+    status: str  # one of src.services.sync_service.KNOWN_BOOKING_STATUSES, or
+    # a raw provider value we do not recognise (withheld from export)
     room_ids: tuple[str, ...]
     custom_data: dict[str, Any]
 

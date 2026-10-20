@@ -59,6 +59,7 @@ _STATUS_MAP: dict[str, str] = {
     "checked_in": "checked_in",
     "checked_out": "checked_out",
     "canceled": "cancelled",
+    "cancelled": "cancelled",
 }
 
 # Guesty statuses to exclude from results.
@@ -748,7 +749,20 @@ class GuestyProvider(PMSProvider):
         if status_raw in _EXCLUDED_STATUSES:
             return None
 
-        status = _STATUS_MAP.get(status_raw, status_raw)
+        status = _STATUS_MAP.get(status_raw)
+        if status is None:
+            # Carry the raw status through rather than guessing: the sync
+            # stores it verbatim, which keeps the reservation "seen" (so the
+            # prune loop does not retire it) while holding it out of the
+            # calendar export.  Returning None here would drop it from the
+            # snapshot and have it cancelled instead.
+            logger.warning(
+                "Unrecognised Guesty reservation status %r for reservation "
+                "%s; booking withheld from calendar export",
+                status_raw,
+                raw.get("_id"),
+            )
+            status = status_raw
 
         pms_booking_id = str(raw.get("_id", ""))
         if not pms_booking_id:
