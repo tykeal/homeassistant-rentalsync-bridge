@@ -4,6 +4,7 @@
 
 import logging
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import update
@@ -44,17 +45,48 @@ KNOWN_BOOKING_STATUSES = frozenset(
 # malformed payload cannot abort a sync with a database error.
 _MAX_STATUS_LENGTH = 50
 
-# Freshness boundary for custom-field enrichment (issue #128).
+# Freshness boundary for provider enrichment (issue #128).
 #
-# Custom fields can feed data the Rental Control integration turns into
-# physical door lock codes, so provider change detection is never trusted
-# for a stay a lock could be acting on.  The lookback matches
-# ``BookingRepository.get_confirmed_for_listing``, which keeps publishing a
-# stay for 7 days after checkout; the lookahead covers the run-up during
-# which a code is plausibly already issued.  Reservations inside this window
-# are re-enriched on every sync regardless of whether they changed.
-CUSTOM_FIELD_FRESH_LOOKBACK_DAYS = 7
-CUSTOM_FIELD_FRESH_LOOKAHEAD_DAYS = 30
+# Both enrichment sources — the custom-fields endpoint and the guest record
+# behind ``guest_phone_last4`` — can feed data the Rental Control
+# integration turns into physical door lock codes, so provider change
+# detection is never trusted for a stay a lock could be acting on.  The
+# lookback matches ``BookingRepository.get_confirmed_for_listing``, which
+# keeps publishing a stay for 7 days after checkout; the lookahead covers
+# the run-up during which a code is plausibly already issued.  Reservations
+# inside this window are re-enriched on every sync regardless of whether
+# they changed.
+ENRICHMENT_FRESH_LOOKBACK_DAYS = 7
+ENRICHMENT_FRESH_LOOKAHEAD_DAYS = 30
+
+# Enrichment keys owned by the guest lookup rather than the custom-fields
+# endpoint.  Provenance matters: a failed fetch may only fall back to the
+# values that same source produced last time.
+GUEST_ENRICHMENT_KEYS = frozenset({"guest_phone", "guest_email", "guest_phone_last4"})
+
+
+@dataclass(frozen=True)
+class _StoredEnrichment:
+    """Enrichment values persisted by the previous sync.
+
+    ``updated_at`` is the provider's reservation "last modified" timestamp
+    as of that sync, or None when it was unknown or a fetch failed — either
+    way the next sync must re-fetch rather than reuse ``data``.
+    """
+
+    updated_at: datetime | None
+    data: dict
+
+
+def _guest_owned(data: dict) -> dict:
+    """Return only the guest-lookup-owned values of an enrichment dict."""
+    return {k: v for k, v in data.items() if k in GUEST_ENRICHMENT_KEYS}
+
+
+def _enrichment_owned(data: dict) -> dict:
+    """Return only the custom-fields-endpoint-owned enrichment values."""
+    return {k: v for k, v in data.items() if k not in GUEST_ENRICHMENT_KEYS}
+
 
 # The all-day vs timed export rules live in CalendarService; reuse them so
 # the prune guard agrees with what the exported calendar actually shows.
@@ -139,15 +171,13 @@ class SyncService:
             )
             self._log_reservation_snapshot(listing, reservations)
 
-            # Resolve guest names for reservations that lack them
-            reservations = await self._resolve_guest_names(provider, reservations)
-
-            # Enrich with provider custom fields (e.g. Guesty v3)
-            reservations = await self._enrich_custom_fields(
+            # Resolve guest details and provider custom fields, reusing
+            # stored values for unchanged out-of-window reservations.
+            reservations, enrichment = await self._enrich_reservations(
                 provider, listing, reservations
             )
 
-            counts = await self._process_reservations(listing, reservations)
+            counts = await self._process_reservations(listing, reservations, enrichment)
 
             # Update sync status on success.  This has to be committed here
             # rather than left pending for the caller: ``_process_reservations``
@@ -227,12 +257,15 @@ class SyncService:
         self,
         listing: Listing,
         reservations: list[PMSReservation],
+        enrichment: dict[str, dict] | None = None,
     ) -> dict[str, int]:
         """Process reservations and update local bookings.
 
         Args:
             listing: Listing being synced.
             reservations: List of PMSReservation DTOs from provider.
+            enrichment: Enrichment-owned values by reservation ID, persisted
+                so the next sync can reuse them without re-fetching.
 
         Returns:
             Dict with counts: inserted, updated, cancelled.
@@ -257,6 +290,7 @@ class SyncService:
 
             booking_data = self._extract_booking_data_from_dto(
                 reservation,
+                (enrichment or {}).get(reservation.pms_booking_id),
             )
 
             if not booking_data["check_in_date"] or not booking_data["check_out_date"]:
@@ -438,6 +472,7 @@ class SyncService:
             "check_out_date": booking_data["check_out_date"],
             "status": booking_data["status"],
             "pms_updated_at": booking_data.get("pms_updated_at"),
+            "enrichment_data": booking_data.get("enrichment_data"),
         }
 
         # If no rooms specified, create booking without room association
@@ -550,6 +585,7 @@ class SyncService:
             status=booking_data["status"],
             custom_data=booking_data["custom_data"],
             pms_updated_at=booking_data.get("pms_updated_at"),
+            enrichment_data=booking_data.get("enrichment_data"),
         )
         _, was_created = await self._booking_repo.upsert(booking)
         return was_created
@@ -751,11 +787,15 @@ class SyncService:
     @staticmethod
     def _extract_booking_data_from_dto(
         reservation: PMSReservation,
+        enrichment_data: dict | None = None,
     ) -> dict:
         """Extract booking data from a PMSReservation DTO.
 
         Args:
             reservation: Normalized reservation DTO from provider.
+            enrichment_data: Enrichment-owned values behind this booking's
+                custom data, stored separately so a later sync can reuse
+                them without resurrecting deleted reservation fields.
 
         Returns:
             Dict with booking fields for database.
@@ -787,6 +827,7 @@ class SyncService:
             "room_ids": list(reservation.room_ids),
             "base_custom_data": base_custom_data,
             "pms_updated_at": reservation.updated_at,
+            "enrichment_data": enrichment_data or None,
         }
 
     @staticmethod
@@ -816,104 +857,25 @@ class SyncService:
         cd = r.custom_data
         return not (cd.get("guest_phone") and cd.get("guest_email"))
 
-    async def _resolve_guest_names(
-        self,
-        provider: PMSProvider,
-        reservations: list[PMSReservation],
-    ) -> list[PMSReservation]:
-        """Enrich reservations with guest details via provider.get_guest().
-
-        Batches unique guest_ids to avoid redundant API calls.
-        Resolves missing guest names and adds ``guest_phone_last4``,
-        ``guest_phone``, and ``guest_email`` to ``custom_data`` when
-        the data is not already present.  Skips the lookup entirely
-        when all contact fields are already populated (avoids
-        expensive cross-property searches on providers like
-        Cloudbeds).
-
-        Args:
-            provider: Active PMS provider instance.
-            reservations: Reservations to enrich.
-
-        Returns:
-            Updated list of PMSReservation DTOs.
-        """
-        # Collect guest_ids that still need enrichment
-        ids_to_resolve: set[str] = set()
-        for r in reservations:
-            if self._needs_guest_enrichment(r):
-                ids_to_resolve.add(r.guest_id)  # type: ignore[arg-type]
-
-        if not ids_to_resolve:
-            return reservations
-
-        # Batch resolve guests
-        guest_cache: dict[str, PMSGuest | None] = {}
-        for gid in ids_to_resolve:
-            try:
-                guest_cache[gid] = await provider.get_guest(gid)
-            except PMSProviderError:
-                logger.warning(
-                    "Failed to resolve guest %s",
-                    gid,
-                    exc_info=True,
-                )
-                guest_cache[gid] = None
-
-        # Rebuild reservations with enriched data
-        updated: list[PMSReservation] = []
-        for r in reservations:
-            resolved = r
-            if r.guest_id is not None:
-                guest = guest_cache.get(r.guest_id)
-                if guest is not None:
-                    phone_last4 = self.extract_phone_last4(
-                        guest.phone,
-                    )
-                    new_custom = dict(r.custom_data)
-                    if phone_last4 and "guest_phone_last4" not in new_custom:
-                        new_custom["guest_phone_last4"] = phone_last4
-                    if guest.phone and "guest_phone" not in new_custom:
-                        new_custom["guest_phone"] = guest.phone
-                    if guest.email and "guest_email" not in new_custom:
-                        new_custom["guest_email"] = guest.email
-                    resolved = PMSReservation(
-                        pms_booking_id=r.pms_booking_id,
-                        listing_pms_id=r.listing_pms_id,
-                        guest_name=r.guest_name or guest.full_name,
-                        guest_id=r.guest_id,
-                        check_in=r.check_in,
-                        check_out=r.check_out,
-                        status=r.status,
-                        room_ids=r.room_ids,
-                        custom_data=new_custom,
-                    )
-            updated.append(resolved)
-        return updated
-
-    async def _enrich_custom_fields(
+    async def _enrich_reservations(
         self,
         provider: PMSProvider,
         listing: Listing,
         reservations: list[PMSReservation],
-    ) -> list[PMSReservation]:
-        """Fetch and merge provider custom fields into reservations.
+    ) -> tuple[list[PMSReservation], dict[str, dict]]:
+        """Enrich reservations with guest details and provider custom fields.
 
-        Only invoked when the provider exposes custom fields via a
-        dedicated endpoint (``has_separate_custom_fields`` is True).
-        Providers that embed custom fields directly in reservation
-        payloads (e.g. Cloudbeds) are skipped entirely.
+        Both enrichment sources cost one API call per reservation per sync,
+        which is what pushes a multi-listing Guesty account through the
+        120 req/min account-wide ceiling (issue #128).  They therefore share
+        one freshness boundary and one reuse decision:
 
-        One API call per reservation per sync is what pushes a multi-listing
-        account through Guesty's 120 req/min ceiling (issue #128), so a
-        reservation is re-fetched only when it can matter:
-
-        * Anything inside the freshness window defined by
-          ``_requires_fresh_custom_fields`` is ALWAYS re-fetched, because
-          its custom fields can feed physical door lock codes.
-        * Everything else is re-fetched only when the provider's own
-          "last modified" timestamp differs from the one stored on the last
-          sync, or when either timestamp is unknown.
+        * Anything inside the window defined by ``_requires_fresh_enrichment``
+          is ALWAYS re-fetched, because both the custom fields and the guest
+          phone last-4 feed physical door lock codes.
+        * Everything else is re-fetched only when the provider's own "last
+          modified" timestamp differs from the one stored on the last sync,
+          or when either timestamp is unknown.
 
         Args:
             provider: Active PMS provider instance.
@@ -921,66 +883,195 @@ class SyncService:
             reservations: Reservations to enrich.
 
         Returns:
-            Updated list of PMSReservation DTOs.
+            Tuple of the enriched reservations and a mapping of reservation
+            ID to the enrichment-owned values that produced them.
         """
-        if not provider.has_separate_custom_fields:
-            return reservations
-
         stored = await self._stored_enrichment_state(listing)
 
+        reusable = {
+            r.pms_booking_id
+            for r in reservations
+            if r.pms_booking_id
+            and self._can_reuse_enrichment(r, listing, stored.get(r.pms_booking_id))
+        }
+
+        guests, failed_guest_ids = await self._resolve_guests(
+            provider,
+            [r for r in reservations if r.pms_booking_id not in reusable],
+        )
+
         enriched: list[PMSReservation] = []
-        skipped = 0
+        payloads: dict[str, dict] = {}
         for r in reservations:
             if not r.pms_booking_id:
                 enriched.append(r)
                 continue
 
-            cached_updated_at, cached_custom_data = stored.get(
-                r.pms_booking_id, (None, None)
-            )
+            cached = stored.get(r.pms_booking_id)
 
-            if self._can_reuse_custom_fields(
-                r, listing, cached_updated_at, cached_custom_data
-            ):
-                skipped += 1
-                enriched.append(self._with_custom_fields(r, cached_custom_data or {}))
+            if r.pms_booking_id in reusable:
+                data = dict(cached.data) if cached else {}
+                payloads[r.pms_booking_id] = data
+                enriched.append(self._with_enrichment(r, data, r.updated_at))
                 continue
 
-            try:
-                extra = await provider.get_custom_fields(
-                    r.pms_booking_id,
-                )
-            except PMSProviderError:
-                # Deliberately not fatal and deliberately not empty: the
-                # reservation itself was fetched successfully, so the
-                # snapshot is complete and pruning stays correct.  Falling
-                # back to the last-good custom data keeps a door code that
-                # is already published from being blanked out by a transient
-                # provider error; an empty dict would silently drop it.
-                logger.warning(
-                    "Failed to fetch custom fields for %s; reusing last known values",
-                    r.pms_booking_id,
-                    exc_info=True,
-                )
-                extra = cached_custom_data or {}
+            guest_data, guest_name, guest_failed = self._guest_enrichment(
+                r, guests, failed_guest_ids, cached
+            )
+            custom_data, custom_failed = await self._custom_field_enrichment(
+                provider, r, cached
+            )
 
-            enriched.append(self._with_custom_fields(r, extra))
+            data = {**custom_data, **guest_data}
+            payloads[r.pms_booking_id] = data
+            # A failed fetch must not persist a comparison timestamp: doing
+            # so would let the next sync treat the fallback values as a
+            # successful read of the current state and skip the retry.
+            updated_at = None if (guest_failed or custom_failed) else r.updated_at
+            enriched.append(
+                self._with_enrichment(r, data, updated_at, guest_name=guest_name)
+            )
 
-        if skipped:
+        if reusable:
             logger.debug(
-                "Skipped custom-field enrichment for %d unchanged "
-                "reservation(s) on listing %s",
-                skipped,
+                "Reused stored enrichment for %d unchanged reservation(s) "
+                "on listing %s",
+                len(reusable),
                 listing.pms_id,
             )
-        return enriched
+        return enriched, payloads
+
+    async def _resolve_guests(
+        self,
+        provider: PMSProvider,
+        reservations: list[PMSReservation],
+    ) -> tuple[dict[str, PMSGuest], set[str]]:
+        """Fetch guest records for reservations that still need them.
+
+        Unique guest IDs are fetched once per sync.  Providers like
+        Cloudbeds charge an expensive cross-property search for this, so
+        reservations that already carry complete contact data are skipped.
+
+        Args:
+            provider: Active PMS provider instance.
+            reservations: Reservations eligible for a guest lookup.
+
+        Returns:
+            Tuple of resolved guests by ID and the set of IDs whose lookup
+            failed (as opposed to legitimately returning no guest).
+        """
+        ids_to_resolve: set[str] = set()
+        for r in reservations:
+            if self._needs_guest_enrichment(r):
+                ids_to_resolve.add(r.guest_id)  # type: ignore[arg-type]
+
+        guests: dict[str, PMSGuest] = {}
+        failed: set[str] = set()
+        for gid in sorted(ids_to_resolve):
+            try:
+                guest = await provider.get_guest(gid)
+            except PMSProviderError:
+                logger.warning(
+                    "Failed to resolve guest %s",
+                    gid,
+                    exc_info=True,
+                )
+                failed.add(gid)
+                continue
+            if guest is not None:
+                guests[gid] = guest
+        return guests, failed
+
+    def _guest_enrichment(
+        self,
+        reservation: PMSReservation,
+        guests: dict[str, PMSGuest],
+        failed_guest_ids: set[str],
+        cached: "_StoredEnrichment | None",
+    ) -> tuple[dict, str | None, bool]:
+        """Build the guest-owned enrichment values for a reservation.
+
+        Args:
+            reservation: Reservation being enriched.
+            guests: Guests resolved during this sync, by guest ID.
+            failed_guest_ids: Guest IDs whose lookup raised.
+            cached: Enrichment state stored by the previous sync.
+
+        Returns:
+            Tuple of ``(guest values, resolved guest name, lookup failed)``.
+        """
+        guest_id = reservation.guest_id
+        if guest_id is None:
+            return {}, reservation.guest_name, False
+
+        if guest_id in failed_guest_ids:
+            # Keep the last-good contact details rather than blanking a
+            # door code on a transient provider error.
+            return (
+                _guest_owned(cached.data if cached else {}),
+                (reservation.guest_name),
+                True,
+            )
+
+        guest = guests.get(guest_id)
+        if guest is None:
+            return {}, reservation.guest_name, False
+
+        data: dict = {}
+        phone_last4 = self.extract_phone_last4(guest.phone)
+        if phone_last4:
+            data["guest_phone_last4"] = phone_last4
+        if guest.phone:
+            data["guest_phone"] = guest.phone
+        if guest.email:
+            data["guest_email"] = guest.email
+        return data, reservation.guest_name or guest.full_name, False
+
+    async def _custom_field_enrichment(
+        self,
+        provider: PMSProvider,
+        reservation: PMSReservation,
+        cached: "_StoredEnrichment | None",
+    ) -> tuple[dict, bool]:
+        """Fetch the custom-field values for a reservation.
+
+        Providers that embed custom fields directly in reservation payloads
+        (e.g. Cloudbeds) have no endpoint to call and are skipped.
+
+        Args:
+            provider: Active PMS provider instance.
+            reservation: Reservation being enriched.
+            cached: Enrichment state stored by the previous sync.
+
+        Returns:
+            Tuple of ``(custom field values, fetch failed)``.
+        """
+        if not provider.has_separate_custom_fields:
+            return {}, False
+
+        try:
+            return await provider.get_custom_fields(reservation.pms_booking_id), False
+        except PMSProviderError:
+            # Deliberately not fatal and deliberately not empty: the
+            # reservation itself was fetched successfully, so the snapshot
+            # is complete and pruning stays correct.  Falling back to the
+            # last-good values keeps an already-published door code from
+            # being blanked out by a transient provider error.
+            logger.warning(
+                "Failed to fetch custom fields for %s; reusing last known values",
+                reservation.pms_booking_id,
+                exc_info=True,
+            )
+            return _enrichment_owned(cached.data if cached else {}), True
 
     @staticmethod
-    def _with_custom_fields(
+    def _with_enrichment(
         reservation: PMSReservation,
-        extra: dict,
+        data: dict,
+        updated_at: datetime | None,
+        guest_name: str | None = None,
     ) -> PMSReservation:
-        """Return *reservation* with *extra* merged under its custom data.
+        """Return *reservation* with *data* merged under its custom data.
 
         Reservation-provided values win, matching the long-standing merge
         order so enrichment can only add keys, never overwrite the
@@ -988,31 +1079,39 @@ class SyncService:
 
         Args:
             reservation: Reservation to enrich.
-            extra: Custom fields to merge beneath the reservation's own.
+            data: Enrichment values to merge beneath the reservation's own.
+            updated_at: Comparison timestamp to carry forward (None when a
+                fetch failed, so the next sync retries).
+            guest_name: Resolved guest name, defaulting to the existing one.
 
         Returns:
-            The original DTO when there is nothing to merge, else a copy.
+            A DTO carrying the enrichment, or the original when unchanged.
         """
-        if not extra:
+        resolved_name = guest_name if guest_name is not None else reservation.guest_name
+        if (
+            not data
+            and resolved_name == reservation.guest_name
+            and updated_at == reservation.updated_at
+        ):
             return reservation
 
         return PMSReservation(
             pms_booking_id=reservation.pms_booking_id,
             listing_pms_id=reservation.listing_pms_id,
-            guest_name=reservation.guest_name,
+            guest_name=resolved_name,
             guest_id=reservation.guest_id,
             check_in=reservation.check_in,
             check_out=reservation.check_out,
             status=reservation.status,
             room_ids=reservation.room_ids,
-            custom_data={**extra, **reservation.custom_data},
-            updated_at=reservation.updated_at,
+            custom_data={**data, **reservation.custom_data},
+            updated_at=updated_at,
         )
 
     async def _stored_enrichment_state(
         self,
         listing: Listing,
-    ) -> dict[str, tuple[datetime | None, dict | None]]:
+    ) -> dict[str, "_StoredEnrichment"]:
         """Load the last-synced enrichment state for a listing.
 
         Keyed by the base reservation ID so multi-room bookings (stored as
@@ -1023,9 +1122,9 @@ class SyncService:
             listing: Listing being synced.
 
         Returns:
-            Mapping of reservation ID to ``(pms_updated_at, custom_data)``.
+            Mapping of reservation ID to its stored enrichment state.
         """
-        state: dict[str, tuple[datetime | None, dict | None]] = {}
+        state: dict[str, _StoredEnrichment] = {}
         for booking in await self._booking_repo.get_for_listing(listing.id):
             reservation_id = self._extract_base_reservation_id(
                 booking.pms_booking_id,
@@ -1034,56 +1133,63 @@ class SyncService:
             if updated_at is not None and updated_at.tzinfo is None:
                 # SQLite returns naive datetimes holding UTC values.
                 updated_at = updated_at.replace(tzinfo=UTC)
-            state.setdefault(reservation_id, (updated_at, booking.custom_data))
+            state.setdefault(
+                reservation_id,
+                _StoredEnrichment(updated_at, dict(booking.enrichment_data or {})),
+            )
         return state
 
     @classmethod
-    def _can_reuse_custom_fields(
+    def _can_reuse_enrichment(
         cls,
         reservation: PMSReservation,
         listing: Listing,
-        cached_updated_at: datetime | None,
-        cached_custom_data: dict | None,
+        cached: "_StoredEnrichment | None",
     ) -> bool:
-        """Decide whether stored custom fields may stand in for a fetch.
+        """Decide whether stored enrichment may stand in for fresh fetches.
 
         Args:
             reservation: Reservation being enriched.
             listing: Listing being synced (supplies the timezone).
-            cached_updated_at: ``pms_updated_at`` stored on the last sync.
-            cached_custom_data: ``custom_data`` stored on the last sync.
+            cached: Enrichment state stored by the previous sync.
 
         Returns:
-            True when the fetch can safely be skipped.
+            True when the fetches can safely be skipped.
         """
-        if not cached_custom_data:
-            # Never synced, or nothing worth reusing.
+        if cached is None or not cached.data:
+            # Never synced, or the last sync stored nothing to reuse.
             return False
-        if reservation.updated_at is None or cached_updated_at is None:
-            # No change-detection signal: behave exactly as before #128.
+        if reservation.updated_at is None or cached.updated_at is None:
+            # No change-detection signal, or the last sync's fetch failed:
+            # behave exactly as before #128 and fetch.
             return False
-        if reservation.updated_at != cached_updated_at:
+        if reservation.updated_at != cached.updated_at:
             return False
-        return not cls._requires_fresh_custom_fields(reservation, listing)
+        if reservation.guest_id is not None and reservation.guest_name is None:
+            # Only a guest lookup can supply the missing name.
+            return False
+        return not cls._requires_fresh_enrichment(reservation, listing)
 
     @staticmethod
-    def _requires_fresh_custom_fields(
+    def _requires_fresh_enrichment(
         reservation: PMSReservation,
         listing: Listing | None = None,
         now: datetime | None = None,
     ) -> bool:
         """Check whether a reservation must be re-enriched unconditionally.
 
-        SAFETY: custom fields are user-configurable and feed data the Rental
-        Control integration uses to issue physical door lock codes.  A
+        SAFETY: both enrichment sources feed data the Rental Control
+        integration uses to issue physical door lock codes — the
+        user-configurable custom fields, and the guest phone last-4.  A
         provider's "last modified" timestamp describes the reservation
-        document; whether editing a custom field bumps it is not guaranteed
-        by Guesty's documentation.  Change detection is therefore never
-        trusted for a stay where stale data could reach a lock: anything
-        in progress, starting within ``CUSTOM_FIELD_FRESH_LOOKAHEAD_DAYS``,
-        or checked out within ``CUSTOM_FIELD_FRESH_LOOKBACK_DAYS`` (the
-        window ``BookingRepository.get_confirmed_for_listing`` still
-        publishes) is always re-fetched.
+        document; whether editing a custom field or a guest record bumps it
+        is not guaranteed by Guesty's documentation.  Change detection is
+        therefore never trusted for a stay where stale data could reach a
+        lock: anything in progress, starting within
+        ``ENRICHMENT_FRESH_LOOKAHEAD_DAYS``, or checked out within
+        ``ENRICHMENT_FRESH_LOOKBACK_DAYS`` (the window
+        ``BookingRepository.get_confirmed_for_listing`` still publishes) is
+        always re-fetched.
 
         Only stays wholly outside that window — long-past history and
         far-future bookings that no lock is acting on yet — can be skipped,
@@ -1096,7 +1202,7 @@ class SyncService:
             now: Optional reference time (defaults to now in UTC).
 
         Returns:
-            True when custom fields must be fetched fresh.
+            True when enrichment must be fetched fresh.
         """
         del listing
         reference = now or datetime.now(UTC)
@@ -1110,6 +1216,6 @@ class SyncService:
         if check_out.tzinfo is None:
             check_out = check_out.replace(tzinfo=UTC)
 
-        lookback = reference - timedelta(days=CUSTOM_FIELD_FRESH_LOOKBACK_DAYS)
-        lookahead = reference + timedelta(days=CUSTOM_FIELD_FRESH_LOOKAHEAD_DAYS)
+        lookback = reference - timedelta(days=ENRICHMENT_FRESH_LOOKBACK_DAYS)
+        lookahead = reference + timedelta(days=ENRICHMENT_FRESH_LOOKAHEAD_DAYS)
         return check_out >= lookback and check_in <= lookahead

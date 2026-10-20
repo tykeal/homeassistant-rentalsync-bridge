@@ -250,6 +250,7 @@ class BookingRepository:
         existing.status = booking.status
         existing.custom_data = booking.custom_data
         existing.pms_updated_at = booking.pms_updated_at
+        existing.enrichment_data = booking.enrichment_data
         existing.last_fetched_at = datetime.now(UTC)
 
         updated = await self.update(existing)
