@@ -22,7 +22,7 @@ from src.providers.base import (
 from src.providers.guesty.auth import GuestyTokenManager
 from src.providers.guesty.service import GuestyProvider
 from src.services.calendar_service import CalendarCache
-from src.services.sync_service import SyncService
+from src.services.sync_service import SyncService, SyncServiceError
 
 from tests.conftest import make_listing, make_room
 
@@ -479,3 +479,133 @@ class TestCrossListingContamination:
             assert all(b.room_id is not None for b in bookings)
 
         assert "not found for booking" not in caplog.text
+
+
+class TestDefaultFieldProjection:
+    """Guesty's default field projection omits ``status`` (issue #121).
+
+    ``GET /v1/reservations`` returns a fixed default projection when the
+    ``fields`` query parameter is omitted, and ``status`` is not part of it.
+    That is what shipped cancelled stays to door locks, and then -- once the
+    "assume confirmed" fallback was removed in v0.5.2 -- emptied calendars.
+    https://open-api-docs.guesty.com/docs/how-to-search-for-reservations
+    """
+
+    @staticmethod
+    def _provider(handler):
+        """Build a Guesty provider wired to *handler*.
+
+        Args:
+            handler: Callable taking an httpx.Request and returning a
+                Response.
+
+        Returns:
+            Configured GuestyProvider with custom fields stubbed out.
+        """
+        token_manager = AsyncMock()
+        token_manager.get_token = AsyncMock(return_value="tok")
+        provider = GuestyProvider(
+            token_manager=token_manager,
+            http_client=httpx.AsyncClient(
+                transport=httpx.MockTransport(handler),
+                base_url="https://open-api.guesty.com",
+            ),
+        )
+        provider.get_custom_fields = AsyncMock(return_value={})
+        provider.get_guest = AsyncMock(return_value=None)
+        return provider
+
+    async def test_default_projection_keeps_last_good_bookings(
+        self, async_session, async_session_factory
+    ):
+        """Test a status-less response leaves stored bookings intact.
+
+        The fetch must abort before SyncService receives a snapshot, so the
+        prune loop never runs and the previously-synced calendar keeps
+        serving.  An empty calendar would stop working door codes.
+        """
+        now = datetime.now(UTC)
+        listing = make_listing(
+            pms_id="proj_prop",
+            name="Projection Property",
+            slug="proj-prop",
+        )
+        async_session.add(listing)
+        await async_session.commit()
+        await async_session.refresh(listing)
+        async_session.add(
+            make_room(
+                listing_id=listing.id,
+                pms_room_id="proj_prop",
+                slug="proj-prop-r",
+            )
+        )
+        await async_session.commit()
+
+        healthy = {
+            "count": 1,
+            "results": [
+                {
+                    "_id": "PROJ-1",
+                    "status": "confirmed",
+                    "guest": {"_id": "g1", "fullName": "Guest"},
+                    "checkIn": (now + timedelta(days=1)).isoformat(),
+                    "checkOut": (now + timedelta(days=4)).isoformat(),
+                    "listingId": "proj_prop",
+                }
+            ],
+        }
+        # Guesty's documented DEFAULT projection: same booking, no status.
+        default_projection = {
+            "count": 1,
+            "results": [
+                {
+                    "_id": "PROJ-1",
+                    "accountId": "acct-1",
+                    "guestId": "g1",
+                    "listingId": "proj_prop",
+                    "listing": {"_id": "proj_prop", "title": "Projection Property"},
+                    "checkIn": (now + timedelta(days=1)).isoformat(),
+                    "checkOut": (now + timedelta(days=4)).isoformat(),
+                    "guest": {"_id": "g1", "fullName": "Guest"},
+                    "confirmationCode": "ABC123",
+                }
+            ],
+        }
+        payload = {"body": healthy}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            """Serve the listing document and the current payload.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            if request.url.path.startswith("/v1/listings/"):
+                return httpx.Response(200, json={"_id": "proj_prop", "title": "X"})
+            return httpx.Response(200, json=payload["body"])
+
+        provider = self._provider(handler)
+        sync = SyncService(
+            async_session,
+            calendar_cache=CalendarCache(ttl_seconds=0),
+            session_factory=async_session_factory,
+        )
+        counts = await sync.sync_listing(listing, provider)
+        assert counts["inserted"] == 1
+
+        payload["body"] = default_projection
+        # SyncService wraps the provider error; the point is that it
+        # propagates as a failure instead of yielding an empty snapshot.
+        with pytest.raises(SyncServiceError, match="default projection"):
+            await sync.sync_listing(listing, provider)
+        await provider.aclose()
+
+        result = await async_session.execute(
+            select(Booking).where(Booking.listing_id == listing.id)
+        )
+        bookings = list(result.scalars().all())
+        assert len(bookings) == 1
+        assert bookings[0].status == "confirmed"

@@ -4,7 +4,9 @@
 
 import json
 import logging
+import re
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -20,6 +22,7 @@ from src.providers.base import (
     PMSReservation,
     PMSRoom,
 )
+from src.providers.guesty import service
 from src.providers.guesty.auth import GuestyTokenManager
 from src.providers.guesty.service import (
     DEFAULT_LOOKBACK_DAYS,
@@ -1946,3 +1949,431 @@ class TestExtractCustomData:
     def test_non_dict_money_ignored(self):
         """Test that non-dict money value is ignored."""
         assert _extract_custom_data({"money": "invalid"}) == {}
+
+
+# ---------------------------------------------------------------------------
+# Field projection and status-classification safety nets (issue #121)
+# ---------------------------------------------------------------------------
+
+
+# Guesty's documented DEFAULT projection for GET /v1/reservations — what the
+# API really returns when ``fields`` is omitted.  Note the absence of
+# ``status``: this fixture is reality, every other fixture in this suite is an
+# idealised payload.
+# https://open-api-docs.guesty.com/docs/how-to-search-for-reservations
+SAMPLE_DEFAULT_PROJECTION_RESERVATION = {
+    "_id": "R-DEFAULT",
+    "accountId": "acct-1",
+    "guestId": "G1",
+    "listingId": "L1",
+    "listing": {"_id": "L1", "title": "Beach House"},
+    "checkIn": _rel(1),
+    "checkOut": _rel(4),
+    "guest": {"_id": "G1", "fullName": "Alice Smith"},
+    "confirmationCode": "ABC123",
+}
+
+
+def _status_reservation(booking_id, status):
+    """Build an in-window reservation carrying *status*.
+
+    Args:
+        booking_id: Reservation ``_id``.
+        status: Raw Guesty status value.
+
+    Returns:
+        Raw reservation dict.
+    """
+    raw = _reservation(booking_id)
+    raw["status"] = status
+    return raw
+
+
+class TestReservationFieldProjection:
+    """The ``fields`` projection sent to GET /v1/reservations."""
+
+    @pytest.mark.asyncio
+    async def test_request_sends_fields_including_status(self):
+        """Test the reservation request asks for ``status`` explicitly.
+
+        Regression guard for the v0.5.2 outage: omitting ``fields`` makes
+        Guesty return its default projection, which has no ``status``.
+        """
+        seen = []
+
+        def handler(request):
+            """Record the query parameters of each reservation request.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            seen.append(dict(request.url.params))
+            return httpx.Response(
+                200, json={"count": 1, "results": [_reservation("R1")]}
+            )
+
+        provider = _mock_provider(handler)
+        await provider.get_reservations("L1")
+        await provider.aclose()
+
+        assert seen, "no reservation request was made"
+        fields = seen[0]["fields"]
+        # Space separated, per the reservationsV2List OpenAPI schema.
+        assert "status" in fields.split(" ")
+
+    def test_projection_covers_every_consumed_path(self):
+        """Test the projection names every path the parser reads.
+
+        Any field we consume but do not request is silently stripped by
+        Guesty once ``fields`` is specified, which is exactly how the
+        outage hid itself.  This fails if a new top-level ``raw.get()`` or
+        a new key tuple is added without updating the constant.
+        """
+        source = Path(service.__file__).read_text(encoding="utf-8")
+        reservation_section = source.split("# -- module-level helpers")[0]
+        consumed = set(re.findall(r'raw\.get\(\s*"([A-Za-z_]+)"', reservation_section))
+        consumed |= set(service._LISTING_REF_KEYS)
+        consumed |= set(service._CUSTOM_KEYS)
+        consumed |= {"money", "notes", "stay", "mtl", "guest", "status"}
+
+        missing = consumed - set(service._RESERVATION_FIELD_PATHS)
+        assert not missing, (
+            f"fields projection is missing consumed path(s): {sorted(missing)}"
+        )
+
+    def test_projection_names_nested_paths_individually(self):
+        """Test nested paths are named, not just their parents.
+
+        Guesty truncates nested objects to ``_id`` once ``fields`` is
+        specified, so ``guest.fullName`` and the room-assignment paths must
+        appear in their own right.
+        """
+        paths = set(service._RESERVATION_FIELD_PATHS)
+        for required in (
+            "guest.fullName",
+            "guest._id",
+            "stay.unitId",
+            "mtl._id",
+            "mtl.assigned",
+            "money.totalPaid",
+        ):
+            assert required in paths
+            # A dotted path must come with its parent object.
+            assert required.split(".")[0] in paths
+
+
+class TestMissingStatusKey:
+    """A payload with no ``status`` key is a systemic projection failure."""
+
+    def test_absent_status_raises(self):
+        """Test an absent ``status`` key raises instead of defaulting."""
+        with pytest.raises(PMSProviderError, match="no 'status' field"):
+            GuestyProvider._map_reservation(
+                SAMPLE_DEFAULT_PROJECTION_RESERVATION,
+                "L1",
+            )
+
+    def test_absent_status_names_the_reservation(self):
+        """Test the error names the offending reservation ID."""
+        with pytest.raises(PMSProviderError, match="R-DEFAULT"):
+            GuestyProvider._map_reservation(
+                SAMPLE_DEFAULT_PROJECTION_RESERVATION,
+                "L1",
+            )
+
+    def test_absent_status_never_defaults_to_confirmed(self):
+        """Test no reservation is silently treated as confirmed.
+
+        Defaulting is fail-open: a cancelled guest would keep a working
+        door code.  A raised error is fail-closed.
+        """
+        try:
+            result = GuestyProvider._map_reservation(
+                SAMPLE_DEFAULT_PROJECTION_RESERVATION,
+                "L1",
+            )
+        except PMSProviderError:
+            return
+        pytest.fail(f"expected PMSProviderError, got {result!r}")
+
+    @pytest.mark.asyncio
+    async def test_default_projection_page_aborts_the_sync(self):
+        """Test a default-projection page aborts rather than empties.
+
+        Aborting means SyncService never gets a snapshot, never prunes, and
+        the last-good bookings keep serving.
+        """
+
+        def handler(request):
+            """Serve one Guesty default-projection page.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            return httpx.Response(
+                200,
+                json={
+                    "count": 1,
+                    "results": [SAMPLE_DEFAULT_PROJECTION_RESERVATION],
+                },
+            )
+
+        provider = _mock_provider(handler)
+        with pytest.raises(PMSProviderError, match="default projection"):
+            await provider.get_reservations("L1")
+        await provider.aclose()
+
+    def test_present_but_unrecognised_is_withheld_not_raised(self):
+        """Test an unrecognised value keeps the v0.5.2 withhold behaviour."""
+        result = GuestyProvider._map_reservation(
+            _status_reservation("R-ODD", "awaiting_payment"),
+            "L1",
+        )
+
+        assert result is not None
+        assert result.status == "awaiting_payment"
+
+    def test_null_status_value_is_withheld_not_raised(self):
+        """Test ``status: null`` is a present-but-unusable value."""
+        result = GuestyProvider._map_reservation(
+            _status_reservation("R-NULL", None),
+            "L1",
+        )
+
+        assert result is not None
+        assert result.status == ""
+
+
+class TestUnclassifiedSystemicGuard:
+    """Mass-unclassified snapshots are refused rather than exported."""
+
+    @staticmethod
+    def _serve(reservations):
+        """Build a provider serving *reservations* as one page.
+
+        Args:
+            reservations: Raw reservation dicts.
+
+        Returns:
+            Configured GuestyProvider.
+        """
+
+        def handler(request):
+            """Serve the canned reservation page.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            return httpx.Response(
+                200,
+                json={"count": len(reservations), "results": reservations},
+            )
+
+        return _mock_provider(handler)
+
+    @pytest.mark.asyncio
+    async def test_majority_unclassified_raises(self):
+        """Test a mostly-unrecognised snapshot is refused."""
+        reservations = [_status_reservation(f"R{i}", "mystery") for i in range(4)]
+        provider = self._serve(reservations)
+
+        with pytest.raises(PMSProviderError, match="status-mapping failure"):
+            await provider.get_reservations("L1")
+        await provider.aclose()
+
+    @pytest.mark.asyncio
+    async def test_small_account_does_not_trip_the_guard(self):
+        """Test a 3-reservation account is never judged systemic.
+
+        A tiny account can legitimately be 100% odd statuses, so the guard
+        needs a minimum sample before a ratio means anything.
+        """
+        reservations = [_status_reservation(f"R{i}", "mystery") for i in range(3)]
+        provider = self._serve(reservations)
+
+        result = await provider.get_reservations("L1")
+        await provider.aclose()
+
+        assert len(result) == 3
+        assert {r.status for r in result} == {"mystery"}
+
+    @pytest.mark.asyncio
+    async def test_minority_unclassified_is_tolerated(self):
+        """Test a few odd statuses in a healthy account still sync."""
+        reservations = [_status_reservation(f"R{i}", "confirmed") for i in range(8)]
+        reservations.append(_status_reservation("R-ODD", "mystery"))
+        provider = self._serve(reservations)
+
+        result = await provider.get_reservations("L1")
+        await provider.aclose()
+
+        assert len(result) == 9
+
+    @pytest.mark.asyncio
+    async def test_guard_counts_across_pages(self):
+        """Test the guard sees the whole snapshot, not a single page."""
+        pages = [
+            [_status_reservation(f"A{i}", "mystery") for i in range(100)],
+            [_status_reservation("B0", "confirmed")],
+        ]
+
+        def handler(request):
+            """Serve two reservation pages.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            skip = int(request.url.params["skip"])
+            page = pages[0] if skip == 0 else pages[1]
+            return httpx.Response(200, json={"count": 101, "results": page})
+
+        provider = _mock_provider(handler)
+        with pytest.raises(PMSProviderError, match="status-mapping failure"):
+            await provider.get_reservations("L1")
+        await provider.aclose()
+
+
+def _out_of_window_reservation(booking_id, status):
+    """Build a long-past reservation carrying *status*.
+
+    ``get_reservations`` sends no stay-date filter, so Guesty returns the
+    listing's entire history and these records are filtered client-side.
+
+    Args:
+        booking_id: Reservation ``_id``.
+        status: Raw Guesty status value.
+
+    Returns:
+        Raw reservation dict outside the default stay window.
+    """
+    raw = _status_reservation(booking_id, status)
+    raw["checkIn"] = _rel(-900)
+    raw["checkOut"] = _rel(-897)
+    return raw
+
+
+class TestRecognisedNonExportStatuses:
+    """Documented non-stay states are withheld, not treated as failures."""
+
+    @pytest.mark.asyncio
+    async def test_mixed_real_world_statuses_do_not_abort(self):
+        """Test a realistic declined/expired/closed mix still syncs.
+
+        A normal account accumulates these, so counting them as evidence of
+        a broken status mapping would abort every sync permanently and the
+        cancellation below would never reach SyncService.
+        """
+        reservations = [
+            _status_reservation("R-DECLINED", "declined"),
+            _status_reservation("R-EXPIRED", "expired"),
+            _status_reservation("R-CLOSED", "closed"),
+            _status_reservation("R-CANCELED", "canceled"),
+        ]
+        provider = TestUnclassifiedSystemicGuard._serve(reservations)
+
+        result = await provider.get_reservations("L1")
+        await provider.aclose()
+
+        statuses = {r.pms_booking_id: r.status for r in result}
+        assert statuses["R-CANCELED"] == "cancelled"
+        assert len(result) == 4
+
+    @pytest.mark.parametrize(
+        "status",
+        ["expired", "closed", "declined", "awaiting_payment"],
+    )
+    def test_non_stay_state_is_withheld_verbatim(self, status):
+        """Test the DTO survives carrying its raw status.
+
+        Returning None would drop the record from the snapshot and the sync
+        prune loop would retire it as cancelled; policy is withhold, not
+        retire.
+
+        Args:
+            status: Raw Guesty status value.
+        """
+        result = GuestyProvider._map_reservation(
+            _status_reservation(f"R-{status}", status),
+            "L1",
+        )
+
+        assert result is not None
+        assert result.status == status
+
+    def test_non_stay_state_does_not_warn(self, caplog):
+        """Test an expected non-stay state logs at DEBUG, not WARNING."""
+        with caplog.at_level(logging.DEBUG):
+            GuestyProvider._map_reservation(
+                _status_reservation("R-DECLINED", "declined"),
+                "L1",
+            )
+
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert any("known non-stay state" in r.message for r in caplog.records)
+
+    def test_genuinely_unknown_status_still_warns(self, caplog):
+        """Test real drift keeps its WARNING signal."""
+        with caplog.at_level(logging.DEBUG):
+            GuestyProvider._map_reservation(
+                _status_reservation("R-ODD", "zzz_unknown"),
+                "L1",
+            )
+
+        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert warnings
+        assert "per-booking issue" in warnings[0].message
+
+
+class TestGuardCountsOnlyInWindow:
+    """The guard judges the returned snapshot, not the whole history."""
+
+    @pytest.mark.asyncio
+    async def test_out_of_window_unknowns_do_not_trip_the_guard(self):
+        """Test ancient odd records cannot abort a healthy current sync.
+
+        Counting history would let four stale unknowns plus one current
+        cancellation abort the sync, stranding a revoked booking in the
+        exported calendar.
+        """
+        reservations = [
+            _out_of_window_reservation(f"OLD{i}", "zzz_unknown") for i in range(4)
+        ]
+        reservations.append(_status_reservation("R-CANCELED", "canceled"))
+        provider = TestUnclassifiedSystemicGuard._serve(reservations)
+
+        result = await provider.get_reservations("L1")
+        await provider.aclose()
+
+        assert [r.pms_booking_id for r in result] == ["R-CANCELED"]
+        assert result[0].status == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_historical_confirmed_cannot_mask_a_broken_window(self):
+        """Test a pile of old confirmed records does not defang the guard.
+
+        The current window is entirely unknown here, which is exactly the
+        mapping failure the guard exists to catch.
+        """
+        reservations = [
+            _out_of_window_reservation(f"OLD{i}", "confirmed") for i in range(50)
+        ]
+        reservations += [
+            _status_reservation(f"NEW{i}", "zzz_unknown") for i in range(4)
+        ]
+        provider = TestUnclassifiedSystemicGuard._serve(reservations)
+
+        with pytest.raises(PMSProviderError, match="status-mapping failure"):
+            await provider.get_reservations("L1")
+        await provider.aclose()
