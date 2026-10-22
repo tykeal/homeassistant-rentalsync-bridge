@@ -14,7 +14,7 @@ from src.repositories.available_field_repository import (
     AvailableFieldRepository,
     format_allowed_fields_message,
 )
-from src.utils.field_labels import camel_to_display, legacy_display_name
+from src.utils.field_labels import fallback_label, is_legacy_derived_label
 
 
 class CustomFieldRepository:
@@ -173,29 +173,31 @@ class CustomFieldRepository:
         pre-fix code would have generated from the field key (e.g. the
         mangled ``6 A 5 A 9 F 38050 Dfd 00134 Fe 27 E`` produced from a
         Guesty ObjectId — issue #127) demonstrably came from the UI's
-        prefill rather than from a person, so it is safe to refresh it
-        with the provider's real name.
+        prefill rather than from a person, so it is safe to refresh it.
+
+        This runs even when no definitions could be fetched, and for keys
+        missing from a partial mapping: ``CalendarService`` exports the
+        stored label, so an install that upgraded with the mangled text
+        already persisted would otherwise keep publishing it forever
+        whenever the account's definitions are unreachable (e.g. HTTP
+        403).  Those labels fall back to the raw field identifier.
 
         Args:
             listing_id: Listing whose configured fields to inspect.
-            field_labels: Provider-supplied labels by field key.
+            field_labels: Provider-supplied labels by field key; may be
+                empty or cover only some of the listing's fields.
 
         Returns:
             Number of labels repaired.
         """
-        if not field_labels:
-            return 0
-
         repaired = 0
         for field in await self.get_for_listing(listing_id):
-            label = field_labels.get(field.field_name)
+            label = field_labels.get(field.field_name) or fallback_label(
+                field.field_name
+            )
             if not label or label == field.display_label:
                 continue
-            derived = {
-                legacy_display_name(field.field_name),
-                camel_to_display(field.field_name),
-            }
-            if field.display_label in derived:
+            if is_legacy_derived_label(field.field_name, field.display_label):
                 field.display_label = label[:255]
                 repaired += 1
 

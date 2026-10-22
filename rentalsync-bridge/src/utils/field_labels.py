@@ -66,6 +66,42 @@ def legacy_display_name(name: str) -> str:
     return " ".join(spaced.split()).title()
 
 
+def is_legacy_derived_label(field_key: str, label: str) -> bool:
+    """Check whether a stored label was auto-generated, not user-written.
+
+    A label that is character-for-character what this module would
+    generate from the field key — under either the current rules or the
+    pre-issue-#127 rules that mangled ObjectIds — came from the admin
+    UI's prefill rather than from a person, so it is safe to replace.
+    Anything else is a user's own wording and must be preserved.
+
+    Args:
+        field_key: Key the label belongs to.
+        label: Label currently stored.
+
+    Returns:
+        True if the label is auto-generated and therefore repairable.
+    """
+    return label in {legacy_display_name(field_key), camel_to_display(field_key)}
+
+
+def fallback_label(field_key: str) -> str | None:
+    """Return the best label for a key with no provider definition.
+
+    An ObjectId key has no readable form at all, so the raw identifier
+    is the honest answer: ugly, but better than the mangled text the old
+    rules produced.  Any other key already humanises sensibly and needs
+    no fallback.
+
+    Args:
+        field_key: Key whose definition could not be resolved.
+
+    Returns:
+        Replacement label, or None when no repair is warranted.
+    """
+    return field_key if is_object_id(field_key) else None
+
+
 def humanize_label(value: str) -> str:
     """Normalise a provider-supplied label for display.
 

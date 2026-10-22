@@ -331,10 +331,13 @@ class SyncService:
             await self._available_field_repo.discover_fields_from_reservations(
                 listing.id, raw_dicts, field_labels=field_labels
             )
-        if field_labels:
-            await self._custom_field_repo.repair_derived_labels(
-                listing.id, field_labels
-            )
+        # Runs even with no definitions: a stored label that is still the
+        # old mangled ObjectId text is exported verbatim by
+        # CalendarService, so it must be repaired to the raw identifier
+        # rather than left to publish noise (issue #127).
+        await self._custom_field_repo.repair_derived_labels(
+            listing.id, field_labels or {}
+        )
 
     async def _process_reservations(
         self,

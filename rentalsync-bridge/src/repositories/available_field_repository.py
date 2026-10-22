@@ -10,7 +10,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.available_field import AvailableField
-from src.utils.field_labels import camel_to_display
+from src.utils.field_labels import (
+    camel_to_display,
+    fallback_label,
+    is_legacy_derived_label,
+)
 
 # Fields to exclude from discovery (internal/system fields)
 # Precompiled for performance in tight loops during sync/discovery
@@ -256,9 +260,9 @@ class AvailableFieldRepository:
             field: Existing field row to update in place.
             field_labels: Provider-supplied labels by field key.
         """
-        if not field_labels:
-            return
-        label = field_labels.get(field.field_key)
+        label = field_labels.get(field.field_key) if field_labels else None
+        if not label and is_legacy_derived_label(field.field_key, field.display_name):
+            label = fallback_label(field.field_key)
         if label and label != field.display_name:
             field.display_name = label
 

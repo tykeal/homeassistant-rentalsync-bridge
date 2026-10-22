@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from src.database import Base
+from src.models.available_field import AvailableField
 from src.models.booking import OLD_BOOKING_RETENTION_DAYS, Booking
 from src.models.custom_field import CustomField
 from src.models.listing import Listing
@@ -3748,3 +3749,143 @@ class TestCustomFieldLabels:
         await service.sync_listing(listing, mock_provider)
 
         assert mock_provider.get_custom_field_definitions.await_count == 1
+
+    @staticmethod
+    async def _add_custom_field(session, listing_id: int, name: str, label: str):
+        """Persist a configured custom field.
+
+        Args:
+            session: Database session.
+            listing_id: Owning listing ID.
+            name: Field name (the raw provider key).
+            label: Stored, user-owned display label.
+
+        Returns:
+            None.
+        """
+        session.add(
+            CustomField(
+                listing_id=listing_id,
+                field_name=name,
+                display_label=label,
+                enabled=True,
+            )
+        )
+        await session.commit()
+
+    @pytest.mark.asyncio
+    async def test_mangled_label_is_repaired_without_definitions(
+        self, sync_session, mock_provider
+    ):
+        """Test a 403 still rescues an upgraded install from issue #127.
+
+        CalendarService renders the stored label, so leaving it alone
+        when definitions are unavailable would export the mangled text
+        forever.  A raw ObjectId is ugly but honest.
+        """
+        listing = await self._listing(sync_session)
+        await self._add_custom_field(
+            sync_session, listing.id, self.OBJECT_ID, self.MANGLED
+        )
+        mock_provider.get_reservations = AsyncMock(return_value=self._reservations())
+        mock_provider.get_custom_field_definitions = AsyncMock(
+            side_effect=PMSProviderError("HTTP 403: forbidden")
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        repo = CustomFieldRepository(sync_session)
+        field = await repo.get_by_field_name(listing.id, self.OBJECT_ID)
+        assert field.display_label == self.OBJECT_ID
+
+    @pytest.mark.asyncio
+    async def test_mangled_label_is_repaired_when_definition_is_missing(
+        self, sync_session, mock_provider
+    ):
+        """Test a field absent from a populated mapping is repaired too."""
+        other_id = "70f1c2d3e4a5b60718293a4b"
+        listing = await self._listing(sync_session)
+        await self._add_custom_field(
+            sync_session, listing.id, self.OBJECT_ID, self.MANGLED
+        )
+        mock_provider.get_reservations = AsyncMock(return_value=self._reservations())
+        mock_provider.get_custom_field_definitions = AsyncMock(
+            return_value={other_id: "Some other field"}
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        repo = CustomFieldRepository(sync_session)
+        field = await repo.get_by_field_name(listing.id, self.OBJECT_ID)
+        assert field.display_label == self.OBJECT_ID
+
+    @pytest.mark.asyncio
+    async def test_mangled_discovered_name_is_repaired_without_label(
+        self, sync_session, mock_provider
+    ):
+        """Test a previously mangled discovered name is repaired too."""
+        listing = await self._listing(sync_session)
+        sync_session.add(
+            AvailableField(
+                listing_id=listing.id,
+                field_key=self.OBJECT_ID,
+                display_name=self.MANGLED,
+                sample_value="8160",
+            )
+        )
+        await sync_session.commit()
+        mock_provider.get_reservations = AsyncMock(return_value=self._reservations())
+        mock_provider.get_custom_field_definitions = AsyncMock(return_value={})
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        discovered = await self._available_field(
+            sync_session, listing.id, self.OBJECT_ID
+        )
+        assert discovered.display_name == self.OBJECT_ID
+
+    @pytest.mark.asyncio
+    async def test_user_label_survives_missing_definitions(
+        self, sync_session, mock_provider
+    ):
+        """Test the raw-ID fallback never touches an edited label."""
+        listing = await self._listing(sync_session)
+        await self._add_custom_field(
+            sync_session, listing.id, self.OBJECT_ID, "Door Code"
+        )
+        mock_provider.get_reservations = AsyncMock(return_value=self._reservations())
+        mock_provider.get_custom_field_definitions = AsyncMock(return_value={})
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        repo = CustomFieldRepository(sync_session)
+        field = await repo.get_by_field_name(listing.id, self.OBJECT_ID)
+        assert field.display_label == "Door Code"
+
+    @pytest.mark.asyncio
+    async def test_repaired_label_upgrades_once_definitions_return(
+        self, sync_session, mock_provider
+    ):
+        """Test the raw-ID repair is not a dead end for later syncs."""
+        listing = await self._listing(sync_session)
+        await self._add_custom_field(
+            sync_session, listing.id, self.OBJECT_ID, self.MANGLED
+        )
+        mock_provider.get_reservations = AsyncMock(return_value=self._reservations())
+        mock_provider.get_custom_field_definitions = AsyncMock(return_value={})
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        mock_provider.get_custom_field_definitions = AsyncMock(
+            return_value={self.OBJECT_ID: self.LABEL}
+        )
+        await service.sync_listing(listing, mock_provider)
+
+        repo = CustomFieldRepository(sync_session)
+        field = await repo.get_by_field_name(listing.id, self.OBJECT_ID)
+        assert field.display_label == self.LABEL

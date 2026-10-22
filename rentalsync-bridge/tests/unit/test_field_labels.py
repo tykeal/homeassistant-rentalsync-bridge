@@ -6,7 +6,9 @@ import pytest
 from src.repositories.available_field_repository import _camel_to_display
 from src.utils.field_labels import (
     camel_to_display,
+    fallback_label,
     humanize_label,
+    is_legacy_derived_label,
     is_object_id,
     legacy_display_name,
 )
@@ -83,3 +85,32 @@ class TestHumanizeLabel:
     def test_surrounding_whitespace_is_trimmed(self):
         """Test padding does not turn a slug into prose."""
         assert humanize_label("  test_door_lock_code  ") == "Test Door Lock Code"
+
+
+class TestLegacyLabelDetection:
+    """Only auto-generated labels may be replaced."""
+
+    def test_legacy_mangled_label_is_recognised(self):
+        """Test the pre-fix ObjectId mangling counts as auto-generated."""
+        assert is_legacy_derived_label(OBJECT_ID, MANGLED) is True
+
+    def test_current_derived_label_is_recognised(self):
+        """Test a label matching today's rules is still repairable."""
+        assert is_legacy_derived_label(OBJECT_ID, OBJECT_ID) is True
+        assert is_legacy_derived_label("door_code", "Door Code") is True
+
+    def test_user_written_label_is_not_recognised(self):
+        """Test a label a person chose is never treated as derived."""
+        assert is_legacy_derived_label(OBJECT_ID, "Door Code") is False
+
+
+class TestFallbackLabel:
+    """Without a definition, an ObjectId is shown raw rather than mangled."""
+
+    def test_object_id_falls_back_to_the_raw_identifier(self):
+        """Test the honest-but-ugly fallback is the raw key."""
+        assert fallback_label(OBJECT_ID) == OBJECT_ID
+
+    def test_readable_keys_need_no_fallback(self):
+        """Test ordinary keys humanise fine and are left alone."""
+        assert fallback_label("door_code") is None
