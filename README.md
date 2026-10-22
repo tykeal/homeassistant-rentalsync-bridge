@@ -37,7 +37,9 @@ backends in the future.
 - **Home Assistant add-on** with Ingress authentication and sidebar integration
 - **Automatic background sync** with configurable intervals (1–60 minutes)
 - **Custom field discovery** — automatically detects available fields from
-  synced data (guest email, phone, notes, financial data, etc.)
+  synced data (guest email, phone, notes, financial data, etc.); Guesty
+  fields are named from the account's custom-field definitions, falling
+  back to the raw field identifier when those are unavailable
 - **Guest data enrichment** — resolves guest details (name, phone, email) from
   separate API endpoints when needed
 - **Privacy-focused** — only phone last 4 digits stored on bookings by default;
