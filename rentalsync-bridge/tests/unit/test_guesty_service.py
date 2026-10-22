@@ -33,6 +33,7 @@ from src.providers.guesty.service import (
     _format_address,
     _parse_date,
     _parse_retry_after,
+    clear_custom_field_definitions_cache,
 )
 
 # ---------------------------------------------------------------------------
@@ -2428,3 +2429,630 @@ class TestGuardCountsOnlyInWindow:
         with pytest.raises(PMSProviderError, match="status-mapping failure"):
             await provider.get_reservations("L1")
         await provider.aclose()
+
+
+# ---------------------------------------------------------------------------
+# Custom field definitions (issue #127)
+# ---------------------------------------------------------------------------
+
+
+def _definitions_provider(
+    handler,
+    *,
+    credential_id: int = 1,
+    client_id: str = "client-a",
+    token_manager=None,
+):
+    """Build a GuestyProvider serving the account custom-fields endpoint.
+
+    Uses a real ``GuestyTokenManager`` with a pre-seeded token cache, so
+    the account identity behind the definitions cache is the production
+    one rather than a stub, and no token request is made.
+
+    Args:
+        handler: Callable taking an httpx.Request and returning a Response.
+        credential_id: Credential row ID backing the token manager.
+        client_id: Guesty OAuth client ID currently configured.
+        token_manager: Optional pre-built token manager to use instead.
+
+    Returns:
+        Configured GuestyProvider.
+    """
+    if token_manager is None:
+        token_manager = GuestyTokenManager(
+            client_id=client_id,
+            client_secret="secret",
+            credential_repo=AsyncMock(),
+            credential_id=credential_id,
+        )
+        token_manager._cached_token = "tok"
+        token_manager._cached_expires_at = datetime.now(UTC) + timedelta(hours=1)
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url=GUESTY_BASE_URL,
+    )
+    return GuestyProvider(token_manager=token_manager, http_client=client)
+
+
+SAMPLE_DEFINITIONS = [
+    {
+        "fieldId": "6a5a9f38050dfd00134fe27e",
+        "key": "test_door_lock_code",
+        "displayName": "Test door lock code",
+        "object": "reservation",
+        "type": "number",
+    },
+    {
+        "fieldId": "6a5a9f38050dfd00134fe27f",
+        "key": "listing_wifi_password",
+        "displayName": "Wifi password",
+        "object": "listing",
+        "type": "string",
+    },
+]
+
+
+class TestCustomFieldDefinitions:
+    """Tests for GuestyProvider.get_custom_field_definitions."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        """Isolate the process-wide definitions cache between tests."""
+        clear_custom_field_definitions_cache()
+        yield
+        clear_custom_field_definitions_cache()
+
+    @pytest.mark.asyncio
+    async def test_display_name_wins_and_is_verbatim(self):
+        """Test the human-readable displayName is used unchanged."""
+
+        def handler(request):
+            """Serve the account definitions.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            assert request.url.path == "/v1/accounts/me/custom-fields"
+            assert not request.url.params
+            return httpx.Response(200, json=SAMPLE_DEFINITIONS)
+
+        provider = _definitions_provider(handler)
+        labels = await provider.get_custom_field_definitions()
+        await provider.aclose()
+
+        assert labels["6a5a9f38050dfd00134fe27e"] == "Test door lock code"
+
+    @pytest.mark.asyncio
+    async def test_listing_definitions_are_filtered_out(self):
+        """Test only ``object == "reservation"`` definitions are kept."""
+
+        def handler(request):
+            """Serve the account definitions.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            return httpx.Response(200, json=SAMPLE_DEFINITIONS)
+
+        provider = _definitions_provider(handler)
+        labels = await provider.get_custom_field_definitions()
+        await provider.aclose()
+
+        assert list(labels) == ["6a5a9f38050dfd00134fe27e"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("display_name", [None, "", "   "])
+    async def test_key_is_used_when_display_name_is_absent(self, display_name):
+        """Test a missing displayName falls back to the slug ``key``."""
+        definition = {
+            "fieldId": "6a5a9f38050dfd00134fe27e",
+            "key": "test_door_lock_code",
+            "object": "reservation",
+        }
+        if display_name is not None:
+            definition["displayName"] = display_name
+
+        def handler(request):
+            """Serve a definition lacking a usable displayName.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            return httpx.Response(200, json=[definition])
+
+        provider = _definitions_provider(handler)
+        labels = await provider.get_custom_field_definitions()
+        await provider.aclose()
+
+        assert labels == {"6a5a9f38050dfd00134fe27e": "Test Door Lock Code"}
+
+    @pytest.mark.asyncio
+    async def test_definitions_are_cached_across_calls(self):
+        """Test repeated syncs do not re-request the definitions."""
+        calls = []
+
+        def handler(request):
+            """Count every definitions request.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            calls.append(request.url.path)
+            return httpx.Response(200, json=SAMPLE_DEFINITIONS)
+
+        provider = _definitions_provider(handler)
+        for _ in range(3):
+            labels = await provider.get_custom_field_definitions()
+            assert labels["6a5a9f38050dfd00134fe27e"] == "Test door lock code"
+        await provider.aclose()
+
+        assert len(calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_cache_is_shared_by_a_new_provider_instance(self):
+        """Test a provider rebuilt for the next sync reuses the cache.
+
+        Providers are constructed per sync run, so an instance-local
+        cache would still cost one call per sync.
+        """
+        calls = []
+
+        def handler(request):
+            """Count every definitions request.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            calls.append(request.url.path)
+            return httpx.Response(200, json=SAMPLE_DEFINITIONS)
+
+        for _ in range(3):
+            provider = _definitions_provider(handler)
+            await provider.get_custom_field_definitions()
+            await provider.aclose()
+
+        assert len(calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_expired_cache_is_refetched(self):
+        """Test definitions are re-requested once the TTL lapses."""
+        calls = []
+
+        def handler(request):
+            """Count every definitions request.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            calls.append(request.url.path)
+            return httpx.Response(200, json=SAMPLE_DEFINITIONS)
+
+        provider = _definitions_provider(handler)
+        await provider.get_custom_field_definitions()
+        key, (_, labels) = next(iter(service._definitions_cache.items()))
+        service._definitions_cache[key] = (
+            datetime.now(UTC) - timedelta(seconds=1),
+            labels,
+        )
+        await provider.get_custom_field_definitions()
+        await provider.aclose()
+
+        assert len(calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_forbidden_degrades_without_raising(self, caplog):
+        """Test a 403 (no custom-field permission) never breaks a sync."""
+
+        def handler(request):
+            """Deny access to the definitions endpoint.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            return httpx.Response(403, json={"error": "forbidden"})
+
+        provider = _definitions_provider(handler)
+        with caplog.at_level(logging.WARNING):
+            labels = await provider.get_custom_field_definitions()
+        await provider.aclose()
+
+        assert labels == {}
+        assert "custom-field names" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_failure_is_cached_so_it_is_not_retried_every_sync(self):
+        """Test a denied lookup does not re-request on the next sync."""
+        calls = []
+
+        def handler(request):
+            """Deny access and count the attempt.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            calls.append(request.url.path)
+            return httpx.Response(403, json={"error": "forbidden"})
+
+        for _ in range(3):
+            provider = _definitions_provider(handler)
+            assert await provider.get_custom_field_definitions() == {}
+            await provider.aclose()
+
+        assert len(calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_server_error_degrades_without_raising(self):
+        """Test a generic API failure yields an empty mapping."""
+
+        def handler(request):
+            """Fail the definitions request.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            return httpx.Response(500, text="boom")
+
+        provider = _definitions_provider(handler)
+        labels = await provider.get_custom_field_definitions()
+        await provider.aclose()
+
+        assert labels == {}
+
+    @pytest.mark.asyncio
+    async def test_malformed_payload_degrades_without_raising(self, caplog):
+        """Test a non-list body is rejected rather than exploding."""
+
+        def handler(request):
+            """Serve a body of an unexpected shape.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            return httpx.Response(200, json={"unexpected": "shape"})
+
+        provider = _definitions_provider(handler)
+        with caplog.at_level(logging.WARNING):
+            labels = await provider.get_custom_field_definitions()
+        await provider.aclose()
+
+        assert labels == {}
+        assert "custom-field" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_invalid_json_degrades_without_raising(self):
+        """Test an undecodable body is tolerated."""
+
+        def handler(request):
+            """Serve a body that is not JSON.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked response.
+            """
+            return httpx.Response(200, text="<html>nope</html>")
+
+        provider = _definitions_provider(handler)
+        labels = await provider.get_custom_field_definitions()
+        await provider.aclose()
+
+        assert labels == {}
+
+    @pytest.mark.asyncio
+    async def test_entries_missing_required_values_are_skipped(self):
+        """Test unusable definitions do not poison the mapping."""
+        payload = [
+            "not-a-dict",
+            {"key": "no_field_id", "object": "reservation"},
+            {"fieldId": "", "key": "blank_id", "object": "reservation"},
+            {"fieldId": "abc", "object": "reservation"},
+            {"fieldId": "def", "displayName": 7, "object": "reservation"},
+            {"fieldId": "ghi", "key": "kept_field", "object": "reservation"},
+        ]
+
+        def handler(request):
+            """Serve a mixed-quality definitions list.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            return httpx.Response(200, json=payload)
+
+        provider = _definitions_provider(handler)
+        labels = await provider.get_custom_field_definitions()
+        await provider.aclose()
+
+        assert labels == {"ghi": "Kept Field"}
+
+    @pytest.mark.asyncio
+    async def test_wrapped_results_payload_is_accepted(self):
+        """Test a ``results``-wrapped body is unwrapped."""
+
+        def handler(request):
+            """Serve definitions wrapped in a results envelope.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            return httpx.Response(200, json={"results": SAMPLE_DEFINITIONS})
+
+        provider = _definitions_provider(handler)
+        labels = await provider.get_custom_field_definitions()
+        await provider.aclose()
+
+        assert labels == {"6a5a9f38050dfd00134fe27e": "Test door lock code"}
+
+    @pytest.mark.asyncio
+    async def test_cache_is_scoped_per_credential(self):
+        """Test two Guesty accounts do not share one definition set."""
+        calls = []
+
+        def handler(request):
+            """Count every definitions request.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            calls.append(request.url.path)
+            return httpx.Response(200, json=SAMPLE_DEFINITIONS)
+
+        for credential_id in (1, 2):
+            provider = _definitions_provider(handler, credential_id=credential_id)
+            await provider.get_custom_field_definitions()
+            await provider.aclose()
+
+        assert len(calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_repointing_the_client_id_invalidates_the_cache(self):
+        """Test switching Guesty accounts does not reuse stale labels.
+
+        ``configure_oauth`` overwrites client_id/client_secret on the
+        existing credential row, so the row ID is stable across an
+        account switch and cannot scope the cache on its own.
+        """
+        responses = [
+            [
+                {
+                    "fieldId": "ACCOUNT_A_FIELD",
+                    "displayName": "Account A field",
+                    "object": "reservation",
+                }
+            ],
+            [
+                {
+                    "fieldId": "ACCOUNT_B_FIELD",
+                    "displayName": "Account B field",
+                    "object": "reservation",
+                }
+            ],
+        ]
+        calls = []
+
+        def handler(request):
+            """Serve the next account's definitions.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            return httpx.Response(200, json=responses[len(calls) - 1])
+
+        def counting_handler(request):
+            """Count the request, then serve it.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            calls.append(request.url.path)
+            return handler(request)
+
+        first = _definitions_provider(
+            counting_handler, credential_id=7, client_id="client-a"
+        )
+        assert await first.get_custom_field_definitions() == {
+            "ACCOUNT_A_FIELD": "Account A field"
+        }
+        await first.aclose()
+
+        # Same credential row, new Guesty client credentials.
+        second = _definitions_provider(
+            counting_handler, credential_id=7, client_id="client-b"
+        )
+        labels = await second.get_custom_field_definitions()
+        await second.aclose()
+
+        assert labels == {"ACCOUNT_B_FIELD": "Account B field"}
+        assert len(calls) == 2
+
+    def test_account_key_hides_the_client_credentials(self):
+        """Test the cache key never carries the client ID or secret."""
+        manager = GuestyTokenManager(
+            client_id="super-secret-client",
+            client_secret="super-secret-value",
+            credential_repo=AsyncMock(),
+            credential_id=7,
+        )
+
+        account_key = manager.account_key
+
+        assert "super-secret-client" not in account_key
+        assert "super-secret-value" not in account_key
+        assert re.fullmatch(r"[0-9a-f]{16}", account_key)
+        assert manager.account_key == account_key
+
+    @pytest.mark.asyncio
+    async def test_unknown_account_identity_is_not_cached(self):
+        """Test an unidentifiable account never shares a cache entry.
+
+        Collapsing to one shared key would serve one account's labels to
+        every other account, so caching is skipped instead.
+        """
+        calls = []
+
+        def handler(request):
+            """Count every definitions request.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            calls.append(request.url.path)
+            return httpx.Response(200, json=SAMPLE_DEFINITIONS)
+
+        stub = AsyncMock()
+        stub.get_token = AsyncMock(return_value="tok")
+        stub.account_key = None
+
+        for _ in range(2):
+            provider = _definitions_provider(handler, token_manager=stub)
+            labels = await provider.get_custom_field_definitions()
+            await provider.aclose()
+            assert labels["6a5a9f38050dfd00134fe27e"] == "Test door lock code"
+
+        assert len(calls) == 2
+        assert service._definitions_cache == {}
+
+    @pytest.mark.asyncio
+    async def test_empty_definition_list_is_a_cached_success(self):
+        """Test an account with no custom fields is not retried hourly."""
+        calls = []
+
+        def handler(request):
+            """Serve an empty, valid definitions list.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            calls.append(request.url.path)
+            return httpx.Response(200, json=[])
+
+        provider = _definitions_provider(handler)
+        assert await provider.get_custom_field_definitions() == {}
+        expires_at, _ = next(iter(service._definitions_cache.values()))
+        await provider.aclose()
+
+        assert len(calls) == 1
+        # Cached for the success TTL, not the short failure TTL.
+        assert expires_at - datetime.now(UTC) > (
+            service.CUSTOM_FIELD_DEFINITIONS_FAILURE_TTL
+        )
+
+    @pytest.mark.asyncio
+    async def test_malformed_payload_uses_the_failure_cache_ttl(self):
+        """Test a transient bad shape does not block labels for a day."""
+        calls = []
+
+        def handler(request):
+            """Serve a body of an unexpected shape.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            calls.append(request.url.path)
+            return httpx.Response(200, json={"unexpected": "shape"})
+
+        provider = _definitions_provider(handler)
+        assert await provider.get_custom_field_definitions() == {}
+        expires_at, _ = next(iter(service._definitions_cache.values()))
+        await provider.aclose()
+
+        assert len(calls) == 1
+        ttl = expires_at - datetime.now(UTC)
+        assert ttl <= service.CUSTOM_FIELD_DEFINITIONS_FAILURE_TTL
+        assert ttl < service.CUSTOM_FIELD_DEFINITIONS_TTL
+
+    @pytest.mark.asyncio
+    async def test_malformed_payload_recovers_after_the_failure_ttl(self):
+        """Test labels resolve again once the endpoint recovers."""
+        payloads = [{"unexpected": "shape"}, SAMPLE_DEFINITIONS]
+
+        def handler(request):
+            """Serve a malformed body, then a healthy one.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            return httpx.Response(200, json=payloads.pop(0) if payloads else [])
+
+        provider = _definitions_provider(handler)
+        assert await provider.get_custom_field_definitions() == {}
+
+        key, (_, labels) = next(iter(service._definitions_cache.items()))
+        service._definitions_cache[key] = (
+            datetime.now(UTC) - timedelta(seconds=1),
+            labels,
+        )
+        recovered = await provider.get_custom_field_definitions()
+        await provider.aclose()
+
+        assert recovered == {"6a5a9f38050dfd00134fe27e": "Test door lock code"}
+
+
+class TestBaseProviderDefinitions:
+    """Providers without custom-field definitions degrade to nothing."""
+
+    @pytest.mark.asyncio
+    async def test_default_implementation_returns_empty_mapping(self):
+        """Test the base implementation costs nothing and names nothing."""
+        from src.providers.cloudbeds.provider import CloudbedsProvider
+
+        provider = CloudbedsProvider(access_token="tok")
+
+        assert await provider.get_custom_field_definitions() == {}

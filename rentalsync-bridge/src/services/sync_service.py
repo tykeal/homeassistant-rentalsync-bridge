@@ -25,6 +25,7 @@ from src.repositories.available_field_repository import (
     should_exclude_field,
 )
 from src.repositories.booking_repository import BookingRepository
+from src.repositories.custom_field_repository import CustomFieldRepository
 from src.repositories.room_repository import RoomRepository
 from src.services.calendar_service import CalendarCache, CalendarService
 
@@ -156,6 +157,7 @@ class SyncService:
         self._booking_repo = BookingRepository(session)
         self._room_repo = RoomRepository(session)
         self._available_field_repo = AvailableFieldRepository(session)
+        self._custom_field_repo = CustomFieldRepository(session)
 
     async def sync_listing(
         self,
@@ -207,7 +209,12 @@ class SyncService:
                 provider, listing, reservations
             )
 
-            counts = await self._process_reservations(listing, reservations, enrichment)
+            counts = await self._process_reservations(
+                listing,
+                reservations,
+                enrichment,
+                await self._resolve_field_labels(provider),
+            )
 
             # Update sync status on success.  This has to be committed here
             # rather than left pending for the caller: ``_process_reservations``
@@ -283,11 +290,61 @@ class SyncService:
             )
             await session.commit()
 
+    @staticmethod
+    async def _resolve_field_labels(provider: PMSProvider) -> dict[str, str]:
+        """Resolve provider-supplied custom-field labels, never failing.
+
+        Providers cache these (Guesty's definitions are account-wide and
+        change only when an owner edits them), so this costs at most one
+        API call per sync and usually none.  Labels are cosmetic: any
+        failure degrades to an empty mapping so the sync continues with
+        raw field keys.
+
+        Args:
+            provider: Provider being synced.
+
+        Returns:
+            Mapping of field key to display label; empty when unavailable.
+        """
+        try:
+            labels = await provider.get_custom_field_definitions()
+        except Exception as exc:  # providers must not fail a sync over labels
+            logger.warning("Custom-field label lookup failed: %s", exc)
+            return {}
+        return labels if isinstance(labels, dict) else {}
+
+    async def _apply_field_labels(
+        self,
+        listing: Listing,
+        reservations: list[PMSReservation],
+        field_labels: dict[str, str] | None,
+    ) -> None:
+        """Discover custom-data fields and name them from provider data.
+
+        Args:
+            listing: Listing being synced.
+            reservations: Reservations whose custom data to inspect.
+            field_labels: Provider-supplied labels by field key.
+        """
+        raw_dicts = [r.custom_data for r in reservations if r.custom_data]
+        if raw_dicts:
+            await self._available_field_repo.discover_fields_from_reservations(
+                listing.id, raw_dicts, field_labels=field_labels
+            )
+        # Runs even with no definitions: a stored label that is still the
+        # old mangled ObjectId text is exported verbatim by
+        # CalendarService, so it must be repaired to the raw identifier
+        # rather than left to publish noise (issue #127).
+        await self._custom_field_repo.repair_derived_labels(
+            listing.id, field_labels or {}
+        )
+
     async def _process_reservations(
         self,
         listing: Listing,
         reservations: list[PMSReservation],
         enrichment: dict[str, dict] | None = None,
+        field_labels: dict[str, str] | None = None,
     ) -> dict[str, int]:
         """Process reservations and update local bookings.
 
@@ -296,6 +353,7 @@ class SyncService:
             reservations: List of PMSReservation DTOs from provider.
             enrichment: Enrichment-owned values by reservation ID, persisted
                 so the next sync can reuse them without re-fetching.
+            field_labels: Provider-supplied labels for custom field keys.
 
         Returns:
             Dict with counts: inserted, updated, cancelled.
@@ -304,12 +362,9 @@ class SyncService:
         seen_booking_ids: set[str] = set()
         seen_reservation_ids: set[str] = set()
 
-        # Batch discover fields from reservation custom_data
-        raw_dicts = [r.custom_data for r in reservations if r.custom_data]
-        if raw_dicts:
-            await self._available_field_repo.discover_fields_from_reservations(
-                listing.id, raw_dicts
-            )
+        # Batch discover fields from reservation custom_data and refresh
+        # any labels the provider can now name (issue #127).
+        await self._apply_field_labels(listing, reservations, field_labels)
 
         for reservation in reservations:
             if not reservation.pms_booking_id:
