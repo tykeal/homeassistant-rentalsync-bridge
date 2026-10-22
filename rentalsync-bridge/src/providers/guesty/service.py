@@ -202,8 +202,25 @@ _UNCLASSIFIED_MAX_RATIO = 0.5
 # endpoint which returns every definition for the account in one call;
 # ``reservation`` definitions must be separated from ``listing`` ones
 # client-side because the endpoint takes no discriminator.
-CUSTOM_FIELD_DEFINITIONS_URL = "/v1/accounts/me/custom-fields"
+#
+# The definitions path is account-scoped and needs the real account ID, so
+# it is resolved first from ``GET /v1/accounts/me``.  Both paths are the
+# ones our Home Assistant Guesty integration uses against the live API
+# (commit ``62f58cc`` there); the ``me`` alias is not known to work on the
+# ``custom-fields`` sub-path.
+ACCOUNT_URL = "/v1/accounts/me"
+CUSTOM_FIELD_DEFINITIONS_URL = "/v1/accounts/{account_id}/custom-fields"
 CUSTOM_FIELD_OBJECT_RESERVATION = "reservation"
+
+# A definition scoped to ``both`` applies to listings *and* reservations, so
+# it carries a label a reservation value can need.  Dropping it was why some
+# fields still rendered as a raw ObjectId after issue #127.
+CUSTOM_FIELD_OBJECT_BOTH = "both"
+
+# ``object`` values whose definitions can label a reservation custom field.
+CUSTOM_FIELD_RESERVATION_OBJECTS = frozenset(
+    {CUSTOM_FIELD_OBJECT_RESERVATION, CUSTOM_FIELD_OBJECT_BOTH}
+)
 
 # Definitions change only when an account owner edits them in the Guesty
 # dashboard, and carry no ``updatedAt`` or ETag, so staleness cannot be
@@ -221,14 +238,27 @@ CUSTOM_FIELD_DEFINITIONS_FAILURE_TTL = timedelta(hours=1)
 _definitions_cache: dict[str, tuple[datetime, dict[str, str]]] = {}
 _definitions_lock = asyncio.Lock()
 
+# Resolved account IDs: key -> (expires_at, account ID).
+#
+# An account ID never changes for a given set of credentials, so it is
+# cached on the same schedule as the definitions it is needed for.  Without
+# this the account-scoped definitions path would cost an extra request on
+# every sync, which this account cannot afford (issue #128).  A failed
+# resolution is not cached here: it takes the definitions failure path, so
+# the short failure TTL already suppresses the retry.
+_account_id_cache: dict[str, tuple[datetime, str]] = {}
+
 
 def clear_custom_field_definitions_cache() -> None:
     """Drop every cached custom-field definition set.
+
+    Also drops the resolved account IDs the definitions fetch depends on.
 
     Exposed for tests and for callers that know the account's definitions
     have changed.
     """
     _definitions_cache.clear()
+    _account_id_cache.clear()
 
 
 @provider("guesty")
@@ -819,16 +849,18 @@ class GuestyProvider(PMSProvider):
     async def get_custom_field_definitions(self) -> dict[str, str]:
         """Fetch reservation custom-field labels for the Guesty account.
 
-        Uses ``GET /v1/accounts/me/custom-fields``, which is unpaginated
-        and returns every definition on the account in a single call.
-        Results are cached process-wide per account (see
-        ``CUSTOM_FIELD_DEFINITIONS_TTL``) because the value endpoint keys
-        by ObjectId on every reservation but the names never change.
+        Uses ``GET /v1/accounts/{account_id}/custom-fields``, which is
+        unpaginated and returns every definition on the account in a
+        single call.  The account ID comes from ``GET /v1/accounts/me``
+        and is cached alongside the definitions, so a sync pays for
+        neither request.  Results are cached process-wide per account
+        (see ``CUSTOM_FIELD_DEFINITIONS_TTL``) because the value endpoint
+        keys by ObjectId on every reservation but the names never change.
 
         Never raises: a 403 (the token lacks Guesty's custom-field
-        permission), any other API error, or a malformed payload logs a
-        single warning and yields an empty mapping, leaving labels to fall
-        back to the raw field key.
+        permission), an unresolvable account ID, any other API error, or
+        a malformed payload logs a single warning and yields an empty
+        mapping, leaving labels to fall back to the raw field key.
 
         Returns:
             Mapping of ``fieldId`` to display label, possibly empty.
@@ -881,17 +913,58 @@ class GuestyProvider(PMSProvider):
     async def _fetch_or_raise_definitions(self) -> dict[str, str]:
         """Request and parse the account's custom-field definitions.
 
+        Resolves the account ID first (cached, so this is normally not an
+        extra request) because the definitions path is account-scoped.
+
         Returns:
             Mapping of ``fieldId`` to display label.  An account with no
             reservation custom fields legitimately yields an empty
             mapping, which is a success.
 
         Raises:
-            PMSProviderError: If the request fails or the payload is not
-                shaped as documented.
+            PMSProviderError: If either request fails, the account ID
+                cannot be resolved, or the payload is not shaped as
+                documented.
         """
-        response = await self._request("GET", CUSTOM_FIELD_DEFINITIONS_URL)
+        account_id = await self._resolve_account_id()
+        response = await self._request(
+            "GET",
+            CUSTOM_FIELD_DEFINITIONS_URL.format(account_id=account_id),
+        )
         return _parse_custom_field_definitions(response.json())
+
+    async def _resolve_account_id(self) -> str:
+        """Resolve the Guesty account ID behind the current credentials.
+
+        The ID is stable, so it is cached per account for the same day as
+        the definitions that need it; a sync therefore does not pay for
+        this request (issue #128).  A failure propagates and is handled
+        exactly like a definitions failure: a warning, raw-identifier
+        labels, and a short failure cache.
+
+        Returns:
+            The account ID.
+
+        Raises:
+            PMSProviderError: If the response is not a JSON object or
+                carries no usable ``_id``.
+        """
+        cache_key = self._definitions_cache_key()
+        now = datetime.now(UTC)
+        if cache_key is not None:
+            cached = _account_id_cache.get(cache_key)
+            if cached is not None and cached[0] > now:
+                return cached[1]
+
+        response = await self._request("GET", ACCOUNT_URL)
+        account_id = _parse_account_id(response.json())
+
+        if cache_key is not None:
+            _account_id_cache[cache_key] = (
+                now + CUSTOM_FIELD_DEFINITIONS_TTL,
+                account_id,
+            )
+        return account_id
 
     def _definitions_cache_key(self) -> str | None:
         """Build the cache key identifying this provider's Guesty account.
@@ -1157,18 +1230,53 @@ def _warn_definitions_unavailable(exc: BaseException) -> None:
     )
 
 
+def _parse_account_id(data: Any) -> str:
+    """Extract the account ID from a ``GET /v1/accounts/me`` payload.
+
+    Guesty returns the account document itself, whose identifier is the
+    top-level Mongo ``_id``.
+
+    Args:
+        data: Decoded JSON body of the account request.
+
+    Returns:
+        The account ID, stripped of surrounding whitespace.
+
+    Raises:
+        PMSProviderError: If the payload is not an object or carries no
+            usable ``_id``.
+    """
+    if not isinstance(data, dict):
+        msg = f"unexpected Guesty account payload ({type(data).__name__})"
+        raise PMSProviderError(msg)
+
+    account_id = data.get("_id")
+    if not isinstance(account_id, str) or not account_id.strip():
+        msg = "Guesty account payload is missing an _id"
+        raise PMSProviderError(msg)
+
+    return account_id.strip()
+
+
 def _parse_custom_field_definitions(data: Any) -> dict[str, str]:
     """Build a fieldId → label map from an account custom-fields payload.
 
-    Only ``object == "reservation"`` definitions are kept: the endpoint
-    returns listing definitions from the same list with no server-side
-    discriminator.
+    Definitions scoped to ``reservation`` or ``both`` are kept: the
+    endpoint returns listing definitions from the same list with no
+    server-side discriminator, and a ``both`` definition applies to
+    reservations too.
 
-    Guesty's documentation contradicts itself about whether ``key`` or
-    ``displayName`` holds the human-readable name, so ``displayName`` is
-    preferred when non-empty and ``key`` is used otherwise, and whichever
-    is chosen is humanised if it looks like a slug.  That way the label is
-    right regardless of which property the account actually populates.
+    ``key`` holds the human-readable label the account owner typed (e.g.
+    ``"Test door lock code"``) and ``displayName`` holds the slugified
+    variable name derived from it (e.g. ``"test_door_lock_code"``).  That
+    is verified against the live API by our Home Assistant Guesty
+    integration, which has been in production use since April 2026 (see
+    commit ``62f58cc`` in that project, "Fix(api): correct custom fields
+    endpoint").  ``key`` is therefore preferred and ``displayName`` is the
+    fallback for a definition whose ``key`` is missing or blank.  The
+    chosen value is still humanised, so a slug-shaped fallback — or a
+    slug-shaped ``key`` — renders readably while a 24-hex ObjectId passes
+    through verbatim.
 
     An empty list is a legitimate success (an account with no reservation
     custom fields); an unexpected *shape* is a failure, so it raises and
@@ -1204,15 +1312,19 @@ def _parse_custom_field_definitions(data: Any) -> dict[str, str]:
     for item in data:
         if not isinstance(item, dict):
             continue
-        if item.get("object") != CUSTOM_FIELD_OBJECT_RESERVATION:
+        object_type = item.get("object")
+        if (
+            not isinstance(object_type, str)
+            or object_type not in CUSTOM_FIELD_RESERVATION_OBJECTS
+        ):
             continue
         field_id = item.get("fieldId") or item.get("_id")
         if not isinstance(field_id, str) or not field_id:
             continue
 
-        raw_label = item.get("displayName")
+        raw_label = item.get("key")
         if not isinstance(raw_label, str) or not raw_label.strip():
-            raw_label = item.get("key")
+            raw_label = item.get("displayName")
         if not isinstance(raw_label, str):
             continue
         label = humanize_label(raw_label)

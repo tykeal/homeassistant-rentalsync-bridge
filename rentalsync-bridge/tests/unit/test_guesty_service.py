@@ -2436,12 +2436,17 @@ class TestGuardCountsOnlyInWindow:
 # ---------------------------------------------------------------------------
 
 
+ACCOUNT_ID = "6a5a9f38050dfd00134fe001"
+DEFINITIONS_PATH = f"/v1/accounts/{ACCOUNT_ID}/custom-fields"
+
+
 def _definitions_provider(
     handler,
     *,
     credential_id: int = 1,
     client_id: str = "client-a",
     token_manager=None,
+    account_handler=None,
 ):
     """Build a GuestyProvider serving the account custom-fields endpoint.
 
@@ -2449,15 +2454,37 @@ def _definitions_provider(
     the account identity behind the definitions cache is the production
     one rather than a stub, and no token request is made.
 
+    ``GET /v1/accounts/me`` is answered by ``account_handler`` when given
+    and otherwise by a default returning ``ACCOUNT_ID``, so ``handler``
+    only ever sees definitions requests and call counts taken inside it
+    stay unambiguous.
+
     Args:
         handler: Callable taking an httpx.Request and returning a Response.
         credential_id: Credential row ID backing the token manager.
         client_id: Guesty OAuth client ID currently configured.
         token_manager: Optional pre-built token manager to use instead.
+        account_handler: Optional callable answering the account lookup.
 
     Returns:
         Configured GuestyProvider.
     """
+
+    def _route(request):
+        """Route the account lookup away from the definitions handler.
+
+        Args:
+            request: Outgoing request.
+
+        Returns:
+            Mocked JSON response.
+        """
+        if request.url.path == service.ACCOUNT_URL:
+            if account_handler is not None:
+                return account_handler(request)
+            return httpx.Response(200, json={"_id": ACCOUNT_ID})
+        return handler(request)
+
     if token_manager is None:
         token_manager = GuestyTokenManager(
             client_id=client_id,
@@ -2468,24 +2495,27 @@ def _definitions_provider(
         token_manager._cached_token = "tok"
         token_manager._cached_expires_at = datetime.now(UTC) + timedelta(hours=1)
     client = httpx.AsyncClient(
-        transport=httpx.MockTransport(handler),
+        transport=httpx.MockTransport(_route),
         base_url=GUESTY_BASE_URL,
     )
     return GuestyProvider(token_manager=token_manager, http_client=client)
 
 
+# Guesty populates ``key`` with the label the account owner typed and
+# ``displayName`` with the slug derived from it (verified against the live
+# API by our Home Assistant Guesty integration, commit ``62f58cc``).
 SAMPLE_DEFINITIONS = [
     {
         "fieldId": "6a5a9f38050dfd00134fe27e",
-        "key": "test_door_lock_code",
-        "displayName": "Test door lock code",
+        "key": "Test door lock code",
+        "displayName": "test_door_lock_code",
         "object": "reservation",
         "type": "number",
     },
     {
         "fieldId": "6a5a9f38050dfd00134fe27f",
-        "key": "listing_wifi_password",
-        "displayName": "Wifi password",
+        "key": "Wifi password",
+        "displayName": "listing_wifi_password",
         "object": "listing",
         "type": "string",
     },
@@ -2503,8 +2533,13 @@ class TestCustomFieldDefinitions:
         clear_custom_field_definitions_cache()
 
     @pytest.mark.asyncio
-    async def test_display_name_wins_and_is_verbatim(self):
-        """Test the human-readable displayName is used unchanged."""
+    async def test_key_wins_and_is_verbatim(self):
+        """Test the human-readable ``key`` is used unchanged.
+
+        ``key`` holds the label the account owner typed and
+        ``displayName`` its slug, so preferring ``displayName`` would
+        lose the owner's casing (``Test Door Lock Code``).
+        """
 
         def handler(request):
             """Serve the account definitions.
@@ -2515,7 +2550,7 @@ class TestCustomFieldDefinitions:
             Returns:
                 Mocked JSON response.
             """
-            assert request.url.path == "/v1/accounts/me/custom-fields"
+            assert request.url.path == DEFINITIONS_PATH
             assert not request.url.params
             return httpx.Response(200, json=SAMPLE_DEFINITIONS)
 
@@ -2547,19 +2582,19 @@ class TestCustomFieldDefinitions:
         assert list(labels) == ["6a5a9f38050dfd00134fe27e"]
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("display_name", [None, "", "   "])
-    async def test_key_is_used_when_display_name_is_absent(self, display_name):
-        """Test a missing displayName falls back to the slug ``key``."""
+    @pytest.mark.parametrize("key", [None, "", "   "])
+    async def test_display_name_is_used_when_key_is_absent(self, key):
+        """Test a missing ``key`` falls back to the ``displayName`` slug."""
         definition = {
             "fieldId": "6a5a9f38050dfd00134fe27e",
-            "key": "test_door_lock_code",
+            "displayName": "test_door_lock_code",
             "object": "reservation",
         }
-        if display_name is not None:
-            definition["displayName"] = display_name
+        if key is not None:
+            definition["key"] = key
 
         def handler(request):
-            """Serve a definition lacking a usable displayName.
+            """Serve a definition lacking a usable key.
 
             Args:
                 request: Outgoing request.
@@ -2574,6 +2609,231 @@ class TestCustomFieldDefinitions:
         await provider.aclose()
 
         assert labels == {"6a5a9f38050dfd00134fe27e": "Test Door Lock Code"}
+
+    @pytest.mark.asyncio
+    async def test_both_scoped_definitions_are_kept(self):
+        """Test ``object == "both"`` definitions still produce a label.
+
+        A field scoped to listings *and* reservations carries a label a
+        reservation value needs; dropping it left the field rendering as
+        a raw ObjectId (issue #127).
+        """
+        definitions = [
+            {
+                "fieldId": "6a5a9f38050dfd00134fe280",
+                "key": "Shared door code",
+                "displayName": "shared_door_code",
+                "object": "both",
+            },
+            {
+                "fieldId": "6a5a9f38050dfd00134fe281",
+                "key": "Listing only",
+                "displayName": "listing_only",
+                "object": "listing",
+            },
+        ]
+
+        def handler(request):
+            """Serve a both-scoped and a listing-scoped definition.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            return httpx.Response(200, json=definitions)
+
+        provider = _definitions_provider(handler)
+        labels = await provider.get_custom_field_definitions()
+        await provider.aclose()
+
+        assert labels == {"6a5a9f38050dfd00134fe280": "Shared door code"}
+
+    @pytest.mark.asyncio
+    async def test_account_scoped_definitions_path_is_used(self):
+        """Test definitions come from the resolved account's path.
+
+        The ``me`` alias is only known to work on ``/v1/accounts/me``
+        itself, so the definitions request must carry the real ID.
+        """
+        paths = []
+
+        def account_handler(request):
+            """Serve the account document.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            paths.append(request.url.path)
+            return httpx.Response(200, json={"_id": ACCOUNT_ID})
+
+        def handler(request):
+            """Serve the account's definitions.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            paths.append(request.url.path)
+            return httpx.Response(200, json=SAMPLE_DEFINITIONS)
+
+        provider = _definitions_provider(handler, account_handler=account_handler)
+        labels = await provider.get_custom_field_definitions()
+        await provider.aclose()
+
+        assert paths == [service.ACCOUNT_URL, DEFINITIONS_PATH]
+        assert labels["6a5a9f38050dfd00134fe27e"] == "Test door lock code"
+
+    @pytest.mark.asyncio
+    async def test_account_id_is_resolved_once_and_reused(self):
+        """Test the account lookup is not repeated on every sync.
+
+        Guesty's limits are account-wide and this account already runs
+        four OAuth clients against them (issue #128), so the extra call
+        the account-scoped path needs has to be amortised by the cache
+        exactly like the definitions are.  Counting the requests is the
+        only way to tell a working cache from a lucky result.
+        """
+        account_calls = []
+        definition_calls = []
+
+        def account_handler(request):
+            """Count and serve the account lookup.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            account_calls.append(request.url.path)
+            return httpx.Response(200, json={"_id": ACCOUNT_ID})
+
+        def handler(request):
+            """Count and serve the definitions request.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            definition_calls.append(request.url.path)
+            return httpx.Response(200, json=SAMPLE_DEFINITIONS)
+
+        # Three syncs, each with a freshly built provider, plus a
+        # definitions refetch once the definitions TTL has lapsed.
+        for _ in range(3):
+            provider = _definitions_provider(handler, account_handler=account_handler)
+            await provider.get_custom_field_definitions()
+            await provider.aclose()
+
+        key, (_, labels) = next(iter(service._definitions_cache.items()))
+        service._definitions_cache[key] = (
+            datetime.now(UTC) - timedelta(seconds=1),
+            labels,
+        )
+        provider = _definitions_provider(handler, account_handler=account_handler)
+        await provider.get_custom_field_definitions()
+        await provider.aclose()
+
+        assert len(account_calls) == 1
+        assert len(definition_calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_unresolvable_account_degrades_gracefully(self, caplog):
+        """Test a failed account lookup never breaks a sync.
+
+        Labels fall back to raw identifiers and the failure is cached on
+        the short TTL, exactly as a definitions failure is.
+        """
+        account_calls = []
+
+        def account_handler(request):
+            """Deny the account lookup and count the attempt.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            account_calls.append(request.url.path)
+            return httpx.Response(403, json={"error": "forbidden"})
+
+        def handler(request):
+            """Fail the test if definitions are requested.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            raise AssertionError("definitions requested without an account ID")
+
+        with caplog.at_level(logging.WARNING):
+            for _ in range(3):
+                provider = _definitions_provider(
+                    handler, account_handler=account_handler
+                )
+                assert await provider.get_custom_field_definitions() == {}
+                await provider.aclose()
+
+        assert len(account_calls) == 1
+        assert "custom-field names" in caplog.text
+        key = next(iter(service._definitions_cache))
+        expires_at, cached_labels = service._definitions_cache[key]
+        assert cached_labels == {}
+        assert expires_at <= datetime.now(UTC) + (
+            service.CUSTOM_FIELD_DEFINITIONS_FAILURE_TTL
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "payload",
+        [{}, {"_id": ""}, {"_id": "   "}, {"_id": 42}, [], "nope"],
+    )
+    async def test_missing_account_id_degrades_gracefully(self, payload):
+        """Test a malformed account payload takes the failure path.
+
+        Args:
+            payload: Account response body lacking a usable ``_id``.
+        """
+
+        def account_handler(request):
+            """Serve an account document with no usable ID.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            return httpx.Response(200, json=payload)
+
+        def handler(request):
+            """Fail the test if definitions are requested.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            raise AssertionError("definitions requested without an account ID")
+
+        provider = _definitions_provider(handler, account_handler=account_handler)
+        assert await provider.get_custom_field_definitions() == {}
+        await provider.aclose()
+
+        assert not service._account_id_cache
 
     @pytest.mark.asyncio
     async def test_definitions_are_cached_across_calls(self):
