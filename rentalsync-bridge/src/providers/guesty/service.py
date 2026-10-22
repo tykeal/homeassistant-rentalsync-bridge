@@ -205,6 +205,16 @@ _UNCLASSIFIED_MAX_RATIO = 0.5
 CUSTOM_FIELD_DEFINITIONS_URL = "/v1/accounts/me/custom-fields"
 CUSTOM_FIELD_OBJECT_RESERVATION = "reservation"
 
+# A definition scoped to ``both`` applies to listings *and* reservations, so
+# it carries a label a reservation value can need.  Dropping it was why some
+# fields still rendered as a raw ObjectId after issue #127.
+CUSTOM_FIELD_OBJECT_BOTH = "both"
+
+# ``object`` values whose definitions can label a reservation custom field.
+CUSTOM_FIELD_RESERVATION_OBJECTS = frozenset(
+    {CUSTOM_FIELD_OBJECT_RESERVATION, CUSTOM_FIELD_OBJECT_BOTH}
+)
+
 # Definitions change only when an account owner edits them in the Guesty
 # dashboard, and carry no ``updatedAt`` or ETag, so staleness cannot be
 # detected cheaply.  They are cached process-wide for a day, which keeps
@@ -1160,15 +1170,22 @@ def _warn_definitions_unavailable(exc: BaseException) -> None:
 def _parse_custom_field_definitions(data: Any) -> dict[str, str]:
     """Build a fieldId → label map from an account custom-fields payload.
 
-    Only ``object == "reservation"`` definitions are kept: the endpoint
-    returns listing definitions from the same list with no server-side
-    discriminator.
+    Definitions scoped to ``reservation`` or ``both`` are kept: the
+    endpoint returns listing definitions from the same list with no
+    server-side discriminator, and a ``both`` definition applies to
+    reservations too.
 
-    Guesty's documentation contradicts itself about whether ``key`` or
-    ``displayName`` holds the human-readable name, so ``displayName`` is
-    preferred when non-empty and ``key`` is used otherwise, and whichever
-    is chosen is humanised if it looks like a slug.  That way the label is
-    right regardless of which property the account actually populates.
+    ``key`` holds the human-readable label the account owner typed (e.g.
+    ``"Test door lock code"``) and ``displayName`` holds the slugified
+    variable name derived from it (e.g. ``"test_door_lock_code"``).  That
+    is verified against the live API by our Home Assistant Guesty
+    integration, which has been in production use since April 2026 (see
+    commit ``62f58cc`` in that project, "Fix(api): correct custom fields
+    endpoint").  ``key`` is therefore preferred and ``displayName`` is the
+    fallback for a definition whose ``key`` is missing or blank.  The
+    chosen value is still humanised, so a slug-shaped fallback — or a
+    slug-shaped ``key`` — renders readably while a 24-hex ObjectId passes
+    through verbatim.
 
     An empty list is a legitimate success (an account with no reservation
     custom fields); an unexpected *shape* is a failure, so it raises and
@@ -1204,15 +1221,19 @@ def _parse_custom_field_definitions(data: Any) -> dict[str, str]:
     for item in data:
         if not isinstance(item, dict):
             continue
-        if item.get("object") != CUSTOM_FIELD_OBJECT_RESERVATION:
+        object_type = item.get("object")
+        if (
+            not isinstance(object_type, str)
+            or object_type not in CUSTOM_FIELD_RESERVATION_OBJECTS
+        ):
             continue
         field_id = item.get("fieldId") or item.get("_id")
         if not isinstance(field_id, str) or not field_id:
             continue
 
-        raw_label = item.get("displayName")
+        raw_label = item.get("key")
         if not isinstance(raw_label, str) or not raw_label.strip():
-            raw_label = item.get("key")
+            raw_label = item.get("displayName")
         if not isinstance(raw_label, str):
             continue
         label = humanize_label(raw_label)

@@ -2474,18 +2474,21 @@ def _definitions_provider(
     return GuestyProvider(token_manager=token_manager, http_client=client)
 
 
+# Guesty populates ``key`` with the label the account owner typed and
+# ``displayName`` with the slug derived from it (verified against the live
+# API by our Home Assistant Guesty integration, commit ``62f58cc``).
 SAMPLE_DEFINITIONS = [
     {
         "fieldId": "6a5a9f38050dfd00134fe27e",
-        "key": "test_door_lock_code",
-        "displayName": "Test door lock code",
+        "key": "Test door lock code",
+        "displayName": "test_door_lock_code",
         "object": "reservation",
         "type": "number",
     },
     {
         "fieldId": "6a5a9f38050dfd00134fe27f",
-        "key": "listing_wifi_password",
-        "displayName": "Wifi password",
+        "key": "Wifi password",
+        "displayName": "listing_wifi_password",
         "object": "listing",
         "type": "string",
     },
@@ -2503,8 +2506,13 @@ class TestCustomFieldDefinitions:
         clear_custom_field_definitions_cache()
 
     @pytest.mark.asyncio
-    async def test_display_name_wins_and_is_verbatim(self):
-        """Test the human-readable displayName is used unchanged."""
+    async def test_key_wins_and_is_verbatim(self):
+        """Test the human-readable ``key`` is used unchanged.
+
+        ``key`` holds the label the account owner typed and
+        ``displayName`` its slug, so preferring ``displayName`` would
+        lose the owner's casing (``Test Door Lock Code``).
+        """
 
         def handler(request):
             """Serve the account definitions.
@@ -2547,19 +2555,19 @@ class TestCustomFieldDefinitions:
         assert list(labels) == ["6a5a9f38050dfd00134fe27e"]
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("display_name", [None, "", "   "])
-    async def test_key_is_used_when_display_name_is_absent(self, display_name):
-        """Test a missing displayName falls back to the slug ``key``."""
+    @pytest.mark.parametrize("key", [None, "", "   "])
+    async def test_display_name_is_used_when_key_is_absent(self, key):
+        """Test a missing ``key`` falls back to the ``displayName`` slug."""
         definition = {
             "fieldId": "6a5a9f38050dfd00134fe27e",
-            "key": "test_door_lock_code",
+            "displayName": "test_door_lock_code",
             "object": "reservation",
         }
-        if display_name is not None:
-            definition["displayName"] = display_name
+        if key is not None:
+            definition["key"] = key
 
         def handler(request):
-            """Serve a definition lacking a usable displayName.
+            """Serve a definition lacking a usable key.
 
             Args:
                 request: Outgoing request.
@@ -2574,6 +2582,46 @@ class TestCustomFieldDefinitions:
         await provider.aclose()
 
         assert labels == {"6a5a9f38050dfd00134fe27e": "Test Door Lock Code"}
+
+    @pytest.mark.asyncio
+    async def test_both_scoped_definitions_are_kept(self):
+        """Test ``object == "both"`` definitions still produce a label.
+
+        A field scoped to listings *and* reservations carries a label a
+        reservation value needs; dropping it left the field rendering as
+        a raw ObjectId (issue #127).
+        """
+        definitions = [
+            {
+                "fieldId": "6a5a9f38050dfd00134fe280",
+                "key": "Shared door code",
+                "displayName": "shared_door_code",
+                "object": "both",
+            },
+            {
+                "fieldId": "6a5a9f38050dfd00134fe281",
+                "key": "Listing only",
+                "displayName": "listing_only",
+                "object": "listing",
+            },
+        ]
+
+        def handler(request):
+            """Serve a both-scoped and a listing-scoped definition.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            return httpx.Response(200, json=definitions)
+
+        provider = _definitions_provider(handler)
+        labels = await provider.get_custom_field_definitions()
+        await provider.aclose()
+
+        assert labels == {"6a5a9f38050dfd00134fe280": "Shared door code"}
 
     @pytest.mark.asyncio
     async def test_definitions_are_cached_across_calls(self):

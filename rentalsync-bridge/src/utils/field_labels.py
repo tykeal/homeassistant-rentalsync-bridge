@@ -110,9 +110,10 @@ def humanize_label(value: str) -> str:
     looks like a slug (``test_door_lock_code``, ``testDoorLockCode``) is
     humanised into title case.
 
-    Guesty's documentation disagrees with itself about whether ``key`` or
-    ``displayName`` carries the prose label, so both paths have to produce
-    a sensible result.
+    Guesty's ``key`` carries the prose label and ``displayName`` the
+    slug, but ``key`` can itself be slug-shaped and the ``displayName``
+    slug is the fallback when ``key`` is blank, so both paths have to
+    produce a sensible result.
 
     Args:
         value: Provider-supplied label or slug.
