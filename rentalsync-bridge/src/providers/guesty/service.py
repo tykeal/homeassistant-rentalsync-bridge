@@ -202,7 +202,14 @@ _UNCLASSIFIED_MAX_RATIO = 0.5
 # endpoint which returns every definition for the account in one call;
 # ``reservation`` definitions must be separated from ``listing`` ones
 # client-side because the endpoint takes no discriminator.
-CUSTOM_FIELD_DEFINITIONS_URL = "/v1/accounts/me/custom-fields"
+#
+# The definitions path is account-scoped and needs the real account ID, so
+# it is resolved first from ``GET /v1/accounts/me``.  Both paths are the
+# ones our Home Assistant Guesty integration uses against the live API
+# (commit ``62f58cc`` there); the ``me`` alias is not known to work on the
+# ``custom-fields`` sub-path.
+ACCOUNT_URL = "/v1/accounts/me"
+CUSTOM_FIELD_DEFINITIONS_URL = "/v1/accounts/{account_id}/custom-fields"
 CUSTOM_FIELD_OBJECT_RESERVATION = "reservation"
 
 # A definition scoped to ``both`` applies to listings *and* reservations, so
@@ -231,14 +238,27 @@ CUSTOM_FIELD_DEFINITIONS_FAILURE_TTL = timedelta(hours=1)
 _definitions_cache: dict[str, tuple[datetime, dict[str, str]]] = {}
 _definitions_lock = asyncio.Lock()
 
+# Resolved account IDs: key -> (expires_at, account ID).
+#
+# An account ID never changes for a given set of credentials, so it is
+# cached on the same schedule as the definitions it is needed for.  Without
+# this the account-scoped definitions path would cost an extra request on
+# every sync, which this account cannot afford (issue #128).  A failed
+# resolution is not cached here: it takes the definitions failure path, so
+# the short failure TTL already suppresses the retry.
+_account_id_cache: dict[str, tuple[datetime, str]] = {}
+
 
 def clear_custom_field_definitions_cache() -> None:
     """Drop every cached custom-field definition set.
+
+    Also drops the resolved account IDs the definitions fetch depends on.
 
     Exposed for tests and for callers that know the account's definitions
     have changed.
     """
     _definitions_cache.clear()
+    _account_id_cache.clear()
 
 
 @provider("guesty")
@@ -829,16 +849,18 @@ class GuestyProvider(PMSProvider):
     async def get_custom_field_definitions(self) -> dict[str, str]:
         """Fetch reservation custom-field labels for the Guesty account.
 
-        Uses ``GET /v1/accounts/me/custom-fields``, which is unpaginated
-        and returns every definition on the account in a single call.
-        Results are cached process-wide per account (see
-        ``CUSTOM_FIELD_DEFINITIONS_TTL``) because the value endpoint keys
-        by ObjectId on every reservation but the names never change.
+        Uses ``GET /v1/accounts/{account_id}/custom-fields``, which is
+        unpaginated and returns every definition on the account in a
+        single call.  The account ID comes from ``GET /v1/accounts/me``
+        and is cached alongside the definitions, so a sync pays for
+        neither request.  Results are cached process-wide per account
+        (see ``CUSTOM_FIELD_DEFINITIONS_TTL``) because the value endpoint
+        keys by ObjectId on every reservation but the names never change.
 
         Never raises: a 403 (the token lacks Guesty's custom-field
-        permission), any other API error, or a malformed payload logs a
-        single warning and yields an empty mapping, leaving labels to fall
-        back to the raw field key.
+        permission), an unresolvable account ID, any other API error, or
+        a malformed payload logs a single warning and yields an empty
+        mapping, leaving labels to fall back to the raw field key.
 
         Returns:
             Mapping of ``fieldId`` to display label, possibly empty.
@@ -891,17 +913,58 @@ class GuestyProvider(PMSProvider):
     async def _fetch_or_raise_definitions(self) -> dict[str, str]:
         """Request and parse the account's custom-field definitions.
 
+        Resolves the account ID first (cached, so this is normally not an
+        extra request) because the definitions path is account-scoped.
+
         Returns:
             Mapping of ``fieldId`` to display label.  An account with no
             reservation custom fields legitimately yields an empty
             mapping, which is a success.
 
         Raises:
-            PMSProviderError: If the request fails or the payload is not
-                shaped as documented.
+            PMSProviderError: If either request fails, the account ID
+                cannot be resolved, or the payload is not shaped as
+                documented.
         """
-        response = await self._request("GET", CUSTOM_FIELD_DEFINITIONS_URL)
+        account_id = await self._resolve_account_id()
+        response = await self._request(
+            "GET",
+            CUSTOM_FIELD_DEFINITIONS_URL.format(account_id=account_id),
+        )
         return _parse_custom_field_definitions(response.json())
+
+    async def _resolve_account_id(self) -> str:
+        """Resolve the Guesty account ID behind the current credentials.
+
+        The ID is stable, so it is cached per account for the same day as
+        the definitions that need it; a sync therefore does not pay for
+        this request (issue #128).  A failure propagates and is handled
+        exactly like a definitions failure: a warning, raw-identifier
+        labels, and a short failure cache.
+
+        Returns:
+            The account ID.
+
+        Raises:
+            PMSProviderError: If the response is not a JSON object or
+                carries no usable ``_id``.
+        """
+        cache_key = self._definitions_cache_key()
+        now = datetime.now(UTC)
+        if cache_key is not None:
+            cached = _account_id_cache.get(cache_key)
+            if cached is not None and cached[0] > now:
+                return cached[1]
+
+        response = await self._request("GET", ACCOUNT_URL)
+        account_id = _parse_account_id(response.json())
+
+        if cache_key is not None:
+            _account_id_cache[cache_key] = (
+                now + CUSTOM_FIELD_DEFINITIONS_TTL,
+                account_id,
+            )
+        return account_id
 
     def _definitions_cache_key(self) -> str | None:
         """Build the cache key identifying this provider's Guesty account.
@@ -1165,6 +1228,34 @@ def _warn_definitions_unavailable(exc: BaseException) -> None:
         "field labels fall back to raw field identifiers",
         exc,
     )
+
+
+def _parse_account_id(data: Any) -> str:
+    """Extract the account ID from a ``GET /v1/accounts/me`` payload.
+
+    Guesty returns the account document itself, whose identifier is the
+    top-level Mongo ``_id``.
+
+    Args:
+        data: Decoded JSON body of the account request.
+
+    Returns:
+        The account ID, stripped of surrounding whitespace.
+
+    Raises:
+        PMSProviderError: If the payload is not an object or carries no
+            usable ``_id``.
+    """
+    if not isinstance(data, dict):
+        msg = f"unexpected Guesty account payload ({type(data).__name__})"
+        raise PMSProviderError(msg)
+
+    account_id = data.get("_id")
+    if not isinstance(account_id, str) or not account_id.strip():
+        msg = "Guesty account payload is missing an _id"
+        raise PMSProviderError(msg)
+
+    return account_id.strip()
 
 
 def _parse_custom_field_definitions(data: Any) -> dict[str, str]:
