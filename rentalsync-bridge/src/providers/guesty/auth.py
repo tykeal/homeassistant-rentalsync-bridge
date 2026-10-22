@@ -3,6 +3,7 @@
 """Guesty OAuth2 token manager with caching and rate limiting."""
 
 import asyncio
+import hashlib
 import logging
 from datetime import UTC, datetime, timedelta
 
@@ -69,6 +70,24 @@ class GuestyTokenManager:
         # Serialise token refresh so concurrent callers don't all hit
         # _request_token() and burn through the 5/day limit.
         self._lock = asyncio.Lock()
+
+    @property
+    def account_key(self) -> str:
+        """Return a stable, opaque identifier for the Guesty account.
+
+        Credential rows are reused when an installation is pointed at a
+        different Guesty account: ``configure_oauth`` overwrites
+        ``client_id``/``client_secret`` on the existing row, so the row ID
+        alone does not identify an account over time.  The client ID is
+        therefore folded in — hashed, never stored or logged verbatim,
+        and without the secret — so account-scoped caches are invalidated
+        the moment the credentials are repointed.
+
+        Returns:
+            Short hex digest identifying the credential row and client.
+        """
+        identity = f"{self._credential_id}:{self._client_id}"
+        return hashlib.sha256(identity.encode()).hexdigest()[:16]
 
     @property
     def cached_token(self) -> str | None:

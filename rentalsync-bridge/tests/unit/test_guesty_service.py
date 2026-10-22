@@ -2436,19 +2436,37 @@ class TestGuardCountsOnlyInWindow:
 # ---------------------------------------------------------------------------
 
 
-def _definitions_provider(handler, *, credential_id: int = 1):
+def _definitions_provider(
+    handler,
+    *,
+    credential_id: int = 1,
+    client_id: str = "client-a",
+    token_manager=None,
+):
     """Build a GuestyProvider serving the account custom-fields endpoint.
+
+    Uses a real ``GuestyTokenManager`` with a pre-seeded token cache, so
+    the account identity behind the definitions cache is the production
+    one rather than a stub, and no token request is made.
 
     Args:
         handler: Callable taking an httpx.Request and returning a Response.
-        credential_id: Credential identity used for the definitions cache.
+        credential_id: Credential row ID backing the token manager.
+        client_id: Guesty OAuth client ID currently configured.
+        token_manager: Optional pre-built token manager to use instead.
 
     Returns:
         Configured GuestyProvider.
     """
-    token_manager = AsyncMock()
-    token_manager.get_token = AsyncMock(return_value="tok")
-    token_manager._credential_id = credential_id
+    if token_manager is None:
+        token_manager = GuestyTokenManager(
+            client_id=client_id,
+            client_secret="secret",
+            credential_repo=AsyncMock(),
+            credential_id=credential_id,
+        )
+        token_manager._cached_token = "tok"
+        token_manager._cached_expires_at = datetime.now(UTC) + timedelta(hours=1)
     client = httpx.AsyncClient(
         transport=httpx.MockTransport(handler),
         base_url=GUESTY_BASE_URL,
@@ -2824,6 +2842,207 @@ class TestCustomFieldDefinitions:
             await provider.aclose()
 
         assert len(calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_repointing_the_client_id_invalidates_the_cache(self):
+        """Test switching Guesty accounts does not reuse stale labels.
+
+        ``configure_oauth`` overwrites client_id/client_secret on the
+        existing credential row, so the row ID is stable across an
+        account switch and cannot scope the cache on its own.
+        """
+        responses = [
+            [
+                {
+                    "fieldId": "ACCOUNT_A_FIELD",
+                    "displayName": "Account A field",
+                    "object": "reservation",
+                }
+            ],
+            [
+                {
+                    "fieldId": "ACCOUNT_B_FIELD",
+                    "displayName": "Account B field",
+                    "object": "reservation",
+                }
+            ],
+        ]
+        calls = []
+
+        def handler(request):
+            """Serve the next account's definitions.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            return httpx.Response(200, json=responses[len(calls) - 1])
+
+        def counting_handler(request):
+            """Count the request, then serve it.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            calls.append(request.url.path)
+            return handler(request)
+
+        first = _definitions_provider(
+            counting_handler, credential_id=7, client_id="client-a"
+        )
+        assert await first.get_custom_field_definitions() == {
+            "ACCOUNT_A_FIELD": "Account A field"
+        }
+        await first.aclose()
+
+        # Same credential row, new Guesty client credentials.
+        second = _definitions_provider(
+            counting_handler, credential_id=7, client_id="client-b"
+        )
+        labels = await second.get_custom_field_definitions()
+        await second.aclose()
+
+        assert labels == {"ACCOUNT_B_FIELD": "Account B field"}
+        assert len(calls) == 2
+
+    def test_account_key_hides_the_client_credentials(self):
+        """Test the cache key never carries the client ID or secret."""
+        manager = GuestyTokenManager(
+            client_id="super-secret-client",
+            client_secret="super-secret-value",
+            credential_repo=AsyncMock(),
+            credential_id=7,
+        )
+
+        account_key = manager.account_key
+
+        assert "super-secret-client" not in account_key
+        assert "super-secret-value" not in account_key
+        assert re.fullmatch(r"[0-9a-f]{16}", account_key)
+        assert manager.account_key == account_key
+
+    @pytest.mark.asyncio
+    async def test_unknown_account_identity_is_not_cached(self):
+        """Test an unidentifiable account never shares a cache entry.
+
+        Collapsing to one shared key would serve one account's labels to
+        every other account, so caching is skipped instead.
+        """
+        calls = []
+
+        def handler(request):
+            """Count every definitions request.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            calls.append(request.url.path)
+            return httpx.Response(200, json=SAMPLE_DEFINITIONS)
+
+        stub = AsyncMock()
+        stub.get_token = AsyncMock(return_value="tok")
+        stub.account_key = None
+
+        for _ in range(2):
+            provider = _definitions_provider(handler, token_manager=stub)
+            labels = await provider.get_custom_field_definitions()
+            await provider.aclose()
+            assert labels["6a5a9f38050dfd00134fe27e"] == "Test door lock code"
+
+        assert len(calls) == 2
+        assert service._definitions_cache == {}
+
+    @pytest.mark.asyncio
+    async def test_empty_definition_list_is_a_cached_success(self):
+        """Test an account with no custom fields is not retried hourly."""
+        calls = []
+
+        def handler(request):
+            """Serve an empty, valid definitions list.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            calls.append(request.url.path)
+            return httpx.Response(200, json=[])
+
+        provider = _definitions_provider(handler)
+        assert await provider.get_custom_field_definitions() == {}
+        expires_at, _ = next(iter(service._definitions_cache.values()))
+        await provider.aclose()
+
+        assert len(calls) == 1
+        # Cached for the success TTL, not the short failure TTL.
+        assert expires_at - datetime.now(UTC) > (
+            service.CUSTOM_FIELD_DEFINITIONS_FAILURE_TTL
+        )
+
+    @pytest.mark.asyncio
+    async def test_malformed_payload_uses_the_failure_cache_ttl(self):
+        """Test a transient bad shape does not block labels for a day."""
+        calls = []
+
+        def handler(request):
+            """Serve a body of an unexpected shape.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            calls.append(request.url.path)
+            return httpx.Response(200, json={"unexpected": "shape"})
+
+        provider = _definitions_provider(handler)
+        assert await provider.get_custom_field_definitions() == {}
+        expires_at, _ = next(iter(service._definitions_cache.values()))
+        await provider.aclose()
+
+        assert len(calls) == 1
+        ttl = expires_at - datetime.now(UTC)
+        assert ttl <= service.CUSTOM_FIELD_DEFINITIONS_FAILURE_TTL
+        assert ttl < service.CUSTOM_FIELD_DEFINITIONS_TTL
+
+    @pytest.mark.asyncio
+    async def test_malformed_payload_recovers_after_the_failure_ttl(self):
+        """Test labels resolve again once the endpoint recovers."""
+        payloads = [{"unexpected": "shape"}, SAMPLE_DEFINITIONS]
+
+        def handler(request):
+            """Serve a malformed body, then a healthy one.
+
+            Args:
+                request: Outgoing request.
+
+            Returns:
+                Mocked JSON response.
+            """
+            return httpx.Response(200, json=payloads.pop(0) if payloads else [])
+
+        provider = _definitions_provider(handler)
+        assert await provider.get_custom_field_definitions() == {}
+
+        key, (_, labels) = next(iter(service._definitions_cache.items()))
+        service._definitions_cache[key] = (
+            datetime.now(UTC) - timedelta(seconds=1),
+            labels,
+        )
+        recovered = await provider.get_custom_field_definitions()
+        await provider.aclose()
+
+        assert recovered == {"6a5a9f38050dfd00134fe27e": "Test door lock code"}
 
 
 class TestBaseProviderDefinitions:

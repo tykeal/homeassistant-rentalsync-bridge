@@ -821,7 +821,7 @@ class GuestyProvider(PMSProvider):
 
         Uses ``GET /v1/accounts/me/custom-fields``, which is unpaginated
         and returns every definition on the account in a single call.
-        Results are cached process-wide (see
+        Results are cached process-wide per account (see
         ``CUSTOM_FIELD_DEFINITIONS_TTL``) because the value endpoint keys
         by ObjectId on every reservation but the names never change.
 
@@ -834,22 +834,26 @@ class GuestyProvider(PMSProvider):
             Mapping of ``fieldId`` to display label, possibly empty.
         """
         cache_key = self._definitions_cache_key()
-        now = datetime.now(UTC)
+        if cache_key is None:
+            # Without a trustworthy account identity the result cannot be
+            # cached: sharing one entry across accounts would serve one
+            # account's labels to another.  Fetch uncached instead.
+            logger.debug(
+                "Guesty account identity unavailable; "
+                "custom-field definitions will not be cached"
+            )
+            return await self._fetch_custom_field_definitions()
 
+        now = datetime.now(UTC)
         async with _definitions_lock:
             cached = _definitions_cache.get(cache_key)
             if cached is not None and cached[0] > now:
                 return dict(cached[1])
 
             try:
-                response = await self._request("GET", CUSTOM_FIELD_DEFINITIONS_URL)
-                labels = _parse_custom_field_definitions(response.json())
+                labels = await self._fetch_or_raise_definitions()
             except Exception as exc:  # labels are cosmetic, never fatal
-                logger.warning(
-                    "Unable to resolve Guesty custom-field names (%s); "
-                    "field labels fall back to raw field identifiers",
-                    exc,
-                )
+                _warn_definitions_unavailable(exc)
                 _definitions_cache[cache_key] = (
                     now + CUSTOM_FIELD_DEFINITIONS_FAILURE_TTL,
                     {},
@@ -862,17 +866,52 @@ class GuestyProvider(PMSProvider):
             )
             return dict(labels)
 
-    def _definitions_cache_key(self) -> str:
-        """Build the cache key for this provider's Guesty account.
-
-        Definitions are account-wide, so the credential row behind the
-        token manager identifies the cache scope.
+    async def _fetch_custom_field_definitions(self) -> dict[str, str]:
+        """Fetch definitions without consulting or populating the cache.
 
         Returns:
-            Stable key for the credential in use.
+            Mapping of ``fieldId`` to display label; empty on any failure.
         """
-        credential_id = getattr(self._token_manager, "_credential_id", None)
-        return f"credential:{credential_id}"
+        try:
+            return await self._fetch_or_raise_definitions()
+        except Exception as exc:  # labels are cosmetic, never fatal
+            _warn_definitions_unavailable(exc)
+            return {}
+
+    async def _fetch_or_raise_definitions(self) -> dict[str, str]:
+        """Request and parse the account's custom-field definitions.
+
+        Returns:
+            Mapping of ``fieldId`` to display label.  An account with no
+            reservation custom fields legitimately yields an empty
+            mapping, which is a success.
+
+        Raises:
+            PMSProviderError: If the request fails or the payload is not
+                shaped as documented.
+        """
+        response = await self._request("GET", CUSTOM_FIELD_DEFINITIONS_URL)
+        return _parse_custom_field_definitions(response.json())
+
+    def _definitions_cache_key(self) -> str | None:
+        """Build the cache key identifying this provider's Guesty account.
+
+        Definitions are account-wide, and an installation can be
+        repointed at a different Guesty account without its credential
+        row changing, so the key comes from the token manager's hashed
+        account identity rather than the row ID.
+
+        Returns:
+            Stable account key, or None when the identity is unknown and
+            caching therefore has to be skipped.
+        """
+        manager = self._token_manager
+        if manager is None:
+            return None
+        account_key = manager.account_key
+        if not isinstance(account_key, str) or not account_key:
+            return None
+        return f"account:{account_key}"
 
     async def refresh_token(
         self,
@@ -1105,6 +1144,19 @@ _LISTING_REF_KEYS = ("listingId", "parentListingId", "unitTypeId", "unitId")
 _LISTING_PARENT_KEYS = ("parentListingId", "parentId", "unitTypeId")
 
 
+def _warn_definitions_unavailable(exc: BaseException) -> None:
+    """Log the single warning emitted when definitions cannot be read.
+
+    Args:
+        exc: The failure that prevented resolution.
+    """
+    logger.warning(
+        "Unable to resolve Guesty custom-field names (%s); "
+        "field labels fall back to raw field identifiers",
+        exc,
+    )
+
+
 def _parse_custom_field_definitions(data: Any) -> dict[str, str]:
     """Build a fieldId → label map from an account custom-fields payload.
 
@@ -1118,13 +1170,21 @@ def _parse_custom_field_definitions(data: Any) -> dict[str, str]:
     is chosen is humanised if it looks like a slug.  That way the label is
     right regardless of which property the account actually populates.
 
+    An empty list is a legitimate success (an account with no reservation
+    custom fields); an unexpected *shape* is a failure, so it raises and
+    takes the caller's short failure-cache path rather than being cached
+    as a successful empty result for a day.
+
     Args:
         data: Decoded JSON body, expected to be a list of definitions
             (or a dict wrapping one under ``results``/``data``).
 
     Returns:
-        Mapping of ``fieldId`` to display label; empty when the payload is
-        not shaped as expected.
+        Mapping of ``fieldId`` to display label; empty when the account
+        defines no reservation custom fields.
+
+    Raises:
+        PMSProviderError: If the payload is not shaped as documented.
     """
     if isinstance(data, dict):
         for wrapper in ("results", "data", "customFields", "fields"):
@@ -1134,12 +1194,11 @@ def _parse_custom_field_definitions(data: Any) -> dict[str, str]:
                 break
 
     if not isinstance(data, list):
-        logger.warning(
-            "Unexpected Guesty custom-field definitions payload (%s); "
-            "field labels fall back to raw field identifiers",
-            type(data).__name__,
+        msg = (
+            "unexpected Guesty custom-field definitions payload "
+            f"({type(data).__name__})"
         )
-        return {}
+        raise PMSProviderError(msg)
 
     labels: dict[str, str] = {}
     for item in data:
