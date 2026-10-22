@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Repository for CustomField database operations."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +14,7 @@ from src.repositories.available_field_repository import (
     AvailableFieldRepository,
     format_allowed_fields_message,
 )
+from src.utils.field_labels import camel_to_display, legacy_display_name
 
 
 class CustomFieldRepository:
@@ -159,6 +160,48 @@ class CustomFieldRepository:
         """
         await self._session.delete(field)
         await self._session.flush()
+
+    async def repair_derived_labels(
+        self,
+        listing_id: int,
+        field_labels: Mapping[str, str],
+    ) -> int:
+        """Repair stored labels that were auto-generated, never edited.
+
+        ``display_label`` is user-owned, so a label the user chose is
+        never touched.  A label that is character-for-character what the
+        pre-fix code would have generated from the field key (e.g. the
+        mangled ``6 A 5 A 9 F 38050 Dfd 00134 Fe 27 E`` produced from a
+        Guesty ObjectId — issue #127) demonstrably came from the UI's
+        prefill rather than from a person, so it is safe to refresh it
+        with the provider's real name.
+
+        Args:
+            listing_id: Listing whose configured fields to inspect.
+            field_labels: Provider-supplied labels by field key.
+
+        Returns:
+            Number of labels repaired.
+        """
+        if not field_labels:
+            return 0
+
+        repaired = 0
+        for field in await self.get_for_listing(listing_id):
+            label = field_labels.get(field.field_name)
+            if not label or label == field.display_label:
+                continue
+            derived = {
+                legacy_display_name(field.field_name),
+                camel_to_display(field.field_name),
+            }
+            if field.display_label in derived:
+                field.display_label = label[:255]
+                repaired += 1
+
+        if repaired:
+            await self._session.flush()
+        return repaired
 
     async def create_defaults_for_listing(self, listing_id: int) -> list[CustomField]:
         """Create default custom fields for a new listing.

@@ -3,13 +3,14 @@
 """Repository for AvailableField database operations."""
 
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.available_field import AvailableField
+from src.utils.field_labels import camel_to_display
 
 # Fields to exclude from discovery (internal/system fields)
 # Precompiled for performance in tight loops during sync/discovery
@@ -58,7 +59,9 @@ DEFAULT_CLOUDBEDS_FIELDS: dict[str, str] = {
 def _camel_to_display(name: str) -> str:
     """Convert field name to human-readable Display Name.
 
-    Handles camelCase, snake_case, kebab-case, and digit boundaries.
+    Thin wrapper over :func:`src.utils.field_labels.camel_to_display` so
+    providers can share the humanising rules without importing a
+    repository.  ObjectId-like keys are returned verbatim.
 
     Args:
         name: Field name in any common format.
@@ -66,29 +69,30 @@ def _camel_to_display(name: str) -> str:
     Returns:
         Human-readable display name.
     """
-    # Replace underscores and hyphens with spaces
-    spaced = name.replace("_", " ").replace("-", " ")
-    # Insert space before uppercase letters (camelCase -> camel Case)
-    spaced = re.sub(r"([a-z])([A-Z])", r"\1 \2", spaced)
-    # Insert space between letters and digits (field2 -> field 2)
-    spaced = re.sub(r"([a-zA-Z])(\d)", r"\1 \2", spaced)
-    spaced = re.sub(r"(\d)([a-zA-Z])", r"\1 \2", spaced)
-    # Collapse multiple spaces and capitalize each word
-    return " ".join(spaced.split()).title()
+    return camel_to_display(name)
 
 
-def _get_display_name(field_key: str) -> str:
-    """Get display name for a field, preferring curated defaults.
+def _get_display_name(
+    field_key: str,
+    field_labels: Mapping[str, str] | None = None,
+) -> str:
+    """Get display name for a field, preferring provider definitions.
 
-    Uses curated display names from DEFAULT_CLOUDBEDS_FIELDS when available,
-    falling back to auto-generated names via _camel_to_display.
+    Resolution order: provider-supplied label (e.g. a Guesty custom-field
+    definition), then curated Cloudbeds defaults, then an auto-generated
+    name via ``_camel_to_display``.
 
     Args:
         field_key: Field key to get display name for.
+        field_labels: Optional provider-supplied labels by field key.
 
     Returns:
         Human-readable display name.
     """
+    if field_labels:
+        label = field_labels.get(field_key)
+        if label:
+            return label
     return DEFAULT_CLOUDBEDS_FIELDS.get(field_key, _camel_to_display(field_key))
 
 
@@ -185,6 +189,7 @@ class AvailableFieldRepository:
         listing_id: int,
         field_key: str,
         sample_value: str | None = None,
+        field_labels: Mapping[str, str] | None = None,
     ) -> AvailableField | None:
         """Create or update an available field.
 
@@ -192,6 +197,7 @@ class AvailableFieldRepository:
             listing_id: Listing ID to create field for.
             field_key: Field key from Cloudbeds.
             sample_value: Sample value for display.
+            field_labels: Optional provider-supplied labels by field key.
 
         Returns:
             Created/updated field, or None if field should be excluded.
@@ -204,6 +210,7 @@ class AvailableFieldRepository:
 
         if existing:
             existing.last_seen_at = now
+            self._apply_provider_label(existing, field_labels)
             # Only update sample if we have a new value and existing is empty
             # Use explicit None/empty check to preserve falsy values like "0"
             if (
@@ -224,7 +231,7 @@ class AvailableFieldRepository:
         field = AvailableField(
             listing_id=listing_id,
             field_key=field_key,
-            display_name=_get_display_name(field_key),
+            display_name=_get_display_name(field_key, field_labels),
             sample_value=stored_sample,
             discovered_at=now,
             last_seen_at=now,
@@ -233,11 +240,34 @@ class AvailableFieldRepository:
         await self._session.flush()
         return field
 
+    @staticmethod
+    def _apply_provider_label(
+        field: AvailableField,
+        field_labels: Mapping[str, str] | None,
+    ) -> None:
+        """Refresh a field's system-owned display name from provider data.
+
+        ``AvailableField.display_name`` is derived, not user-editable, so
+        an authoritative provider label always wins.  This is what repairs
+        rows discovered before definitions were available, whose names were
+        generated from a raw ObjectId (issue #127).
+
+        Args:
+            field: Existing field row to update in place.
+            field_labels: Provider-supplied labels by field key.
+        """
+        if not field_labels:
+            return
+        label = field_labels.get(field.field_key)
+        if label and label != field.display_name:
+            field.display_name = label
+
     async def discover_fields_from_reservation(
         self,
         listing_id: int,
         reservation: dict,
         already_discovered: set[str] | None = None,
+        field_labels: Mapping[str, str] | None = None,
     ) -> list[AvailableField]:
         """Discover and store fields from a reservation.
 
@@ -260,13 +290,17 @@ class AvailableFieldRepository:
             reservation: Reservation dict from Cloudbeds API.
             already_discovered: Optional set of field keys already processed
                 in this sync run. Will be updated with newly discovered keys.
+            field_labels: Optional provider-supplied labels by field key.
 
         Returns:
             List of discovered/updated fields (excluding already_discovered).
         """
         # Delegate to batch method, passing already_discovered to skip DB work
         discovered = await self.discover_fields_from_reservations(
-            listing_id, [reservation], exclude_keys=already_discovered
+            listing_id,
+            [reservation],
+            exclude_keys=already_discovered,
+            field_labels=field_labels,
         )
 
         # Update caller's already_discovered set with new fields
@@ -281,6 +315,7 @@ class AvailableFieldRepository:
         listing_id: int,
         reservations: list[dict],
         exclude_keys: set[str] | None = None,
+        field_labels: Mapping[str, str] | None = None,
     ) -> list[AvailableField]:
         """Discover and store fields from multiple reservations in a single batch.
 
@@ -292,6 +327,8 @@ class AvailableFieldRepository:
             reservations: List of reservation dicts from Cloudbeds API.
             exclude_keys: Optional set of keys to skip during discovery.
                 Used to avoid redundant DB work for already-seen keys.
+            field_labels: Optional provider-supplied labels by field key.
+                Used for ``display_name`` in place of a derived one.
 
         Returns:
             List of all discovered/updated fields.
@@ -338,7 +375,7 @@ class AvailableFieldRepository:
 
         for key, sample in candidates_by_key.items():
             field = self._upsert_field_in_memory(
-                listing_id, key, sample, existing_by_key, now
+                listing_id, key, sample, existing_by_key, now, field_labels
             )
             discovered.append(field)
 
@@ -389,6 +426,7 @@ class AvailableFieldRepository:
         sample: str | None,
         existing_by_key: dict[str, AvailableField],
         now: datetime,
+        field_labels: Mapping[str, str] | None = None,
     ) -> AvailableField:
         """Create or update a field using in-memory lookup.
 
@@ -398,6 +436,7 @@ class AvailableFieldRepository:
             sample: Sample value.
             existing_by_key: Lookup dict of existing fields.
             now: Current timestamp.
+            field_labels: Optional provider-supplied labels by field key.
 
         Returns:
             The created or updated field.
@@ -405,6 +444,7 @@ class AvailableFieldRepository:
         existing = existing_by_key.get(key)
         if existing:
             existing.last_seen_at = now
+            self._apply_provider_label(existing, field_labels)
             if sample and (
                 existing.sample_value is None or existing.sample_value == ""
             ):
@@ -414,7 +454,7 @@ class AvailableFieldRepository:
         field = AvailableField(
             listing_id=listing_id,
             field_key=key,
-            display_name=_get_display_name(key),
+            display_name=_get_display_name(key, field_labels),
             sample_value=sample if sample else None,
             discovered_at=now,
             last_seen_at=now,

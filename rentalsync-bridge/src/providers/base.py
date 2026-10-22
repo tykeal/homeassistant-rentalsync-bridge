@@ -250,6 +250,22 @@ class PMSProvider(ABC):
         """
         ...
 
+    async def get_custom_field_definitions(self) -> dict[str, str]:
+        """Fetch human-readable labels for custom field identifiers.
+
+        Providers whose custom-field values are keyed by an opaque
+        identifier (Guesty's ObjectIds) override this to resolve those
+        identifiers to the labels their users configured.
+
+        Implementations MUST NOT raise: a missing permission, an API
+        failure or a malformed response has to degrade to an empty
+        mapping, because a sync must never fail over cosmetic labels.
+
+        Returns:
+            Mapping of field key to display label; empty when unknown.
+        """
+        return {}
+
     @abstractmethod
     async def refresh_token(self, credential: "OAuthCredential") -> TokenResult:
         """Refresh the OAuth token for providers that support direct refresh.

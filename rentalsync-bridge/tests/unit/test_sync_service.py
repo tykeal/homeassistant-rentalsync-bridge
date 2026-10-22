@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from src.database import Base
 from src.models.booking import OLD_BOOKING_RETENTION_DAYS, Booking
+from src.models.custom_field import CustomField
 from src.models.listing import Listing
 from src.providers.base import (
     PMSGuest,
@@ -19,7 +20,9 @@ from src.providers.base import (
     PMSProviderError,
     PMSReservation,
 )
+from src.repositories.available_field_repository import AvailableFieldRepository
 from src.repositories.booking_repository import BookingRepository
+from src.repositories.custom_field_repository import CustomFieldRepository
 from src.services.calendar_service import CalendarCache
 from src.services.sync_service import (
     GUEST_SOURCE_ID_KEY,
@@ -3499,3 +3502,249 @@ class TestSyncObservabilityLogging:
         log_text = _sync_log_text(caplog)
         assert "In-progress guard kept booking RES_INPROGRESS" in log_text
         assert "Jane Doe" not in _all_log_text(caplog)
+
+
+class TestCustomFieldLabels:
+    """Tests for provider-supplied custom-field labels (issue #127)."""
+
+    OBJECT_ID = "6a5a9f38050dfd00134fe27e"
+    MANGLED = "6 A 5 A 9 F 38050 Dfd 00134 Fe 27 E"
+    LABEL = "Test door lock code"
+
+    @staticmethod
+    async def _listing(session) -> Listing:
+        """Create and persist a listing for label tests.
+
+        Args:
+            session: Database session.
+
+        Returns:
+            Persisted listing.
+        """
+        listing = Listing(
+            pms_id="PROP_LABELS",
+            name="Label Property",
+            ical_url_slug="label-property",
+            enabled=True,
+            sync_enabled=True,
+        )
+        session.add(listing)
+        await session.commit()
+        await session.refresh(listing)
+        return listing
+
+    @staticmethod
+    async def _available_field(session, listing_id: int, field_key: str):
+        """Fetch a discovered field by key.
+
+        Args:
+            session: Database session.
+            listing_id: Owning listing ID.
+            field_key: Field key to look up.
+
+        Returns:
+            The AvailableField row, or None.
+        """
+        repo = AvailableFieldRepository(session)
+        return await repo.get_by_field_key(listing_id, field_key)
+
+    def _reservations(self):
+        """Build a reservation whose custom data is keyed by ObjectId.
+
+        Returns:
+            Single-element list of PMSReservation.
+        """
+        return [
+            _make_reservation(
+                pms_booking_id="RES_LABEL",
+                custom_data={self.OBJECT_ID: "8160"},
+            )
+        ]
+
+    @pytest.mark.asyncio
+    async def test_definition_label_names_the_discovered_field(
+        self, sync_session, mock_provider
+    ):
+        """Test the Guesty label replaces the derived ObjectId name."""
+        listing = await self._listing(sync_session)
+        mock_provider.get_reservations = AsyncMock(return_value=self._reservations())
+        mock_provider.get_custom_field_definitions = AsyncMock(
+            return_value={self.OBJECT_ID: self.LABEL}
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        field = await self._available_field(sync_session, listing.id, self.OBJECT_ID)
+        assert field is not None
+        assert field.display_name == self.LABEL
+
+    @pytest.mark.asyncio
+    async def test_custom_data_keys_are_not_rewritten(
+        self, sync_session, mock_provider
+    ):
+        """Test configured fields keep working: keys stay the raw fieldId.
+
+        Re-keying by label would silently break every install whose
+        configured field names reference the ObjectId.
+        """
+        listing = await self._listing(sync_session)
+        mock_provider.get_reservations = AsyncMock(return_value=self._reservations())
+        mock_provider.get_custom_field_definitions = AsyncMock(
+            return_value={self.OBJECT_ID: self.LABEL}
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        booking_repo = BookingRepository(sync_session)
+        bookings = await booking_repo.get_for_listing(listing.id)
+        assert bookings[0].custom_data[self.OBJECT_ID] == "8160"
+
+        field = await self._available_field(sync_session, listing.id, self.OBJECT_ID)
+        assert field.field_key == self.OBJECT_ID
+
+    @pytest.mark.asyncio
+    async def test_existing_mangled_display_name_is_repaired(
+        self, sync_session, mock_provider
+    ):
+        """Test a previously discovered field is renamed on next sync."""
+        listing = await self._listing(sync_session)
+        repo = AvailableFieldRepository(sync_session)
+        await repo.upsert_field(listing.id, self.OBJECT_ID, "8160")
+        await sync_session.commit()
+        stale = await self._available_field(sync_session, listing.id, self.OBJECT_ID)
+        assert stale.display_name == self.OBJECT_ID
+
+        mock_provider.get_reservations = AsyncMock(return_value=self._reservations())
+        mock_provider.get_custom_field_definitions = AsyncMock(
+            return_value={self.OBJECT_ID: self.LABEL}
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        field = await self._available_field(sync_session, listing.id, self.OBJECT_ID)
+        assert field.display_name == self.LABEL
+
+    @pytest.mark.asyncio
+    async def test_unedited_custom_field_label_is_repaired(
+        self, sync_session, mock_provider
+    ):
+        """Test the mangled iCal label from issue #127 is replaced."""
+        listing = await self._listing(sync_session)
+        sync_session.add(
+            CustomField(
+                listing_id=listing.id,
+                field_name=self.OBJECT_ID,
+                display_label=self.MANGLED,
+                enabled=True,
+            )
+        )
+        await sync_session.commit()
+
+        mock_provider.get_reservations = AsyncMock(return_value=self._reservations())
+        mock_provider.get_custom_field_definitions = AsyncMock(
+            return_value={self.OBJECT_ID: self.LABEL}
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        repo = CustomFieldRepository(sync_session)
+        field = await repo.get_by_field_name(listing.id, self.OBJECT_ID)
+        assert field.display_label == self.LABEL
+
+    @pytest.mark.asyncio
+    async def test_user_edited_custom_field_label_is_preserved(
+        self, sync_session, mock_provider
+    ):
+        """Test a label the user chose is never overwritten."""
+        listing = await self._listing(sync_session)
+        sync_session.add(
+            CustomField(
+                listing_id=listing.id,
+                field_name=self.OBJECT_ID,
+                display_label="Door Code",
+                enabled=True,
+            )
+        )
+        await sync_session.commit()
+
+        mock_provider.get_reservations = AsyncMock(return_value=self._reservations())
+        mock_provider.get_custom_field_definitions = AsyncMock(
+            return_value={self.OBJECT_ID: self.LABEL}
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        repo = CustomFieldRepository(sync_session)
+        field = await repo.get_by_field_name(listing.id, self.OBJECT_ID)
+        assert field.display_label == "Door Code"
+
+    @pytest.mark.asyncio
+    async def test_sync_completes_when_definitions_are_forbidden(
+        self, sync_session, mock_provider, caplog
+    ):
+        """Test a raising definitions lookup cannot fail a listing sync."""
+        listing = await self._listing(sync_session)
+        mock_provider.get_reservations = AsyncMock(return_value=self._reservations())
+        mock_provider.get_custom_field_definitions = AsyncMock(
+            side_effect=PMSProviderError("HTTP 403: forbidden")
+        )
+
+        service = SyncService(sync_session)
+        with caplog.at_level(logging.WARNING):
+            counts = await service.sync_listing(listing, mock_provider)
+
+        assert counts["inserted"] == 1
+        assert "label lookup failed" in caplog.text
+        field = await self._available_field(sync_session, listing.id, self.OBJECT_ID)
+        assert field.display_name == self.OBJECT_ID
+
+    @pytest.mark.asyncio
+    async def test_sync_completes_when_definitions_are_malformed(
+        self, sync_session, mock_provider
+    ):
+        """Test a non-mapping definitions result is ignored, not applied."""
+        listing = await self._listing(sync_session)
+        mock_provider.get_reservations = AsyncMock(return_value=self._reservations())
+        mock_provider.get_custom_field_definitions = AsyncMock(
+            return_value=["not", "a", "mapping"]
+        )
+
+        service = SyncService(sync_session)
+        counts = await service.sync_listing(listing, mock_provider)
+
+        assert counts["inserted"] == 1
+        field = await self._available_field(sync_session, listing.id, self.OBJECT_ID)
+        assert field.display_name == self.OBJECT_ID
+
+    @pytest.mark.asyncio
+    async def test_definitions_are_requested_once_per_sync(
+        self, sync_session, mock_provider
+    ):
+        """Test the lookup is per sync, never per reservation.
+
+        Guesty's rate limits are account-wide (issue #128), so this call
+        count must not scale with the size of the snapshot.
+        """
+        listing = await self._listing(sync_session)
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(
+                    pms_booking_id=f"RES_LABEL{i}",
+                    custom_data={self.OBJECT_ID: "8160"},
+                )
+                for i in range(5)
+            ]
+        )
+        mock_provider.get_custom_field_definitions = AsyncMock(
+            return_value={self.OBJECT_ID: self.LABEL}
+        )
+
+        service = SyncService(sync_session)
+        await service.sync_listing(listing, mock_provider)
+
+        assert mock_provider.get_custom_field_definitions.await_count == 1

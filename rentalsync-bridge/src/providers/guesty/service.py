@@ -26,6 +26,7 @@ from src.providers.base import (
 from src.providers.guesty.auth import GUESTY_TOKEN_URL, GuestyTokenManager
 from src.providers.registry import provider
 from src.utils.datetime_utils import ensure_utc
+from src.utils.field_labels import humanize_label
 
 if TYPE_CHECKING:
     from src.models.oauth_credential import OAuthCredential
@@ -192,6 +193,42 @@ RESERVATION_FIELDS = " ".join(_RESERVATION_FIELD_PATHS)
 # explained by one or two odd bookings.
 _UNCLASSIFIED_MIN_SAMPLE = 4
 _UNCLASSIFIED_MAX_RATIO = 0.5
+
+# Custom-field definitions (issue #127).
+#
+# ``GET /v1/reservations-v3/{id}/custom-fields`` returns only
+# ``{_id, fieldId, value}`` — never a name — so values arrive keyed by a raw
+# ObjectId.  The names live on a separate, unpaginated account-level
+# endpoint which returns every definition for the account in one call;
+# ``reservation`` definitions must be separated from ``listing`` ones
+# client-side because the endpoint takes no discriminator.
+CUSTOM_FIELD_DEFINITIONS_URL = "/v1/accounts/me/custom-fields"
+CUSTOM_FIELD_OBJECT_RESERVATION = "reservation"
+
+# Definitions change only when an account owner edits them in the Guesty
+# dashboard, and carry no ``updatedAt`` or ETag, so staleness cannot be
+# detected cheaply.  They are cached process-wide for a day, which keeps
+# this at well under one call per sync against Guesty's account-wide
+# limits (15/sec, 120/min, 5000/hour — see issue #128).
+CUSTOM_FIELD_DEFINITIONS_TTL = timedelta(hours=24)
+
+# A failed fetch is cached too, so a token lacking Guesty's custom-field
+# permission cannot generate a request (or a log line) on every sync.  The
+# shorter window lets a permission grant take effect the same hour.
+CUSTOM_FIELD_DEFINITIONS_FAILURE_TTL = timedelta(hours=1)
+
+# Cache entries: key -> (expires_at, labels by fieldId).
+_definitions_cache: dict[str, tuple[datetime, dict[str, str]]] = {}
+_definitions_lock = asyncio.Lock()
+
+
+def clear_custom_field_definitions_cache() -> None:
+    """Drop every cached custom-field definition set.
+
+    Exposed for tests and for callers that know the account's definitions
+    have changed.
+    """
+    _definitions_cache.clear()
 
 
 @provider("guesty")
@@ -779,6 +816,64 @@ class GuestyProvider(PMSProvider):
 
         return {}
 
+    async def get_custom_field_definitions(self) -> dict[str, str]:
+        """Fetch reservation custom-field labels for the Guesty account.
+
+        Uses ``GET /v1/accounts/me/custom-fields``, which is unpaginated
+        and returns every definition on the account in a single call.
+        Results are cached process-wide (see
+        ``CUSTOM_FIELD_DEFINITIONS_TTL``) because the value endpoint keys
+        by ObjectId on every reservation but the names never change.
+
+        Never raises: a 403 (the token lacks Guesty's custom-field
+        permission), any other API error, or a malformed payload logs a
+        single warning and yields an empty mapping, leaving labels to fall
+        back to the raw field key.
+
+        Returns:
+            Mapping of ``fieldId`` to display label, possibly empty.
+        """
+        cache_key = self._definitions_cache_key()
+        now = datetime.now(UTC)
+
+        async with _definitions_lock:
+            cached = _definitions_cache.get(cache_key)
+            if cached is not None and cached[0] > now:
+                return dict(cached[1])
+
+            try:
+                response = await self._request("GET", CUSTOM_FIELD_DEFINITIONS_URL)
+                labels = _parse_custom_field_definitions(response.json())
+            except Exception as exc:  # labels are cosmetic, never fatal
+                logger.warning(
+                    "Unable to resolve Guesty custom-field names (%s); "
+                    "field labels fall back to raw field identifiers",
+                    exc,
+                )
+                _definitions_cache[cache_key] = (
+                    now + CUSTOM_FIELD_DEFINITIONS_FAILURE_TTL,
+                    {},
+                )
+                return {}
+
+            _definitions_cache[cache_key] = (
+                now + CUSTOM_FIELD_DEFINITIONS_TTL,
+                labels,
+            )
+            return dict(labels)
+
+    def _definitions_cache_key(self) -> str:
+        """Build the cache key for this provider's Guesty account.
+
+        Definitions are account-wide, so the credential row behind the
+        token manager identifies the cache scope.
+
+        Returns:
+            Stable key for the credential in use.
+        """
+        credential_id = getattr(self._token_manager, "_credential_id", None)
+        return f"credential:{credential_id}"
+
     async def refresh_token(
         self,
         credential: "OAuthCredential",
@@ -1008,6 +1103,64 @@ _LISTING_REF_KEYS = ("listingId", "parentListingId", "unitTypeId", "unitId")
 # child listing points back at its parent through ``mtl.p``; the others are
 # defensive aliases seen across API generations.
 _LISTING_PARENT_KEYS = ("parentListingId", "parentId", "unitTypeId")
+
+
+def _parse_custom_field_definitions(data: Any) -> dict[str, str]:
+    """Build a fieldId → label map from an account custom-fields payload.
+
+    Only ``object == "reservation"`` definitions are kept: the endpoint
+    returns listing definitions from the same list with no server-side
+    discriminator.
+
+    Guesty's documentation contradicts itself about whether ``key`` or
+    ``displayName`` holds the human-readable name, so ``displayName`` is
+    preferred when non-empty and ``key`` is used otherwise, and whichever
+    is chosen is humanised if it looks like a slug.  That way the label is
+    right regardless of which property the account actually populates.
+
+    Args:
+        data: Decoded JSON body, expected to be a list of definitions
+            (or a dict wrapping one under ``results``/``data``).
+
+    Returns:
+        Mapping of ``fieldId`` to display label; empty when the payload is
+        not shaped as expected.
+    """
+    if isinstance(data, dict):
+        for wrapper in ("results", "data", "customFields", "fields"):
+            nested = data.get(wrapper)
+            if isinstance(nested, list):
+                data = nested
+                break
+
+    if not isinstance(data, list):
+        logger.warning(
+            "Unexpected Guesty custom-field definitions payload (%s); "
+            "field labels fall back to raw field identifiers",
+            type(data).__name__,
+        )
+        return {}
+
+    labels: dict[str, str] = {}
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        if item.get("object") != CUSTOM_FIELD_OBJECT_RESERVATION:
+            continue
+        field_id = item.get("fieldId") or item.get("_id")
+        if not isinstance(field_id, str) or not field_id:
+            continue
+
+        raw_label = item.get("displayName")
+        if not isinstance(raw_label, str) or not raw_label.strip():
+            raw_label = item.get("key")
+        if not isinstance(raw_label, str):
+            continue
+        label = humanize_label(raw_label)
+        if label:
+            labels[field_id] = label
+
+    return labels
 
 
 def _rooms_from_document(data: dict[str, Any], listing_pms_id: str) -> list[PMSRoom]:
