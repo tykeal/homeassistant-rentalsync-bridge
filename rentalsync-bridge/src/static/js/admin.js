@@ -121,9 +121,39 @@ async function loadStatus() {
 // Booking fields here are provider-controlled strings (notably the raw
 // status) and are inserted with textContent only - never interpolated into
 // an innerHTML template.
-function formatWithheldDate(value) {
+//
+// Date fields are serialised unambiguously by the API: an all-day stay is a
+// plain YYYY-MM-DD calendar date with no instant, so it is rendered as-is
+// and never passed through Date(), which would reinterpret it as UTC and
+// shift it a day west.  A timed stay carries an explicit UTC offset and is
+// rendered in the listing's own timezone, not the browser's.
+function formatWithheldDate(value, allDay, timezone) {
+    if (allDay) {
+        const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+        if (!parts) {
+            return value;
+        }
+        // Construct in local time so no timezone conversion can occur.
+        const localNoon = new Date(
+            Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]), 12,
+        );
+        return localNoon.toLocaleDateString();
+    }
+
     const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
+    if (Number.isNaN(parsed.getTime())) {
+        return value;
+    }
+    const options = { dateStyle: 'medium', timeStyle: 'short' };
+    if (timezone) {
+        options.timeZone = timezone;
+    }
+    try {
+        return parsed.toLocaleString(undefined, options);
+    } catch (error) {
+        // Unknown IANA zone on this browser - fall back to the raw value.
+        return parsed.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    }
 }
 
 function createWithheldRow(booking) {
@@ -144,7 +174,9 @@ function createWithheldRow(booking) {
 
     const datesEl = document.createElement('span');
     datesEl.className = 'withheld-dates';
-    datesEl.textContent = `${formatWithheldDate(booking.check_in_date)} → ${formatWithheldDate(booking.check_out_date)}`;
+    const allDay = booking.all_day === true;
+    const tz = booking.listing_timezone;
+    datesEl.textContent = `${formatWithheldDate(booking.check_in_date, allDay, tz)} → ${formatWithheldDate(booking.check_out_date, allDay, tz)}`;
     row.appendChild(datesEl);
 
     const statusEl = document.createElement('span');

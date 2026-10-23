@@ -13,6 +13,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.models.booking import Booking
 from src.models.listing import Listing
 from src.utils.datetime_utils import ensure_utc
+from src.utils.stay_time import get_timezone, is_stay_over
+
+# How far before "now" the SQL bound for withheld bookings reaches.  The
+# exact stay boundary is listing-local and cannot be expressed in SQL, so
+# the predicate is widened by more than any real UTC offset (max +/-14h)
+# and the precise boundary is applied in Python afterwards.
+WITHHELD_SQL_BOUND_SLACK = timedelta(days=2)
 
 
 @dataclass(frozen=True)
@@ -151,6 +158,13 @@ class BookingRepository:
         Only current or future stays are returned; a withheld stay that has
         already ended is not actionable.  Unlike
         ``get_confirmed_for_listing`` there is deliberately no grace window.
+        The stay boundary is evaluated in the listing's own timezone: an
+        all-day stay checking out "tomorrow" locally is still underway even
+        once UTC has rolled past midnight.  That listing-local boundary
+        cannot be expressed in SQL, so the predicate below uses a
+        deliberately generous, index-friendly bound wide enough to cover any
+        timezone offset and the exact boundary is applied in Python.  There
+        are only ever a handful of withheld bookings, so this is cheap.
 
         A single query with a column projection is issued: the admin UI
         polls this, and selecting whole ``Listing``/``Booking`` entities
@@ -167,6 +181,7 @@ class BookingRepository:
             listing name then check-in date.
         """
         reference = ensure_utc(now) if now else datetime.now(UTC)
+        sql_cutoff = (reference - WITHHELD_SQL_BOUND_SLACK).replace(tzinfo=None)
 
         result = await self._session.execute(
             select(
@@ -184,25 +199,30 @@ class BookingRepository:
             .where(
                 Listing.enabled.is_(True),
                 Booking.status.notin_(list(classified_statuses)),
-                Booking.check_out_date >= reference,
+                Booking.check_out_date >= sql_cutoff,
             )
             .order_by(Listing.name, Booking.check_in_date, Booking.id)
         )
 
-        return [
-            WithheldBookingRow(
-                booking_id=row.id,
-                listing_id=row.listing_id,
-                listing_name=row.name,
-                listing_timezone=row.timezone or "UTC",
-                pms_booking_id=row.pms_booking_id,
-                room_id=row.room_id,
-                check_in_date=row.check_in_date,
-                check_out_date=row.check_out_date,
-                status=row.status,
+        withheld: list[WithheldBookingRow] = []
+        for row in result.all():
+            tz = get_timezone(row.timezone or "UTC")
+            if is_stay_over(row.check_in_date, row.check_out_date, tz, reference):
+                continue
+            withheld.append(
+                WithheldBookingRow(
+                    booking_id=row.id,
+                    listing_id=row.listing_id,
+                    listing_name=row.name,
+                    listing_timezone=str(tz),
+                    pms_booking_id=row.pms_booking_id,
+                    room_id=row.room_id,
+                    check_in_date=row.check_in_date,
+                    check_out_date=row.check_out_date,
+                    status=row.status,
+                )
             )
-            for row in result.all()
-        ]
+        return withheld
 
     async def get_for_listing_in_range(
         self,

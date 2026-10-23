@@ -5,15 +5,21 @@
 import hashlib
 import logging
 from collections.abc import Sequence
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import cast
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo
 
 from icalendar import Calendar, Event, Timezone
 
 from src.models.booking import Booking
 from src.models.custom_field import CustomField
 from src.models.listing import Listing
+from src.utils.stay_time import (
+    get_timezone,
+    has_meaningful_times,
+    to_local_date,
+    to_local_datetime,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -341,11 +347,7 @@ class CalendarService:
         Returns:
             ZoneInfo object, defaults to UTC on invalid timezone.
         """
-        try:
-            return ZoneInfo(timezone_str)
-        except ZoneInfoNotFoundError:
-            logger.warning("Invalid timezone '%s', falling back to UTC", timezone_str)
-            return ZoneInfo("UTC")
+        return get_timezone(timezone_str)
 
     def _to_ical_date(self, dt: datetime, tz: ZoneInfo) -> date:
         """Convert datetime to date for all-day iCal events.
@@ -361,16 +363,7 @@ class CalendarService:
         Returns:
             Date object for the event day.
         """
-        if dt.tzinfo is None:
-            # Naive datetime - assume UTC (SQLite strips timezone)
-            dt = dt.replace(tzinfo=UTC)
-        # When time is midnight UTC the PMS meant a pure date;
-        # converting to a western timezone would shift to previous day.
-        midnight = time(0, 0)
-        if dt.astimezone(UTC).time() == midnight:
-            return dt.astimezone(UTC).date()
-        # Non-midnight aware datetime - convert to listing timezone
-        return dt.astimezone(tz).date()
+        return to_local_date(dt, tz)
 
     def _to_ical_datetime(self, dt: datetime, tz: ZoneInfo) -> datetime:
         """Convert datetime to listing timezone for timed iCal events.
@@ -388,9 +381,7 @@ class CalendarService:
         Returns:
             Timezone-aware datetime in the listing's timezone.
         """
-        if dt.tzinfo is None:
-            return dt.replace(tzinfo=UTC).astimezone(tz)
-        return dt.astimezone(tz)
+        return to_local_datetime(dt, tz)
 
     @staticmethod
     def _fallback_timezone(tz: ZoneInfo) -> Timezone:
@@ -474,18 +465,7 @@ class CalendarService:
         Returns:
             True if both datetimes have a non-midnight UTC time.
         """
-        midnight = time(0, 0)
-        ci = (
-            check_in.replace(tzinfo=UTC)
-            if check_in.tzinfo is None
-            else check_in.astimezone(UTC)
-        )
-        co = (
-            check_out.replace(tzinfo=UTC)
-            if check_out.tzinfo is None
-            else check_out.astimezone(UTC)
-        )
-        return ci.time() != midnight and co.time() != midnight
+        return has_meaningful_times(check_in, check_out)
 
     def _generate_uid(self, booking: Booking) -> str:
         """Generate unique event ID for booking.

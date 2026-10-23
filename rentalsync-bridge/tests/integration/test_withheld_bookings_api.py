@@ -13,6 +13,7 @@ from src.database import Base, get_db
 from src.main import create_app
 from src.models.booking import Booking
 from src.models.listing import Listing
+from src.repositories import booking_repository
 
 
 @pytest.fixture
@@ -220,6 +221,183 @@ class TestWithheldBookings:
         data = response.json()
         assert data["bookings_count"] == 4
         assert data["withheld_bookings_count"] == 2
+
+
+class TestWithheldBookingDates:
+    """Date serialisation must be unambiguous for the browser."""
+
+    @pytest.mark.asyncio
+    async def test_all_day_stay_serialised_as_plain_dates(
+        self, withheld_app, withheld_session
+    ):
+        """All-day stays have no instant, so they carry no offset."""
+        listing = Listing(
+            pms_id="PROP_ALLDAY",
+            name="All Day House",
+            ical_url_slug="all-day-house",
+            enabled=True,
+            sync_enabled=True,
+            timezone="America/Los_Angeles",
+        )
+        withheld_session.add(listing)
+        await withheld_session.commit()
+        await withheld_session.refresh(listing)
+
+        withheld_session.add(
+            Booking(
+                listing_id=listing.id,
+                pms_booking_id="BK_ALLDAY",
+                check_in_date=datetime.now(UTC).replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
+                + timedelta(days=1),
+                check_out_date=datetime.now(UTC).replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
+                + timedelta(days=4),
+                status="mystery",
+            )
+        )
+        await withheld_session.commit()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=withheld_app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/api/bookings/withheld",
+                headers={"Authorization": "******"},
+            )
+
+        booking = response.json()["bookings"][0]
+        assert booking["all_day"] is True
+        assert booking["listing_timezone"] == "America/Los_Angeles"
+        expected_in = (datetime.now(UTC) + timedelta(days=1)).date().isoformat()
+        assert booking["check_in_date"] == expected_in
+        assert "T" not in booking["check_in_date"]
+        assert "T" not in booking["check_out_date"]
+
+    @pytest.mark.asyncio
+    async def test_timed_stay_serialised_in_listing_timezone(
+        self, withheld_app, withheld_session
+    ):
+        """Timed stays carry an explicit listing-timezone UTC offset."""
+        listing = Listing(
+            pms_id="PROP_TIMED",
+            name="Timed House",
+            ical_url_slug="timed-house",
+            enabled=True,
+            sync_enabled=True,
+            timezone="America/Los_Angeles",
+        )
+        withheld_session.add(listing)
+        await withheld_session.commit()
+        await withheld_session.refresh(listing)
+
+        check_in = datetime.now(UTC).replace(microsecond=0) + timedelta(days=1, hours=5)
+        withheld_session.add(
+            Booking(
+                listing_id=listing.id,
+                pms_booking_id="BK_TIMED",
+                check_in_date=check_in,
+                check_out_date=check_in + timedelta(days=3, hours=2),
+                status="mystery",
+            )
+        )
+        await withheld_session.commit()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=withheld_app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/api/bookings/withheld",
+                headers={"Authorization": "******"},
+            )
+
+        booking = response.json()["bookings"][0]
+        assert booking["all_day"] is False
+        # Explicit offset, so the browser cannot reinterpret the instant.
+        assert booking["check_in_date"].endswith(("-07:00", "-08:00"))
+        assert datetime.fromisoformat(booking["check_in_date"]) == check_in
+
+
+class TestWithheldListingLocalBoundary:
+    """The panel and the badge must agree across a timezone boundary."""
+
+    @pytest.fixture
+    def frozen_now(self, monkeypatch):
+        """Freeze the repository's clock just after a UTC date rollover.
+
+        At 2024-06-10T01:00Z it is still 2024-06-09 in Los Angeles, so an
+        all-day stay checking out on the 10th is still underway there.
+        """
+        frozen = datetime(2024, 6, 10, 1, 0, tzinfo=UTC)
+
+        class _Frozen(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return frozen if tz else frozen.replace(tzinfo=None)
+
+        monkeypatch.setattr(booking_repository, "datetime", _Frozen)
+        return frozen
+
+    async def _seed_boundary(self, session: AsyncSession) -> None:
+        """Seed one still-local-today stay and one genuinely past stay."""
+        listing = Listing(
+            pms_id="PROP_LA",
+            name="LA House",
+            ical_url_slug="la-house",
+            enabled=True,
+            sync_enabled=True,
+            timezone="America/Los_Angeles",
+        )
+        session.add(listing)
+        await session.commit()
+        await session.refresh(listing)
+
+        session.add_all(
+            [
+                Booking(
+                    listing_id=listing.id,
+                    pms_booking_id="BK_LOCAL_TODAY",
+                    check_in_date=datetime(2024, 6, 7, tzinfo=UTC),
+                    check_out_date=datetime(2024, 6, 10, tzinfo=UTC),
+                    status="mystery",
+                ),
+                Booking(
+                    listing_id=listing.id,
+                    pms_booking_id="BK_PAST",
+                    check_in_date=datetime(2024, 6, 5, tzinfo=UTC),
+                    check_out_date=datetime(2024, 6, 9, tzinfo=UTC),
+                    status="mystery",
+                ),
+            ]
+        )
+        await session.commit()
+
+    @pytest.mark.asyncio
+    async def test_badge_count_matches_panel_across_boundary(
+        self, withheld_app, withheld_session, frozen_now
+    ):
+        """Badge and panel derive from one code path, so they agree."""
+        await self._seed_boundary(withheld_session)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=withheld_app), base_url="http://test"
+        ) as client:
+            panel = await client.get(
+                "/api/bookings/withheld",
+                headers={"Authorization": "******"},
+            )
+            status = await client.get(
+                "/api/status",
+                headers={"Authorization": "******"},
+            )
+
+        panel_data = panel.json()
+        assert [b["pms_booking_id"] for b in panel_data["bookings"]] == [
+            "BK_LOCAL_TODAY"
+        ]
+        assert status.json()["withheld_bookings_count"] == panel_data["count"]
 
 
 class TestWithheldQueryCount:

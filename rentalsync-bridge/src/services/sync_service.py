@@ -27,7 +27,8 @@ from src.repositories.available_field_repository import (
 from src.repositories.booking_repository import BookingRepository
 from src.repositories.custom_field_repository import CustomFieldRepository
 from src.repositories.room_repository import RoomRepository
-from src.services.calendar_service import CalendarCache, CalendarService
+from src.services.calendar_service import CalendarCache
+from src.utils.stay_time import get_timezone, is_stay_in_progress
 
 logger = logging.getLogger(__name__)
 
@@ -117,11 +118,6 @@ def _enrichment_owned(data: dict) -> dict:
 def _exportable(data: dict) -> dict:
     """Drop bookkeeping keys that must not reach a booking's custom data."""
     return {k: v for k, v in data.items() if k != GUEST_SOURCE_ID_KEY}
-
-
-# The all-day vs timed export rules live in CalendarService; reuse them so
-# the prune guard agrees with what the exported calendar actually shows.
-_CALENDAR_RULES = CalendarService()
 
 
 class SyncServiceError(Exception):
@@ -772,7 +768,7 @@ class SyncService:
     ) -> bool:
         """Check whether a stored booking's stay is currently underway.
 
-        Mirrors how ``CalendarService`` exports the stay so the prune guard
+        Mirrors how the calendar exports the stay so the prune guard
         and the published calendar can never disagree: all-day stays are
         compared as local calendar dates in the listing timezone, timed
         stays are compared as instants.
@@ -789,30 +785,12 @@ class SyncService:
         Returns:
             True if the stay is underway at the reference time.
         """
-        reference = now or datetime.now(UTC)
-        if reference.tzinfo is None:
-            reference = reference.replace(tzinfo=UTC)
-
-        check_in = booking.check_in_date
-        check_out = booking.check_out_date
-        calendar = _CALENDAR_RULES
-        tz = calendar._get_timezone(listing.timezone if listing else "UTC")
-
-        if not calendar._has_meaningful_times(check_in, check_out):
-            # All-day stay: the calendar exports plain dates, so compare the
-            # guest's local calendar day rather than the stored instants.
-            today = reference.astimezone(tz).date()
-            return (
-                calendar._to_ical_date(check_in, tz)
-                <= today
-                < calendar._to_ical_date(check_out, tz)
-            )
-
-        if check_in.tzinfo is None:
-            check_in = check_in.replace(tzinfo=UTC)
-        if check_out.tzinfo is None:
-            check_out = check_out.replace(tzinfo=UTC)
-        return check_in <= reference < check_out
+        return is_stay_in_progress(
+            booking.check_in_date,
+            booking.check_out_date,
+            get_timezone(listing.timezone if listing else "UTC"),
+            now,
+        )
 
     @staticmethod
     def _normalize_booking_status(

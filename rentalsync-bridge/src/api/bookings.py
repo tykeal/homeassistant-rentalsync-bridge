@@ -16,6 +16,12 @@ from src.repositories.booking_repository import (
     WithheldBookingRow,
 )
 from src.services.sync_service import KNOWN_BOOKING_STATUSES
+from src.utils.stay_time import (
+    get_timezone,
+    has_meaningful_times,
+    to_local_date,
+    to_local_datetime,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +51,28 @@ class WithheldBooking(BaseModel):
 
     listing_id: int = Field(description="Listing ID the booking belongs to")
     listing_name: str = Field(description="Listing name")
+    listing_timezone: str = Field(description="IANA timezone of the listing")
     pms_booking_id: str = Field(description="PMS reservation ID")
     room_id: int | None = Field(default=None, description="Room ID, if assigned")
-    check_in_date: str = Field(description="Check-in timestamp (ISO 8601)")
-    check_out_date: str = Field(description="Check-out timestamp (ISO 8601)")
+    all_day: bool = Field(
+        description=(
+            "True when the provider gave dates only.  All-day stays have no "
+            "instant, so their dates must not be timezone-converted."
+        )
+    )
+    check_in_date: str = Field(
+        description=(
+            "Check-in: a plain ``YYYY-MM-DD`` calendar date when ``all_day``, "
+            "otherwise an ISO 8601 timestamp with the listing's UTC offset"
+        )
+    )
+    check_out_date: str = Field(
+        description=(
+            "Check-out: a plain ``YYYY-MM-DD`` calendar date when "
+            "``all_day``, otherwise an ISO 8601 timestamp with the listing's "
+            "UTC offset"
+        )
+    )
     status: str = Field(
         description="Raw provider status, stored verbatim (may be empty)"
     )
@@ -64,19 +88,35 @@ class WithheldBookingsResponse(BaseModel):
 def serialise_withheld(row: WithheldBookingRow) -> dict[str, Any]:
     """Serialise a withheld booking row for the admin UI.
 
+    Dates are rendered unambiguously so the browser cannot reinterpret
+    them.  An all-day stay has no instant, so it is rendered as a plain
+    calendar date and must not be timezone-converted by the client; a timed
+    stay is rendered in the listing's timezone with an explicit UTC offset.
+
     Args:
         row: Withheld booking projection from the repository.
 
     Returns:
         JSON-ready mapping, free of guest PII.
     """
+    tz = get_timezone(row.listing_timezone)
+    all_day = not has_meaningful_times(row.check_in_date, row.check_out_date)
+    if all_day:
+        check_in = to_local_date(row.check_in_date, tz).isoformat()
+        check_out = to_local_date(row.check_out_date, tz).isoformat()
+    else:
+        check_in = to_local_datetime(row.check_in_date, tz).isoformat()
+        check_out = to_local_datetime(row.check_out_date, tz).isoformat()
+
     return {
         "listing_id": row.listing_id,
         "listing_name": row.listing_name,
+        "listing_timezone": row.listing_timezone,
         "pms_booking_id": row.pms_booking_id,
         "room_id": row.room_id,
-        "check_in_date": row.check_in_date.isoformat(),
-        "check_out_date": row.check_out_date.isoformat(),
+        "all_day": all_day,
+        "check_in_date": check_in,
+        "check_out_date": check_out,
         "status": row.status,
     }
 
