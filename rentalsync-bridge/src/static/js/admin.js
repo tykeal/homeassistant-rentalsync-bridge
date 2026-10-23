@@ -31,6 +31,9 @@ const elements = {
     statusOAuth: document.getElementById('status-oauth'),
     statusSync: document.getElementById('status-sync'),
     statusListings: document.getElementById('status-listings'),
+    statusWithheld: document.getElementById('status-withheld'),
+    withheldSection: document.getElementById('withheld-section'),
+    withheldContainer: document.getElementById('withheld-container'),
     oauthForm: document.getElementById('oauth-form'),
     oauthConnected: document.getElementById('oauth-connected'),
     oauthStatusText: document.getElementById('oauth-status-text'),
@@ -102,10 +105,107 @@ async function loadStatus() {
             : 'Never';
 
         elements.statusListings.textContent = `${status.listings.enabled}/${status.listings.total}`;
+
+        const withheldCount = status.withheld_bookings_count || 0;
+        elements.statusWithheld.textContent = String(withheldCount);
+        elements.statusWithheld.className = `badge ${withheldCount > 0 ? 'warning' : 'healthy'}`;
     } catch (error) {
         console.error('Failed to load status:', error);
         elements.statusOverall.textContent = 'Error';
         elements.statusOverall.className = 'badge error';
+    }
+}
+
+// Withheld Bookings ("Needs attention")
+//
+// Booking fields here are provider-controlled strings (notably the raw
+// status) and are inserted with textContent only - never interpolated into
+// an innerHTML template.
+function formatWithheldDate(value) {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
+}
+
+function createWithheldRow(booking) {
+    const row = document.createElement('div');
+    row.className = 'withheld-booking';
+
+    const idEl = document.createElement('span');
+    idEl.className = 'withheld-booking-id';
+    idEl.textContent = booking.pms_booking_id;
+    row.appendChild(idEl);
+
+    const roomEl = document.createElement('span');
+    roomEl.className = 'withheld-room';
+    roomEl.textContent = booking.room_id === null || booking.room_id === undefined
+        ? 'Room: —'
+        : `Room: ${booking.room_id}`;
+    row.appendChild(roomEl);
+
+    const datesEl = document.createElement('span');
+    datesEl.className = 'withheld-dates';
+    datesEl.textContent = `${formatWithheldDate(booking.check_in_date)} → ${formatWithheldDate(booking.check_out_date)}`;
+    row.appendChild(datesEl);
+
+    const statusEl = document.createElement('span');
+    const rawStatus = booking.status || '';
+    if (rawStatus === '') {
+        statusEl.className = 'withheld-status empty';
+        statusEl.textContent = '(no status reported)';
+    } else {
+        statusEl.className = 'withheld-status';
+        statusEl.textContent = rawStatus;
+    }
+    row.appendChild(statusEl);
+
+    return row;
+}
+
+function renderWithheldBookings(bookings) {
+    elements.withheldContainer.replaceChildren();
+
+    if (!bookings || bookings.length === 0) {
+        elements.withheldSection.classList.add('hidden');
+        return;
+    }
+
+    // Group by listing, preserving the order the API returned.
+    const groups = new Map();
+    bookings.forEach((booking) => {
+        if (!groups.has(booking.listing_id)) {
+            groups.set(booking.listing_id, {
+                name: booking.listing_name,
+                items: [],
+            });
+        }
+        groups.get(booking.listing_id).items.push(booking);
+    });
+
+    groups.forEach((group) => {
+        const groupEl = document.createElement('div');
+        groupEl.className = 'withheld-group';
+
+        const heading = document.createElement('h3');
+        heading.textContent = group.name;
+        groupEl.appendChild(heading);
+
+        group.items.forEach((booking) => {
+            groupEl.appendChild(createWithheldRow(booking));
+        });
+
+        elements.withheldContainer.appendChild(groupEl);
+    });
+
+    elements.withheldSection.classList.remove('hidden');
+}
+
+async function loadWithheldBookings() {
+    try {
+        const data = await fetchAPI('/api/bookings/withheld');
+        renderWithheldBookings(data.bookings);
+    } catch (error) {
+        console.error('Failed to load withheld bookings:', error);
+        elements.withheldSection.classList.add('hidden');
     }
 }
 
@@ -1526,12 +1626,16 @@ document.addEventListener('DOMContentLoaded', () => {
     loadStatus();
     loadListings();
     loadSyncSettings();
+    loadWithheldBookings();
 
     // Refresh status periodically (every 30 seconds)
     setInterval(loadStatus, 30000);
 
     // Refresh listings periodically to update timestamps (every 60 seconds)
     setInterval(loadListings, 60000);
+
+    // Refresh withheld bookings periodically (every 60 seconds)
+    setInterval(loadWithheldBookings, 60000);
 });
 
 // Export functions for inline handlers

@@ -41,7 +41,22 @@ SPDX-License-Identifier: Apache-2.0
                     <span class="label">Listings:</span>
                     <span id="status-listings">--</span>
                 </div>
+                <div class="status-item">
+                    <span class="label">Needs Attention:</span>
+                    <span id="status-withheld" class="badge">--</span>
+                </div>
             </div>
+        </section>
+
+        <!-- Withheld Bookings (hidden unless there are any) -->
+        <section id="withheld-section" class="card hidden">
+            <h2>Needs Attention</h2>
+            <p class="description">
+                These bookings are withheld from the iCal export because their
+                status is not recognised. Please report the raw status shown
+                below in a GitHub issue so a mapping can be added.
+            </p>
+            <div id="withheld-container"></div>
         </section>
 
         <!-- OAuth Configuration -->

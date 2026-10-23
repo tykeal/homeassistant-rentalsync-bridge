@@ -12,6 +12,7 @@ from fastapi.responses import RedirectResponse
 
 from src.api import (
     admin,
+    bookings,
     custom_fields,
     health,
     ical,
@@ -96,6 +97,7 @@ def create_app() -> FastAPI:
 
     # Include routers
     app.include_router(admin.router, prefix="/admin")
+    app.include_router(bookings.router)
     app.include_router(health.router)
     app.include_router(ical.router)
     app.include_router(custom_fields.router)

@@ -5,6 +5,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from src.api.bookings import CLASSIFIED_STATUSES
 from src.models import Booking, CustomField, Listing
 from src.repositories.available_field_repository import (
     AvailableFieldRepository,
@@ -242,6 +243,162 @@ class TestBookingRepository:
         assert "Checked In Guest" in guest_names
         assert "Checked Out Guest" in guest_names
         assert "Cancelled Guest" not in guest_names
+
+    @pytest.mark.asyncio
+    async def test_get_withheld_returns_unknown_statuses(self, async_session):
+        """Unknown statuses, including the empty string, are returned."""
+        listing_repo = ListingRepository(async_session)
+        listing = await listing_repo.create(
+            Listing(
+                pms_id="withheld_test",
+                name="Withheld Test",
+                enabled=True,
+                sync_enabled=True,
+                timezone="UTC",
+            )
+        )
+
+        repo = BookingRepository(async_session)
+        for pms_id, status in (
+            ("BK_UNKNOWN", "inquiry"),
+            ("BK_EMPTY", ""),
+        ):
+            await repo.create(
+                Booking(
+                    listing_id=listing.id,
+                    pms_booking_id=pms_id,
+                    check_in_date=datetime.now(UTC) + timedelta(days=1),
+                    check_out_date=datetime.now(UTC) + timedelta(days=5),
+                    status=status,
+                )
+            )
+
+        withheld = await repo.get_withheld_for_listing(listing.id, CLASSIFIED_STATUSES)
+
+        assert {b.pms_booking_id: b.status for b in withheld} == {
+            "BK_UNKNOWN": "inquiry",
+            "BK_EMPTY": "",
+        }
+
+    @pytest.mark.asyncio
+    async def test_get_withheld_excludes_classified_statuses(self, async_session):
+        """Known and recognised-non-export statuses are never surfaced."""
+        listing_repo = ListingRepository(async_session)
+        listing = await listing_repo.create(
+            Listing(
+                pms_id="withheld_classified",
+                name="Withheld Classified",
+                enabled=True,
+                sync_enabled=True,
+                timezone="UTC",
+            )
+        )
+
+        repo = BookingRepository(async_session)
+        classified = [
+            "confirmed",
+            "checked_in",
+            "checked_out",
+            "cancelled",
+            "expired",
+            "closed",
+            "declined",
+            "awaiting_payment",
+        ]
+        for status in classified:
+            await repo.create(
+                Booking(
+                    listing_id=listing.id,
+                    pms_booking_id=f"BK_{status}",
+                    check_in_date=datetime.now(UTC) + timedelta(days=1),
+                    check_out_date=datetime.now(UTC) + timedelta(days=5),
+                    status=status,
+                )
+            )
+
+        withheld = await repo.get_withheld_for_listing(listing.id, CLASSIFIED_STATUSES)
+
+        assert list(withheld) == []
+        returned = {b.status for b in withheld}
+        for status in ("expired", "closed", "declined", "awaiting_payment"):
+            assert status not in returned
+
+    @pytest.mark.asyncio
+    async def test_get_withheld_excludes_past_stays(self, async_session):
+        """Past withheld stays are noise; in-progress stays are actionable."""
+        listing_repo = ListingRepository(async_session)
+        listing = await listing_repo.create(
+            Listing(
+                pms_id="withheld_dates",
+                name="Withheld Dates",
+                enabled=True,
+                sync_enabled=True,
+                timezone="UTC",
+            )
+        )
+
+        repo = BookingRepository(async_session)
+        await repo.create(
+            Booking(
+                listing_id=listing.id,
+                pms_booking_id="BK_PAST",
+                check_in_date=datetime.now(UTC) - timedelta(days=5),
+                check_out_date=datetime.now(UTC) - timedelta(days=1),
+                status="mystery",
+            )
+        )
+        await repo.create(
+            Booking(
+                listing_id=listing.id,
+                pms_booking_id="BK_IN_PROGRESS",
+                check_in_date=datetime.now(UTC) - timedelta(days=1),
+                check_out_date=datetime.now(UTC) + timedelta(days=2),
+                status="mystery",
+            )
+        )
+
+        withheld = await repo.get_withheld_for_listing(listing.id, CLASSIFIED_STATUSES)
+
+        assert [b.pms_booking_id for b in withheld] == ["BK_IN_PROGRESS"]
+
+    @pytest.mark.asyncio
+    async def test_count_withheld_only_enabled_listings(self, async_session):
+        """Bookings on disabled listings are not counted."""
+        listing_repo = ListingRepository(async_session)
+        enabled = await listing_repo.create(
+            Listing(
+                pms_id="withheld_enabled",
+                name="Withheld Enabled",
+                enabled=True,
+                sync_enabled=True,
+                timezone="UTC",
+            )
+        )
+        disabled = await listing_repo.create(
+            Listing(
+                pms_id="withheld_disabled",
+                name="Withheld Disabled",
+                enabled=False,
+                sync_enabled=True,
+                timezone="UTC",
+            )
+        )
+
+        repo = BookingRepository(async_session)
+        for listing in (enabled, disabled):
+            await repo.create(
+                Booking(
+                    listing_id=listing.id,
+                    pms_booking_id=f"BK_{listing.pms_id}",
+                    check_in_date=datetime.now(UTC) + timedelta(days=1),
+                    check_out_date=datetime.now(UTC) + timedelta(days=5),
+                    status="mystery",
+                )
+            )
+
+        count = await repo.count_withheld_for_enabled_listings(CLASSIFIED_STATUSES)
+
+        assert count == 1
 
     @pytest.mark.asyncio
     async def test_upsert_insert(self, async_session):
