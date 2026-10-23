@@ -686,13 +686,18 @@ header .subtitle {
     padding: 2px 8px;
     border-radius: 12px;
     background: var(--warning-color);
-    color: white;
+    /* Dark text on the orange pill: white would be ~2.16:1, well under the
+       WCAG AA 4.5:1 minimum for this 0.9rem text.  #212121 on #ff9800 is
+       ~7.47:1. */
+    color: var(--text-color);
 }
 
 .withheld-status.empty {
     font-family: inherit;
     font-style: italic;
     background: var(--text-muted);
+    /* White on #757575 is ~4.61:1, which clears AA for normal text. */
+    color: white;
 }
 
 /* Utility Classes */
