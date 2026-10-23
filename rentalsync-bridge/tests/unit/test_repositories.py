@@ -5,6 +5,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from src.api.bookings import CLASSIFIED_STATUSES
 from src.models import Booking, CustomField, Listing
 from src.repositories.available_field_repository import (
     AvailableFieldRepository,
@@ -242,6 +243,252 @@ class TestBookingRepository:
         assert "Checked In Guest" in guest_names
         assert "Checked Out Guest" in guest_names
         assert "Cancelled Guest" not in guest_names
+
+    @pytest.mark.asyncio
+    async def test_get_withheld_returns_unknown_statuses(self, async_session):
+        """Unknown statuses, including the empty string, are returned."""
+        listing_repo = ListingRepository(async_session)
+        listing = await listing_repo.create(
+            Listing(
+                pms_id="withheld_test",
+                name="Withheld Test",
+                enabled=True,
+                sync_enabled=True,
+                timezone="UTC",
+            )
+        )
+
+        repo = BookingRepository(async_session)
+        for pms_id, status in (
+            ("BK_UNKNOWN", "inquiry"),
+            ("BK_EMPTY", ""),
+        ):
+            await repo.create(
+                Booking(
+                    listing_id=listing.id,
+                    pms_booking_id=pms_id,
+                    check_in_date=datetime.now(UTC) + timedelta(days=1),
+                    check_out_date=datetime.now(UTC) + timedelta(days=5),
+                    status=status,
+                )
+            )
+
+        withheld = await repo.get_withheld_for_enabled_listings(CLASSIFIED_STATUSES)
+
+        assert {b.pms_booking_id: b.status for b in withheld} == {
+            "BK_UNKNOWN": "inquiry",
+            "BK_EMPTY": "",
+        }
+        assert {b.listing_name for b in withheld} == {"Withheld Test"}
+
+    @pytest.mark.asyncio
+    async def test_get_withheld_excludes_classified_statuses(self, async_session):
+        """Known and recognised-non-export statuses are never surfaced."""
+        listing_repo = ListingRepository(async_session)
+        listing = await listing_repo.create(
+            Listing(
+                pms_id="withheld_classified",
+                name="Withheld Classified",
+                enabled=True,
+                sync_enabled=True,
+                timezone="UTC",
+            )
+        )
+
+        repo = BookingRepository(async_session)
+        classified = [
+            "confirmed",
+            "checked_in",
+            "checked_out",
+            "cancelled",
+            "expired",
+            "closed",
+            "declined",
+            "awaiting_payment",
+        ]
+        for status in classified:
+            await repo.create(
+                Booking(
+                    listing_id=listing.id,
+                    pms_booking_id=f"BK_{status}",
+                    check_in_date=datetime.now(UTC) + timedelta(days=1),
+                    check_out_date=datetime.now(UTC) + timedelta(days=5),
+                    status=status,
+                )
+            )
+
+        withheld = await repo.get_withheld_for_enabled_listings(CLASSIFIED_STATUSES)
+
+        assert list(withheld) == []
+        returned = {b.status for b in withheld}
+        for status in ("expired", "closed", "declined", "awaiting_payment"):
+            assert status not in returned
+
+    @pytest.mark.asyncio
+    async def test_get_withheld_excludes_past_stays(self, async_session):
+        """Past withheld stays are noise; in-progress stays are actionable."""
+        listing_repo = ListingRepository(async_session)
+        listing = await listing_repo.create(
+            Listing(
+                pms_id="withheld_dates",
+                name="Withheld Dates",
+                enabled=True,
+                sync_enabled=True,
+                timezone="UTC",
+            )
+        )
+
+        repo = BookingRepository(async_session)
+        await repo.create(
+            Booking(
+                listing_id=listing.id,
+                pms_booking_id="BK_PAST",
+                check_in_date=datetime.now(UTC) - timedelta(days=5),
+                check_out_date=datetime.now(UTC) - timedelta(days=1),
+                status="mystery",
+            )
+        )
+        await repo.create(
+            Booking(
+                listing_id=listing.id,
+                pms_booking_id="BK_IN_PROGRESS",
+                check_in_date=datetime.now(UTC) - timedelta(days=1),
+                check_out_date=datetime.now(UTC) + timedelta(days=2),
+                status="mystery",
+            )
+        )
+
+        withheld = await repo.get_withheld_for_enabled_listings(CLASSIFIED_STATUSES)
+
+        assert [b.pms_booking_id for b in withheld] == ["BK_IN_PROGRESS"]
+
+    @pytest.mark.asyncio
+    async def test_get_withheld_all_day_uses_listing_local_date(self, async_session):
+        """An all-day stay still underway locally survives the UTC rollover.
+
+        At 2026-10-24T01:00Z it is still 2026-10-23 in Los Angeles, so a
+        stay checking out on the 24th has a guest in the property.  A plain
+        ``check_out_date >= now(UTC)`` predicate would drop it.
+        """
+        listing_repo = ListingRepository(async_session)
+        listing = await listing_repo.create(
+            Listing(
+                pms_id="withheld_tz",
+                name="Withheld TZ",
+                enabled=True,
+                sync_enabled=True,
+                timezone="America/Los_Angeles",
+            )
+        )
+
+        repo = BookingRepository(async_session)
+        await repo.create(
+            Booking(
+                listing_id=listing.id,
+                pms_booking_id="BK_TODAY_LOCAL",
+                check_in_date=datetime(2026, 10, 21, tzinfo=UTC),
+                check_out_date=datetime(2026, 10, 24, tzinfo=UTC),
+                status="mystery",
+            )
+        )
+        await repo.create(
+            Booking(
+                listing_id=listing.id,
+                pms_booking_id="BK_REALLY_PAST",
+                check_in_date=datetime(2026, 10, 18, tzinfo=UTC),
+                check_out_date=datetime(2026, 10, 23, tzinfo=UTC),
+                status="mystery",
+            )
+        )
+
+        now = datetime(2026, 10, 24, 1, 0, tzinfo=UTC)
+        withheld = await repo.get_withheld_for_enabled_listings(
+            CLASSIFIED_STATUSES, now=now
+        )
+
+        assert [b.pms_booking_id for b in withheld] == ["BK_TODAY_LOCAL"]
+
+    @pytest.mark.asyncio
+    async def test_get_withheld_timed_stay_compared_as_instant(self, async_session):
+        """A timed stay ends at its instant, not at the local day's end."""
+        listing_repo = ListingRepository(async_session)
+        listing = await listing_repo.create(
+            Listing(
+                pms_id="withheld_timed",
+                name="Withheld Timed",
+                enabled=True,
+                sync_enabled=True,
+                timezone="America/Los_Angeles",
+            )
+        )
+
+        repo = BookingRepository(async_session)
+        await repo.create(
+            Booking(
+                listing_id=listing.id,
+                pms_booking_id="BK_TIMED_OVER",
+                check_in_date=datetime(2026, 10, 22, 23, 0, tzinfo=UTC),
+                check_out_date=datetime(2026, 10, 24, 18, 0, tzinfo=UTC),
+                status="mystery",
+            )
+        )
+        await repo.create(
+            Booking(
+                listing_id=listing.id,
+                pms_booking_id="BK_TIMED_LIVE",
+                check_in_date=datetime(2026, 10, 22, 23, 0, tzinfo=UTC),
+                check_out_date=datetime(2026, 10, 24, 23, 0, tzinfo=UTC),
+                status="mystery",
+            )
+        )
+
+        # Still 2026-10-24 locally in Los Angeles, but past the first
+        # booking's check-out instant.
+        now = datetime(2026, 10, 24, 19, 0, tzinfo=UTC)
+        withheld = await repo.get_withheld_for_enabled_listings(
+            CLASSIFIED_STATUSES, now=now
+        )
+
+        assert [b.pms_booking_id for b in withheld] == ["BK_TIMED_LIVE"]
+
+    @pytest.mark.asyncio
+    async def test_get_withheld_only_enabled_listings(self, async_session):
+        """Bookings on disabled listings are not surfaced."""
+        listing_repo = ListingRepository(async_session)
+        enabled = await listing_repo.create(
+            Listing(
+                pms_id="withheld_enabled",
+                name="Withheld Enabled",
+                enabled=True,
+                sync_enabled=True,
+                timezone="UTC",
+            )
+        )
+        disabled = await listing_repo.create(
+            Listing(
+                pms_id="withheld_disabled",
+                name="Withheld Disabled",
+                enabled=False,
+                sync_enabled=True,
+                timezone="UTC",
+            )
+        )
+
+        repo = BookingRepository(async_session)
+        for listing in (enabled, disabled):
+            await repo.create(
+                Booking(
+                    listing_id=listing.id,
+                    pms_booking_id=f"BK_{listing.pms_id}",
+                    check_in_date=datetime.now(UTC) + timedelta(days=1),
+                    check_out_date=datetime.now(UTC) + timedelta(days=5),
+                    status="mystery",
+                )
+            )
+
+        withheld = await repo.get_withheld_for_enabled_listings(CLASSIFIED_STATUSES)
+
+        assert [b.pms_booking_id for b in withheld] == ["BK_withheld_enabled"]
 
     @pytest.mark.asyncio
     async def test_upsert_insert(self, async_session):

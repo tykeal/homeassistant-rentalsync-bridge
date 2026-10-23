@@ -11,10 +11,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.bookings import CLASSIFIED_STATUSES
 from src.database import get_db
 from src.models.booking import Booking
 from src.models.listing import Listing
 from src.models.oauth_credential import OAuthCredential
+from src.repositories.booking_repository import BookingRepository
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,13 @@ class StatusResponse(BaseModel):
     sync: SyncStatus = Field(description="Sync status")
     listings: ListingsStatus = Field(description="Listings status")
     bookings_count: int = Field(description="Total number of bookings")
+    withheld_bookings_count: int = Field(
+        default=0,
+        description=(
+            "Current or future bookings on enabled listings withheld from "
+            "the iCal export because their status is not recognised"
+        ),
+    )
 
 
 @router.get("/status", response_model=StatusResponse)
@@ -86,6 +95,15 @@ async def get_system_status(
     bookings_result = await db.execute(select(func.count(Booking.id)))
     bookings_count = bookings_result.scalar() or 0
 
+    # Count bookings withheld from export by an unrecognised status.
+    # Deliberately the same code path the "Needs attention" panel uses, so
+    # the badge and the panel can never disagree.
+    withheld_bookings_count = len(
+        await BookingRepository(db).get_withheld_for_enabled_listings(
+            CLASSIFIED_STATUSES
+        )
+    )
+
     # Get last sync time from most recent booking fetch
     last_sync_result = await db.execute(select(func.max(Booking.last_fetched_at)))
     last_sync = last_sync_result.scalar()
@@ -115,4 +133,5 @@ async def get_system_status(
             "total": total_count,
         },
         "bookings_count": bookings_count,
+        "withheld_bookings_count": withheld_bookings_count,
     }

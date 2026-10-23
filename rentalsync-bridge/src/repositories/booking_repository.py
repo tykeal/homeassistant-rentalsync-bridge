@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Repository for Booking database operations."""
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
@@ -10,6 +11,35 @@ from sqlalchemy import CursorResult, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.booking import Booking
+from src.models.listing import Listing
+from src.utils.datetime_utils import ensure_utc
+from src.utils.stay_time import get_timezone, is_stay_over
+
+# How far before "now" the SQL bound for withheld bookings reaches.  The
+# exact stay boundary is listing-local and cannot be expressed in SQL, so
+# the predicate is widened by more than any real UTC offset (max +/-14h)
+# and the precise boundary is applied in Python afterwards.
+WITHHELD_SQL_BOUND_SLACK = timedelta(days=2)
+
+
+@dataclass(frozen=True)
+class WithheldBookingRow:
+    """A booking withheld from export, with the listing context it needs.
+
+    A projection rather than ORM entities: the endpoint that serves these is
+    polled by the admin UI and loading ``Listing``/``Booking`` relationships
+    would be pure waste.
+    """
+
+    booking_id: int
+    listing_id: int
+    listing_name: str
+    listing_timezone: str
+    pms_booking_id: str
+    room_id: int | None
+    check_in_date: datetime
+    check_out_date: datetime
+    status: str
 
 
 class BookingRepository:
@@ -109,6 +139,90 @@ class BookingRepository:
 
         result = await self._session.execute(query)
         return result.scalars().all()
+
+    async def get_withheld_for_enabled_listings(
+        self,
+        classified_statuses: Collection[str],
+        now: datetime | None = None,
+    ) -> list[WithheldBookingRow]:
+        """Get bookings withheld from export due to an unclassified status.
+
+        A booking whose stored status is outside ``classified_statuses`` is
+        one the system has no mapping for, so the sync withheld it from the
+        iCal export.  The empty string (a provider that reported no status
+        at all) is an unclassified status and is therefore returned.
+
+        Bookings on disabled listings are never exported, so they are not
+        actionable and are excluded.
+
+        Only current or future stays are returned; a withheld stay that has
+        already ended is not actionable.  Unlike
+        ``get_confirmed_for_listing`` there is deliberately no grace window.
+        The stay boundary is evaluated in the listing's own timezone: an
+        all-day stay checking out "tomorrow" locally is still underway even
+        once UTC has rolled past midnight.  That listing-local boundary
+        cannot be expressed in SQL, so the predicate below uses a
+        deliberately generous, index-friendly bound wide enough to cover any
+        timezone offset and the exact boundary is applied in Python.  There
+        are only ever a handful of withheld bookings, so this is cheap.
+
+        A single query with a column projection is issued: the admin UI
+        polls this, and selecting whole ``Listing``/``Booking`` entities
+        would trigger their ``lazy="selectin"`` relationship loads.
+
+        Args:
+            classified_statuses: Statuses the system understands.  Composed
+                by the caller so this repository stays free of status
+                vocabulary (and of a dependency on the service layer).
+            now: Optional reference time (defaults to now in UTC).
+
+        Returns:
+            Withheld bookings with their listing context, ordered by
+            listing name then check-in date.
+        """
+        reference = ensure_utc(now) if now else datetime.now(UTC)
+        sql_cutoff = (reference - WITHHELD_SQL_BOUND_SLACK).replace(tzinfo=None)
+
+        result = await self._session.execute(
+            select(
+                Booking.id,
+                Booking.listing_id,
+                Listing.name,
+                Listing.timezone,
+                Booking.pms_booking_id,
+                Booking.room_id,
+                Booking.check_in_date,
+                Booking.check_out_date,
+                Booking.status,
+            )
+            .join(Listing, Listing.id == Booking.listing_id)
+            .where(
+                Listing.enabled.is_(True),
+                Booking.status.notin_(list(classified_statuses)),
+                Booking.check_out_date >= sql_cutoff,
+            )
+            .order_by(Listing.name, Booking.check_in_date, Booking.id)
+        )
+
+        withheld: list[WithheldBookingRow] = []
+        for row in result.all():
+            tz = get_timezone(row.timezone or "UTC")
+            if is_stay_over(row.check_in_date, row.check_out_date, tz, reference):
+                continue
+            withheld.append(
+                WithheldBookingRow(
+                    booking_id=row.id,
+                    listing_id=row.listing_id,
+                    listing_name=row.name,
+                    listing_timezone=str(tz),
+                    pms_booking_id=row.pms_booking_id,
+                    room_id=row.room_id,
+                    check_in_date=row.check_in_date,
+                    check_out_date=row.check_out_date,
+                    status=row.status,
+                )
+            )
+        return withheld
 
     async def get_for_listing_in_range(
         self,

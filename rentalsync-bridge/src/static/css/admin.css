@@ -647,6 +647,59 @@ header .subtitle {
     font-weight: 500;
 }
 
+/* Withheld Bookings ("Needs Attention") */
+.withheld-group {
+    margin-bottom: 15px;
+}
+
+.withheld-group h3 {
+    font-size: 1rem;
+    margin-bottom: 8px;
+}
+
+.withheld-booking {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
+    border-left: 3px solid var(--warning-color);
+    background: var(--bg-color);
+    border-radius: var(--radius);
+    margin-bottom: 6px;
+    font-size: 0.9rem;
+}
+
+.withheld-booking-id {
+    font-family: monospace;
+    font-weight: 500;
+}
+
+.withheld-room,
+.withheld-dates {
+    color: var(--text-muted);
+}
+
+.withheld-status {
+    margin-left: auto;
+    font-family: monospace;
+    padding: 2px 8px;
+    border-radius: 12px;
+    background: var(--warning-color);
+    /* Dark text on the orange pill: white would be ~2.16:1, well under the
+       WCAG AA 4.5:1 minimum for this 0.9rem text.  #212121 on #ff9800 is
+       ~7.47:1. */
+    color: var(--text-color);
+}
+
+.withheld-status.empty {
+    font-family: inherit;
+    font-style: italic;
+    background: var(--text-muted);
+    /* White on #757575 is ~4.61:1, which clears AA for normal text. */
+    color: white;
+}
+
 /* Utility Classes */
 .hidden {
     display: none !important;
