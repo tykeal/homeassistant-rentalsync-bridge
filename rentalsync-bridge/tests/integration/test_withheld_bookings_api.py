@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from src.database import Base, get_db
 from src.main import create_app
@@ -219,3 +220,104 @@ class TestWithheldBookings:
         data = response.json()
         assert data["bookings_count"] == 4
         assert data["withheld_bookings_count"] == 2
+
+
+class TestWithheldQueryCount:
+    """The admin UI polls this, so it must not fan out queries."""
+
+    @staticmethod
+    async def _seed_listing(session: AsyncSession, suffix: str) -> Listing:
+        """Create an enabled listing with one withheld booking."""
+        listing = Listing(
+            pms_id=f"PROP_Q{suffix}",
+            name=f"Query House {suffix}",
+            ical_url_slug=f"query-house-{suffix}",
+            enabled=True,
+            sync_enabled=True,
+        )
+        session.add(listing)
+        await session.commit()
+        await session.refresh(listing)
+
+        session.add(
+            Booking(
+                listing_id=listing.id,
+                pms_booking_id=f"BK_Q{suffix}",
+                check_in_date=datetime.now(UTC) + timedelta(days=1),
+                check_out_date=datetime.now(UTC) + timedelta(days=3),
+                status="mystery",
+            )
+        )
+        await session.commit()
+        return listing
+
+    @staticmethod
+    async def _add_bookings(
+        session: AsyncSession, listing: Listing, count: int
+    ) -> None:
+        """Add extra withheld bookings to an existing listing."""
+        session.add_all(
+            [
+                Booking(
+                    listing_id=listing.id,
+                    pms_booking_id=f"BK_EXTRA_{index}",
+                    check_in_date=datetime.now(UTC) + timedelta(days=1),
+                    check_out_date=datetime.now(UTC) + timedelta(days=3),
+                    status="mystery",
+                )
+                for index in range(count)
+            ]
+        )
+        await session.commit()
+
+    @pytest.mark.asyncio
+    async def test_single_query_and_no_relationship_loads(
+        self, withheld_app, withheld_session, withheld_engine
+    ):
+        """One SELECT, and none of the eager relationships are touched."""
+        listing = await self._seed_listing(withheld_session, "1")
+        await self._seed_listing(withheld_session, "2")
+
+        statements: list[str] = []
+
+        def record(conn, cursor, statement, parameters, context, executemany):
+            """Record every statement the engine actually executes."""
+            statements.append(statement)
+
+        event.listen(withheld_engine.sync_engine, "before_cursor_execute", record)
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=withheld_app), base_url="http://test"
+            ) as client:
+                response = await client.get(
+                    "/api/bookings/withheld",
+                    headers={"Authorization": "******"},
+                )
+            baseline = list(statements)
+
+            assert response.status_code == 200
+            assert response.json()["count"] == 2
+
+            selects = [s for s in baseline if s.lstrip().upper().startswith("SELECT")]
+            assert len(selects) == 1, selects
+            joined = " ".join(selects).lower()
+            for relationship_table in ("rooms", "custom_fields", "available_fields"):
+                assert relationship_table not in joined, selects
+
+            # Adding more bookings to an existing listing must not add
+            # queries - the per-listing loop would have done exactly that.
+            await self._add_bookings(withheld_session, listing, 5)
+            statements.clear()
+
+            async with AsyncClient(
+                transport=ASGITransport(app=withheld_app), base_url="http://test"
+            ) as client:
+                grown = await client.get(
+                    "/api/bookings/withheld",
+                    headers={"Authorization": "******"},
+                )
+
+            assert grown.json()["count"] == 7
+            assert len(statements) == len(baseline), statements
+        finally:
+            event.remove(withheld_engine.sync_engine, "before_cursor_execute", record)

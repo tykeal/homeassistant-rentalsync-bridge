@@ -273,12 +273,13 @@ class TestBookingRepository:
                 )
             )
 
-        withheld = await repo.get_withheld_for_listing(listing.id, CLASSIFIED_STATUSES)
+        withheld = await repo.get_withheld_for_enabled_listings(CLASSIFIED_STATUSES)
 
         assert {b.pms_booking_id: b.status for b in withheld} == {
             "BK_UNKNOWN": "inquiry",
             "BK_EMPTY": "",
         }
+        assert {b.listing_name for b in withheld} == {"Withheld Test"}
 
     @pytest.mark.asyncio
     async def test_get_withheld_excludes_classified_statuses(self, async_session):
@@ -316,7 +317,7 @@ class TestBookingRepository:
                 )
             )
 
-        withheld = await repo.get_withheld_for_listing(listing.id, CLASSIFIED_STATUSES)
+        withheld = await repo.get_withheld_for_enabled_listings(CLASSIFIED_STATUSES)
 
         assert list(withheld) == []
         returned = {b.status for b in withheld}
@@ -357,13 +358,13 @@ class TestBookingRepository:
             )
         )
 
-        withheld = await repo.get_withheld_for_listing(listing.id, CLASSIFIED_STATUSES)
+        withheld = await repo.get_withheld_for_enabled_listings(CLASSIFIED_STATUSES)
 
         assert [b.pms_booking_id for b in withheld] == ["BK_IN_PROGRESS"]
 
     @pytest.mark.asyncio
-    async def test_count_withheld_only_enabled_listings(self, async_session):
-        """Bookings on disabled listings are not counted."""
+    async def test_get_withheld_only_enabled_listings(self, async_session):
+        """Bookings on disabled listings are not surfaced."""
         listing_repo = ListingRepository(async_session)
         enabled = await listing_repo.create(
             Listing(
@@ -396,9 +397,9 @@ class TestBookingRepository:
                 )
             )
 
-        count = await repo.count_withheld_for_enabled_listings(CLASSIFIED_STATUSES)
+        withheld = await repo.get_withheld_for_enabled_listings(CLASSIFIED_STATUSES)
 
-        assert count == 1
+        assert [b.pms_booking_id for b in withheld] == ["BK_withheld_enabled"]
 
     @pytest.mark.asyncio
     async def test_upsert_insert(self, async_session):

@@ -95,10 +95,14 @@ async def get_system_status(
     bookings_result = await db.execute(select(func.count(Booking.id)))
     bookings_count = bookings_result.scalar() or 0
 
-    # Count bookings withheld from export by an unrecognised status
-    withheld_bookings_count = await BookingRepository(
-        db
-    ).count_withheld_for_enabled_listings(CLASSIFIED_STATUSES)
+    # Count bookings withheld from export by an unrecognised status.
+    # Deliberately the same code path the "Needs attention" panel uses, so
+    # the badge and the panel can never disagree.
+    withheld_bookings_count = len(
+        await BookingRepository(db).get_withheld_for_enabled_listings(
+            CLASSIFIED_STATUSES
+        )
+    )
 
     # Get last sync time from most recent booking fetch
     last_sync_result = await db.execute(select(func.max(Booking.last_fetched_at)))

@@ -3,14 +3,36 @@
 """Repository for Booking database operations."""
 
 from collections.abc import Collection, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
-from sqlalchemy import CursorResult, delete, func, select
+from sqlalchemy import CursorResult, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.booking import Booking
 from src.models.listing import Listing
+from src.utils.datetime_utils import ensure_utc
+
+
+@dataclass(frozen=True)
+class WithheldBookingRow:
+    """A booking withheld from export, with the listing context it needs.
+
+    A projection rather than ORM entities: the endpoint that serves these is
+    polled by the admin UI and loading ``Listing``/``Booking`` relationships
+    would be pure waste.
+    """
+
+    booking_id: int
+    listing_id: int
+    listing_name: str
+    listing_timezone: str
+    pms_booking_id: str
+    room_id: int | None
+    check_in_date: datetime
+    check_out_date: datetime
+    status: str
 
 
 class BookingRepository:
@@ -111,9 +133,11 @@ class BookingRepository:
         result = await self._session.execute(query)
         return result.scalars().all()
 
-    async def get_withheld_for_listing(
-        self, listing_id: int, classified_statuses: Collection[str]
-    ) -> Sequence[Booking]:
+    async def get_withheld_for_enabled_listings(
+        self,
+        classified_statuses: Collection[str],
+        now: datetime | None = None,
+    ) -> list[WithheldBookingRow]:
         """Get bookings withheld from export due to an unclassified status.
 
         A booking whose stored status is outside ``classified_statuses`` is
@@ -121,54 +145,64 @@ class BookingRepository:
         iCal export.  The empty string (a provider that reported no status
         at all) is an unclassified status and is therefore returned.
 
+        Bookings on disabled listings are never exported, so they are not
+        actionable and are excluded.
+
         Only current or future stays are returned; a withheld stay that has
         already ended is not actionable.  Unlike
         ``get_confirmed_for_listing`` there is deliberately no grace window.
 
+        A single query with a column projection is issued: the admin UI
+        polls this, and selecting whole ``Listing``/``Booking`` entities
+        would trigger their ``lazy="selectin"`` relationship loads.
+
         Args:
-            listing_id: Listing ID to filter by.
             classified_statuses: Statuses the system understands.  Composed
                 by the caller so this repository stays free of status
                 vocabulary (and of a dependency on the service layer).
+            now: Optional reference time (defaults to now in UTC).
 
         Returns:
-            Sequence of withheld bookings ordered by check-in date.
+            Withheld bookings with their listing context, ordered by
+            listing name then check-in date.
         """
+        reference = ensure_utc(now) if now else datetime.now(UTC)
+
         result = await self._session.execute(
-            select(Booking)
-            .where(
-                Booking.listing_id == listing_id,
-                Booking.status.notin_(list(classified_statuses)),
-                Booking.check_out_date >= datetime.now(UTC),
+            select(
+                Booking.id,
+                Booking.listing_id,
+                Listing.name,
+                Listing.timezone,
+                Booking.pms_booking_id,
+                Booking.room_id,
+                Booking.check_in_date,
+                Booking.check_out_date,
+                Booking.status,
             )
-            .order_by(Booking.check_in_date)
-        )
-        return result.scalars().all()
-
-    async def count_withheld_for_enabled_listings(
-        self, classified_statuses: Collection[str]
-    ) -> int:
-        """Count withheld bookings across enabled listings.
-
-        Bookings on disabled listings are never exported, so they are not
-        actionable and are excluded.
-
-        Args:
-            classified_statuses: Statuses the system understands.
-
-        Returns:
-            Number of current or future bookings with an unclassified status.
-        """
-        result = await self._session.execute(
-            select(func.count(Booking.id))
             .join(Listing, Listing.id == Booking.listing_id)
             .where(
                 Listing.enabled.is_(True),
                 Booking.status.notin_(list(classified_statuses)),
-                Booking.check_out_date >= datetime.now(UTC),
+                Booking.check_out_date >= reference,
             )
+            .order_by(Listing.name, Booking.check_in_date, Booking.id)
         )
-        return result.scalar() or 0
+
+        return [
+            WithheldBookingRow(
+                booking_id=row.id,
+                listing_id=row.listing_id,
+                listing_name=row.name,
+                listing_timezone=row.timezone or "UTC",
+                pms_booking_id=row.pms_booking_id,
+                room_id=row.room_id,
+                check_in_date=row.check_in_date,
+                check_out_date=row.check_out_date,
+                status=row.status,
+            )
+            for row in result.all()
+        ]
 
     async def get_for_listing_in_range(
         self,

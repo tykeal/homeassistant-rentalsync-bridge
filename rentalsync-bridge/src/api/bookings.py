@@ -11,8 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database import get_db
 from src.providers.base import RECOGNISED_NON_EXPORT_STATUSES
-from src.repositories.booking_repository import BookingRepository
-from src.repositories.listing_repository import ListingRepository
+from src.repositories.booking_repository import (
+    BookingRepository,
+    WithheldBookingRow,
+)
 from src.services.sync_service import KNOWN_BOOKING_STATUSES
 
 logger = logging.getLogger(__name__)
@@ -59,15 +61,36 @@ class WithheldBookingsResponse(BaseModel):
     count: int = Field(description="Number of withheld bookings")
 
 
+def serialise_withheld(row: WithheldBookingRow) -> dict[str, Any]:
+    """Serialise a withheld booking row for the admin UI.
+
+    Args:
+        row: Withheld booking projection from the repository.
+
+    Returns:
+        JSON-ready mapping, free of guest PII.
+    """
+    return {
+        "listing_id": row.listing_id,
+        "listing_name": row.listing_name,
+        "pms_booking_id": row.pms_booking_id,
+        "room_id": row.room_id,
+        "check_in_date": row.check_in_date.isoformat(),
+        "check_out_date": row.check_out_date.isoformat(),
+        "status": row.status,
+    }
+
+
 @router.get("/withheld", response_model=WithheldBookingsResponse)
 async def get_withheld_bookings(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, Any]:
     """Get current and future bookings withheld from the iCal export.
 
-    Covers every enabled listing in one request so the admin UI does not
-    need a call per listing.  Statuses are returned exactly as the provider
-    reported them — that raw string is the diagnostic value.
+    Covers every enabled listing in a single query so the admin UI, which
+    polls this, does not pay a query per listing.  Statuses are returned
+    exactly as the provider reported them — that raw string is the
+    diagnostic value.
 
     Args:
         db: Database session.
@@ -75,25 +98,10 @@ async def get_withheld_bookings(
     Returns:
         Withheld bookings annotated with their listing, plus a count.
     """
-    listing_repo = ListingRepository(db)
-    booking_repo = BookingRepository(db)
-
-    bookings: list[dict[str, Any]] = []
-    for listing in await listing_repo.get_enabled():
-        withheld = await booking_repo.get_withheld_for_listing(
-            listing.id, CLASSIFIED_STATUSES
-        )
-        bookings.extend(
-            {
-                "listing_id": listing.id,
-                "listing_name": listing.name,
-                "pms_booking_id": b.pms_booking_id,
-                "room_id": b.room_id,
-                "check_in_date": b.check_in_date.isoformat(),
-                "check_out_date": b.check_out_date.isoformat(),
-                "status": b.status,
-            }
-            for b in withheld
-        )
-
-    return {"bookings": bookings, "count": len(bookings)}
+    rows = await BookingRepository(db).get_withheld_for_enabled_listings(
+        CLASSIFIED_STATUSES
+    )
+    return {
+        "bookings": [serialise_withheld(row) for row in rows],
+        "count": len(rows),
+    }
