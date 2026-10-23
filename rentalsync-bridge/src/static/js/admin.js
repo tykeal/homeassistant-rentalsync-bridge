@@ -151,8 +151,10 @@ function formatWithheldDate(value, allDay, timezone) {
     try {
         return parsed.toLocaleString(undefined, options);
     } catch (error) {
-        // Unknown IANA zone on this browser - fall back to the raw value.
-        return parsed.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+        // Unknown IANA zone on this browser.  Reformatting here would use the
+        // browser timezone and could show a different calendar date, so return
+        // the raw offset-bearing value, which is already listing-local.
+        return value;
     }
 }
 
