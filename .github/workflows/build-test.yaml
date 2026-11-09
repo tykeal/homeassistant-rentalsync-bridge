@@ -324,3 +324,79 @@ jobs:
           summary-title: 'Grype Vulnerability Scan'
           github-token: ${{ secrets.GITHUB_TOKEN }}
           permit-fail: ${{ vars.NO_BLOCK_AUDIT_FAIL == 'true' }}
+
+  # release.yaml only runs on tag pushes, so this exercises the add-on
+  # Dockerfile and the release container scan policy on every change.
+  container-scan:
+    name: 'Container Scan'
+    runs-on: 'ubuntu-24.04'
+    timeout-minutes: 30
+    permissions:
+      contents: read  # Check out the repository
+      issues: read  # Read maintainer-approved Grype bypass issues
+    steps:
+      # yamllint disable-line rule:line-length
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
+        with:
+          egress-policy: 'audit'
+
+      # yamllint disable-line rule:line-length
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 'Determine base image'
+        id: 'base-image'
+        shell: bash
+        env:
+          ARCH: 'amd64'
+        run: |
+          # Read build_from for this architecture
+          BUILD_FROM=$(yq -r \
+            ".build_from.$ARCH" \
+            rentalsync-bridge/build.yaml)
+          if [ -z "$BUILD_FROM" ] || \
+              [ "$BUILD_FROM" = "null" ]; then
+            echo "::error::No build_from for $ARCH"
+            exit 1
+          fi
+          echo "build_from=$BUILD_FROM" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: 'Build container image'
+        # yamllint disable-line rule:line-length
+        uses: home-assistant/builder/actions/build-image@7412f0023ea9b6e58e8bb5059f1660f51376f49a  # 2026.09.0
+        with:
+          arch: 'amd64'
+          # Not pushing, so the action skips the registry login
+          container-registry-password: ''
+          context: 'rentalsync-bridge'
+          image: 'local/amd64-homeassistant-rentalsync-bridge'
+          image-tags: 'scan'
+          push: 'false'
+          load: 'true'
+          version: '0.0.0'
+          build-args: |
+            BUILD_FROM=${{ steps.base-image.outputs.build_from }}
+          cosign: 'false'
+
+      # Same gate as the release container scan in release.yaml
+      - name: 'Grype scan container image'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/grype-scan-action@f65dca2762823cfc8f376e32fee9baa6f3292696  # v0.6.2
+        with:
+          target: 'docker:local/amd64-homeassistant-rentalsync-bridge:scan'
+          name: 'amd64 container image'
+          # Gate on high and critical OS and application packages with
+          # an upgrade available; unfixed advisories are reported as
+          # warnings in the summary and SARIF.
+          fail-on: 'high'
+          only-fixed: 'true'
+          dependency-policy: 'all'
+          # The SBOM grype job keeps the database cache current
+          cache-db: 'restore-only'
+          artifact-name: 'grype-image-scan-amd64'
+          retention-days: 90
+          summary-title: 'Grype Container Scan (amd64)'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          permit-fail: ${{ vars.NO_BLOCK_AUDIT_FAIL == 'true' }}
