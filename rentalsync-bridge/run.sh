@@ -8,9 +8,12 @@ set -e
 CONFIG_PATH=/data/options.json
 
 if [ -f "$CONFIG_PATH" ]; then
-    export CLOUDBEDS_CLIENT_ID=$(jq -r '.cloudbeds_client_id // empty' "$CONFIG_PATH")
-    export CLOUDBEDS_CLIENT_SECRET=$(jq -r '.cloudbeds_client_secret // empty' "$CONFIG_PATH")
-    export SYNC_INTERVAL_MINUTES=$(jq -r '.sync_interval_minutes // 5' "$CONFIG_PATH")
+    CLOUDBEDS_CLIENT_ID=$(jq -r '.cloudbeds_client_id // empty' "$CONFIG_PATH")
+    export CLOUDBEDS_CLIENT_ID
+    CLOUDBEDS_CLIENT_SECRET=$(jq -r '.cloudbeds_client_secret // empty' "$CONFIG_PATH")
+    export CLOUDBEDS_CLIENT_SECRET
+    SYNC_INTERVAL_MINUTES=$(jq -r '.sync_interval_minutes // 5' "$CONFIG_PATH")
+    export SYNC_INTERVAL_MINUTES
     LOG_LEVEL=$(jq -r '.log_level // "info"' "$CONFIG_PATH")
     export LOG_LEVEL="${LOG_LEVEL^^}"
 fi
@@ -27,10 +30,12 @@ export STANDALONE_MODE="${STANDALONE_MODE:-false}"
 # Generate or load encryption key for credential storage
 ENCRYPTION_KEY_FILE="/data/.encryption_key"
 if [ -f "$ENCRYPTION_KEY_FILE" ]; then
-    export ENCRYPTION_KEY=$(cat "$ENCRYPTION_KEY_FILE")
+    ENCRYPTION_KEY=$(cat "$ENCRYPTION_KEY_FILE")
+    export ENCRYPTION_KEY
 else
     echo "Generating new encryption key..."
-    export ENCRYPTION_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+    ENCRYPTION_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+    export ENCRYPTION_KEY
     echo "$ENCRYPTION_KEY" > "$ENCRYPTION_KEY_FILE"
     chmod 600 "$ENCRYPTION_KEY_FILE"
 fi

@@ -42,7 +42,7 @@ log_level: info
 #### Configuration Options
 
 | Option | Description | Default |
-|--------|-------------|---------|
+| -------- | ------------- | --------- |
 | `cloudbeds_api_key` | Your Cloudbeds API key | Required |
 | `timezone` | IANA timezone identifier | `UTC` |
 | `log_level` | Logging verbosity | `info` |
@@ -101,23 +101,26 @@ public GitHub issue and redact anything you would not want published.
 
 Once configured, each listing has a unique iCal URL:
 
-```
+```text
 http://<homeassistant-ip>:8099/ical/<slug>.ics
 ```
 
 ### Adding to External Calendars
 
 **Airbnb:**
+
 1. Go to your Airbnb hosting calendar
 2. Click **Availability Settings** → **Connect Calendars**
 3. Paste the iCal URL and import
 
 **Google Calendar:**
+
 1. Open Google Calendar settings
 2. Click **Add Calendar** → **From URL**
 3. Paste the iCal URL
 
 **Apple Calendar:**
+
 1. File → New Calendar Subscription
 2. Paste the iCal URL
 
@@ -126,6 +129,7 @@ http://<homeassistant-ip>:8099/ical/<slug>.ics
 ### Add-on Won't Start
 
 Check the logs for error messages:
+
 - Database permission issues
 - Port conflicts (default 8099)
 - Invalid configuration
@@ -145,4 +149,4 @@ Check the logs for error messages:
 ## Support
 
 For issues and feature requests, visit the GitHub repository:
-https://github.com/tykeal/rentalsync-bridge
+<https://github.com/tykeal/rentalsync-bridge>

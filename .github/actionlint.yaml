@@ -13,7 +13,3 @@ paths:
     ignore:
       # actionlint does not yet know about attestations scope
       - 'unknown permission scope "attestations"'
-  .github/workflows/openssf-scorecard.yaml:
-    ignore:
-      # actionlint does not yet know about the job-level cache-mode key
-      - 'unexpected key "cache-mode" for "job" section'

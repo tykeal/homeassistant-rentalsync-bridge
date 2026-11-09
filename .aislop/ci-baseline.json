@@ -1,0 +1,565 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "rule": "ai-slop/trivial-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/env.py",
+      "fingerprint": "4bb3c77cddf5dcce",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/trivial-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/env.py",
+      "fingerprint": "ccc21f18356e957e",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/unused-import",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/env.py",
+      "fingerprint": "e52ee84c5a7fdd26",
+      "count": 5
+    },
+    {
+      "rule": "ruff/I001",
+      "engine": "lint",
+      "file": "rentalsync-bridge/alembic/env.py",
+      "fingerprint": "9a98a75d0ce48919",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/hardcoded-id",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/versions/0dcd97f41bbd_initial_schema.py",
+      "fingerprint": "50728e4857db077a",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/narrative-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/versions/0dcd97f41bbd_initial_schema.py",
+      "fingerprint": "0986fff5166554ec",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/narrative-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/versions/0dcd97f41bbd_initial_schema.py",
+      "fingerprint": "d7bc7246f6a9f003",
+      "count": 2
+    },
+    {
+      "rule": "ai-slop/narrative-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/versions/0dcd97f41bbd_initial_schema.py",
+      "fingerprint": "e6f9082a0b526b96",
+      "count": 2
+    },
+    {
+      "rule": "ai-slop/narrative-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/versions/0eeb46d10f64_add_rooms_table_and_booking_room_id_fk.py",
+      "fingerprint": "0986fff5166554ec",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/narrative-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/versions/0eeb46d10f64_add_rooms_table_and_booking_room_id_fk.py",
+      "fingerprint": "d7bc7246f6a9f003",
+      "count": 2
+    },
+    {
+      "rule": "ai-slop/narrative-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/versions/0eeb46d10f64_add_rooms_table_and_booking_room_id_fk.py",
+      "fingerprint": "e6f9082a0b526b96",
+      "count": 2
+    },
+    {
+      "rule": "ai-slop/narrative-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/versions/a7b8c9d0e1f2_add_booking_enrichment_data.py",
+      "fingerprint": "0986fff5166554ec",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/narrative-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/versions/a9743e0fe547_increase_cloudbeds_booking_id_length.py",
+      "fingerprint": "0986fff5166554ec",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/narrative-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/versions/b1c2d3e4f5a6_add_system_settings_table.py",
+      "fingerprint": "0986fff5166554ec",
+      "count": 1
+    },
+    {
+      "rule": "python-formatting",
+      "engine": "format",
+      "file": "rentalsync-bridge/alembic/versions/b1c2d3e4f5a6_add_system_settings_table.py",
+      "fingerprint": "message:eb8329b770c7842a",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/narrative-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/versions/c2d3e4f5a6b7_add_available_fields_table.py",
+      "fingerprint": "0986fff5166554ec",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/hardcoded-id",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/versions/d3e4f5a6b7c8_generalize_pms_columns.py",
+      "fingerprint": "0a86f2e7f4efffd6",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/hardcoded-id",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/versions/d3e4f5a6b7c8_generalize_pms_columns.py",
+      "fingerprint": "5c2d0b99c4c38c24",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/narrative-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/versions/d3e4f5a6b7c8_generalize_pms_columns.py",
+      "fingerprint": "0986fff5166554ec",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/narrative-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/versions/d3e4f5a6b7c8_generalize_pms_columns.py",
+      "fingerprint": "1d17f4970b7b981c",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/narrative-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/versions/d3e4f5a6b7c8_generalize_pms_columns.py",
+      "fingerprint": "639086631dc6b039",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/narrative-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/versions/d3e4f5a6b7c8_generalize_pms_columns.py",
+      "fingerprint": "9298f5457fda1cb8",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/narrative-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/versions/d3e4f5a6b7c8_generalize_pms_columns.py",
+      "fingerprint": "b1351407b2c3ec2e",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/narrative-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/versions/d3e4f5a6b7c8_generalize_pms_columns.py",
+      "fingerprint": "eec55d65565b38fe",
+      "count": 1
+    },
+    {
+      "rule": "python-formatting",
+      "engine": "format",
+      "file": "rentalsync-bridge/alembic/versions/d3e4f5a6b7c8_generalize_pms_columns.py",
+      "fingerprint": "message:eb8329b770c7842a",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/narrative-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/versions/e4f5a6b7c8d9_move_unique_to_pms_type.py",
+      "fingerprint": "0986fff5166554ec",
+      "count": 1
+    },
+    {
+      "rule": "python-formatting",
+      "engine": "format",
+      "file": "rentalsync-bridge/alembic/versions/e4f5a6b7c8d9_move_unique_to_pms_type.py",
+      "fingerprint": "message:eb8329b770c7842a",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/narrative-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/versions/f5a6b7c8d9e0_add_booking_pms_updated_at.py",
+      "fingerprint": "0986fff5166554ec",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/narrative-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/versions/fe3f58f8fb26_add_api_key_column.py",
+      "fingerprint": "0986fff5166554ec",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/narrative-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/versions/fe3f58f8fb26_add_api_key_column.py",
+      "fingerprint": "d7bc7246f6a9f003",
+      "count": 2
+    },
+    {
+      "rule": "ai-slop/narrative-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/alembic/versions/fe3f58f8fb26_add_api_key_column.py",
+      "fingerprint": "e6f9082a0b526b96",
+      "count": 2
+    },
+    {
+      "rule": "complexity/function-too-long",
+      "engine": "code-quality",
+      "file": "rentalsync-bridge/src/api/custom_fields.py",
+      "fingerprint": "9bb01be6a8f6ed69",
+      "count": 1
+    },
+    {
+      "rule": "complexity/file-too-large",
+      "engine": "code-quality",
+      "file": "rentalsync-bridge/src/api/listings.py",
+      "fingerprint": "message:96b0128c3491727f",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/hardcoded-id",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/api/oauth.py",
+      "fingerprint": "1bfd7c96c410b4f5",
+      "count": 2
+    },
+    {
+      "rule": "ai-slop/hardcoded-id",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/api/oauth.py",
+      "fingerprint": "4ff0b0e5a651347b",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/hardcoded-id",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/api/oauth.py",
+      "fingerprint": "7999dc1d8bfd5640",
+      "count": 2
+    },
+    {
+      "rule": "ai-slop/hardcoded-id",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/api/oauth.py",
+      "fingerprint": "a5b0819e15f86a20",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/hardcoded-id",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/api/oauth.py",
+      "fingerprint": "f206fb35dce385cb",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/narrative-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/api/oauth.py",
+      "fingerprint": "12b8cc3d4c9e0a31",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/trivial-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/api/status.py",
+      "fingerprint": "2d5028df8e6327d3",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/trivial-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/api/status.py",
+      "fingerprint": "4fac9968a32494a1",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/trivial-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/api/status.py",
+      "fingerprint": "92f1147fe913dbd9",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/trivial-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/middleware/error_handler.py",
+      "fingerprint": "3d8194b086c5768a",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/trivial-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/middleware/error_handler.py",
+      "fingerprint": "f1572fc1ecd0daab",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/narrative-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/providers/base.py",
+      "fingerprint": "5c4688e3c1ee3aec",
+      "count": 3
+    },
+    {
+      "rule": "ai-slop/narrative-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/providers/base.py",
+      "fingerprint": "7af4350aa1c99382",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/todo-stub",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/providers/cloudbeds/provider.py",
+      "fingerprint": "3fd800906bed5d85",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/todo-stub",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/providers/cloudbeds/provider.py",
+      "fingerprint": "79f79efe1a96bd6c",
+      "count": 1
+    },
+    {
+      "rule": "complexity/file-too-large",
+      "engine": "code-quality",
+      "file": "rentalsync-bridge/src/providers/cloudbeds/provider.py",
+      "fingerprint": "message:96b0128c3491727f",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/todo-stub",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/providers/guesty/service.py",
+      "fingerprint": "2fbd0c17a426844c",
+      "count": 1
+    },
+    {
+      "rule": "complexity/file-too-large",
+      "engine": "code-quality",
+      "file": "rentalsync-bridge/src/providers/guesty/service.py",
+      "fingerprint": "message:96b0128c3491727f",
+      "count": 1
+    },
+    {
+      "rule": "complexity/file-too-large",
+      "engine": "code-quality",
+      "file": "rentalsync-bridge/src/repositories/available_field_repository.py",
+      "fingerprint": "message:96b0128c3491727f",
+      "count": 1
+    },
+    {
+      "rule": "complexity/file-too-large",
+      "engine": "code-quality",
+      "file": "rentalsync-bridge/src/services/calendar_service.py",
+      "fingerprint": "message:96b0128c3491727f",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/hardcoded-url",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/services/cloudbeds_service.py",
+      "fingerprint": "450bb8ec37bb8d09",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/hardcoded-url",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/services/cloudbeds_service.py",
+      "fingerprint": "5022698435cc6379",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/hardcoded-url",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/services/cloudbeds_service.py",
+      "fingerprint": "9c36e3d983234838",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/todo-stub",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/services/cloudbeds_service.py",
+      "fingerprint": "bcb2e23624d912e8",
+      "count": 1
+    },
+    {
+      "rule": "complexity/file-too-large",
+      "engine": "code-quality",
+      "file": "rentalsync-bridge/src/services/cloudbeds_service.py",
+      "fingerprint": "message:96b0128c3491727f",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/trivial-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/services/config_service.py",
+      "fingerprint": "c0d1848d4021979d",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/trivial-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/services/config_service.py",
+      "fingerprint": "dfaa1323c1136b1a",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/hardcoded-url",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/services/oauth_service.py",
+      "fingerprint": "05e624f99bb3111c",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/unused-import",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/services/oauth_service.py",
+      "fingerprint": "1a291f7478979315",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/trivial-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/services/scheduler.py",
+      "fingerprint": "3c924ce91ac1c3d2",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/trivial-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/services/scheduler.py",
+      "fingerprint": "4243d62c5240bfac",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/trivial-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/services/scheduler.py",
+      "fingerprint": "49df0bd7c13b21bb",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/trivial-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/services/scheduler.py",
+      "fingerprint": "4b43a13e6b9c4aef",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/trivial-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/services/scheduler.py",
+      "fingerprint": "6215b87e8b34cf14",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/trivial-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/services/scheduler.py",
+      "fingerprint": "d7b2bac0087a6ef1",
+      "count": 1
+    },
+    {
+      "rule": "complexity/file-too-large",
+      "engine": "code-quality",
+      "file": "rentalsync-bridge/src/services/sync_service.py",
+      "fingerprint": "message:96b0128c3491727f",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/console-leftover",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/static/js/admin.js",
+      "fingerprint": "8a156e4fa75d3d21",
+      "count": 1
+    },
+    {
+      "rule": "code-quality/duplicate-block",
+      "engine": "code-quality",
+      "file": "rentalsync-bridge/src/static/js/admin.js",
+      "fingerprint": "e73aac57a4e48065",
+      "count": 1
+    },
+    {
+      "rule": "complexity/file-too-large",
+      "engine": "code-quality",
+      "file": "rentalsync-bridge/src/static/js/admin.js",
+      "fingerprint": "message:96b0128c3491727f",
+      "count": 1
+    },
+    {
+      "rule": "eslint/no-unused-vars",
+      "engine": "lint",
+      "file": "rentalsync-bridge/src/static/js/admin.js",
+      "fingerprint": "598567e8ed53d6a3",
+      "count": 1
+    },
+    {
+      "rule": "eslint/no-unused-vars",
+      "engine": "lint",
+      "file": "rentalsync-bridge/src/static/js/admin.js",
+      "fingerprint": "7a9b78c9d2116252",
+      "count": 1
+    },
+    {
+      "rule": "eslint/no-unused-vars",
+      "engine": "lint",
+      "file": "rentalsync-bridge/src/static/js/admin.js",
+      "fingerprint": "dccaf2df26e6e72b",
+      "count": 1
+    },
+    {
+      "rule": "security/innerhtml",
+      "engine": "security",
+      "file": "rentalsync-bridge/src/static/js/admin.js",
+      "fingerprint": "b66751b491bb8e9f",
+      "count": 1
+    },
+    {
+      "rule": "security/innerhtml",
+      "engine": "security",
+      "file": "rentalsync-bridge/src/static/js/admin.js",
+      "fingerprint": "de90460e1756cbc9",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/trivial-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/utils/logging.py",
+      "fingerprint": "0f37ceaf655d7c3c",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/trivial-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/utils/logging.py",
+      "fingerprint": "1001dbfe959c38d5",
+      "count": 1
+    },
+    {
+      "rule": "ai-slop/trivial-comment",
+      "engine": "ai-slop",
+      "file": "rentalsync-bridge/src/utils/logging.py",
+      "fingerprint": "dfa349f4006945b7",
+      "count": 1
+    }
+  ]
+}

@@ -1,0 +1,55 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+
+name: '🧹 Linting'
+
+# yamllint disable-line rule:truthy
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+  push:
+    branches:
+      - main
+
+permissions: {}
+
+# A literal group, NOT '${{ github.workflow }}-${{ github.ref }}'.
+# github.workflow resolves to the workflow NAME, so any other workflow
+# in the repository carrying this same name would compute the same
+# group and one of the two would be cancelled.
+concurrency:
+  group: 'linting-${{ github.ref }}'
+  # Do NOT cancel, and queue rather than replace, so a burst of pushes
+  # cannot leave a cancelled check run beside a successful one for the
+  # same head SHA. The lint check is required by the 'Base rules'
+  # ruleset, and ruleset evaluation blocks on a cancelled run.
+  # 'queue: max' cannot be combined with 'cancel-in-progress: true'.
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  linting:
+    name: 'Linting'
+    # Runs EVERY hook in the root .pre-commit-config.yaml with prek, in
+    # one job, so hooks that only ran locally (mypy, interrogate, reuse,
+    # actionlint, ...) are enforced on every pull request, Dependabot's
+    # included. The check runs are 'Linting / Lint plan' and
+    # 'Linting / Lint: <task>'; keep the 'Base rules' ruleset in step
+    # if this job is renamed.
+    # yamllint disable-line rule:line-length
+    uses: lfreleng-actions/generic-workflows/.github/workflows/linting.yaml@c98f3aaa4c67e656cb5a53e3a5ef22f6aa2d024e  # v0.8.0
+    permissions:
+      contents: read  # Check out the repository to lint.
+    with:
+      # Excluded hooks, and where each is covered instead:
+      #   gitlint: a commit-msg hook, which never runs in a plain
+      #     'prek run'. Commit messages are covered by the DCO check
+      #     and the PR title by 'Semantic Pull Request'. Naming it
+      #     here keeps the exclusion explicit rather than silent.
+      #   aislop: run by type-quality-gates.yaml through
+      #     lfreleng-actions/aislop-scan-action.
+      skip_hooks: 'gitlint aislop'
+      # no-commit-to-branch rejects 'main', so lint push runs from a
+      # throwaway branch.
+      branch_name: 'ci-linting'

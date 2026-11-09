@@ -527,6 +527,6 @@ class TestParseDate:
             _parse_date("")
 
     def test_invalid_string_raises_provider_error(self):
-        """Test that unparseable strings raise PMSProviderError."""
+        """Test that unparsable strings raise PMSProviderError."""
         with pytest.raises(PMSProviderError, match="Cannot parse date"):
             _parse_date("not-a-date")

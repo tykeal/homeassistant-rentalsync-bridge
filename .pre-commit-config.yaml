@@ -12,44 +12,101 @@ ci:
     Chore: pre-commit autoupdate
 
     Signed-off-by: pre-commit-ci[bot] <66853113+pre-commit-ci[bot]@users.noreply.github.com>
-
+  skip: [aislop]
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
     hooks:
       - id: check-added-large-files
+        args: ["--maxkb=1000"]
       - id: check-ast
+      - id: check-builtin-literals
+      - id: check-case-conflict
+      - id: check-docstring-first
+      - id: check-executables-have-shebangs
+      - id: check-illegal-windows-names
+        exclude: (^|/)\.git($|/)
       - id: check-json
       - id: check-merge-conflict
+      - id: check-shebang-scripts-are-executable
+      - id: check-symlinks
+      - id: check-toml
+      - id: check-vcs-permalinks
       - id: check-xml
       - id: check-yaml
       - id: debug-statements
+      - id: destroyed-symlinks
+      - id: detect-aws-credentials
+        args: ["--allow-missing-credentials"]
+      - id: detect-private-key
       - id: end-of-file-fixer
+      - id: fix-byte-order-marker
+      - id: forbid-new-submodules
+      - id: forbid-submodules
       - id: mixed-line-ending
         args: ["--fix=lf"]
+      - id: name-tests-test
+        args: ["--pytest-test-first"]
+        files: ^rentalsync-bridge/tests/.+\.py$
+        exclude: ^rentalsync-bridge/tests/(.+/)?(__init__|conftest)\.py$
       - id: no-commit-to-branch
         args:
           - --branch=main
       - id: requirements-txt-fixer
       - id: trailing-whitespace
 
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: cbcdc463be5464e25e3e955a511599a67b9b987f  # frozen: v0.50.0
+    hooks:
+      - id: markdownlint
+        args: ["--fix"]
+        # specs/ holds the historical, completed spec-kit feature
+        # artefacts; they are not maintained documentation.
+        exclude: ^(\.specify|\.github|specs)/
+
   - repo: https://github.com/jorisroovers/gitlint
     rev: acc9d9de6369b76d22cb4167029d2035e8730b98 # frozen: v0.19.1
     hooks:
       - id: gitlint
 
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: 6ce4b4fc349b8881cbce40207dac3bf78824a88e  # frozen: v0.14.11
+  - repo: https://github.com/openstack/bashate
+    rev: fbd7c2534c2701351c603ff700ddf08202430a31  # frozen: 2.1.1
     hooks:
-      - id: ruff
+      - id: bashate
+        args: ["--ignore=E006,E011"]
+        exclude: ^\.specify/
+      # s6 run scripts have no .sh suffix and a bashio shebang, which
+      # file type detection does not recognise as shell.
+      - id: bashate
+        name: bashate (s6 run scripts)
+        args: ["--ignore=E006,E011"]
+        types: [file]
+        files: ^rentalsync-bridge/rootfs/etc/s6-overlay/s6-rc\.d/[^/]+/run$
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: 745eface02aef23e168a8afb6b5737818efbea95  # frozen: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        args: ["-x"]
+        exclude: ^\.specify/
+      - id: shellcheck
+        name: shellcheck (s6 run scripts)
+        args: ["-x"]
+        types: [file]
+        files: ^rentalsync-bridge/rootfs/etc/s6-overlay/s6-rc\.d/[^/]+/run$
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: c0f278f1254ccc8fb09676bcdb8d847e7db493e5  # frozen: v0.17.4
+    hooks:
+      - id: ruff-check
         files: ^rentalsync-bridge/(scripts|tests|src)/.+\.py$
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
         files: ^rentalsync-bridge/(scripts|tests|src)/.+\.py$
 
   - repo: https://github.com/adrienverge/yamllint.git
-    rev: 79a6b2b1392eaf49cdd32ac4f14be1a809bbd8f7  # frozen: v1.37.1
+    rev: cba56bcde1fdd01c1deb3f945e69764c291a6530  # frozen: v1.38.0
     hooks:
       - id: yamllint
 
@@ -68,7 +125,7 @@ repos:
           - setuptools
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: a66e98df7b4aeeb3724184b332785976d062b92e  # frozen: v1.19.1
+    rev: ad26ebfa797fcb9b8f83275937c1c1d6e126719c  # frozen: v2.4.1
     hooks:
       - id: mypy
         files: ^rentalsync-bridge/src/.+\.py$
@@ -91,7 +148,7 @@ repos:
           - aiosqlite
 
   - repo: https://github.com/fsfe/reuse-tool
-    rev: 9fabf9eb815a57aac116b435e8346c200cdb8604  # frozen: v6.2.0
+    rev: ea739bff9c6daa1c4c8a5c5dfd069f3fb0374728  # frozen: v6.3.0
     hooks:
       - id: reuse
 
@@ -99,3 +156,36 @@ repos:
     rev: 08bb2c4f0d039744455b87aef1c647fb8b66d37b  # frozen: v1.17.0
     hooks:
       - id: actionlint
+
+  - repo: https://github.com/codespell-project/codespell
+    rev: 57b21406f092110c18776e39b0bda50d37c945c8  # frozen: v2.4.3
+    hooks:
+      - id: codespell
+        # checkIn (Guesty API field), selectin (SQLAlchemy loader) and
+        # idEl (a JS identifier) are not misspellings.
+        args: ["-L", "checkin,selectin,idel"]
+        exclude: uv\.lock$
+
+  # Provider payloads in tests are inline dicts, so .py is scanned too.
+  - repo: local
+    hooks:
+      - id: check-fixture-pii
+        name: check test fixtures for PII
+        entry: python rentalsync-bridge/scripts/check_fixture_pii.py
+        language: python
+        files: ^rentalsync-bridge/tests/.+\.(py|json)$
+
+  # Baselined in .aislop/ci-baseline.json, so only new findings fail.
+  # CI runs it through lfreleng-actions/aislop-scan-action in
+  # type-quality-gates.yaml; keep this pin in step with that action's.
+  - repo: local
+    hooks:
+      - id: aislop
+        name: aislop ci
+        entry: aislop
+        args: [ci]
+        language: node
+        additional_dependencies:
+          - aislop@0.20.0
+        pass_filenames: false
+        require_serial: true
