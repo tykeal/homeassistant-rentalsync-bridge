@@ -39,6 +39,11 @@ REAL_DOMAIN = "mail" + "box.org"
 REAL_PHONE = "+1" + "4152220000"
 
 
+def _assign(name: str, value: str) -> str:
+    """Return source for a string constant assignment."""
+    return f'{name} = "{value}"'
+
+
 def _rules(text: str) -> list[str]:
     """Return the rule names reported for a snippet."""
     return [hit.rule for hit in pii.scan_text("sample.py", text)]
@@ -56,6 +61,12 @@ def _rules(text: str) -> list[str]:
         "{'address': {'full': '123 Beach Rd, Miami, FL'}}",
         '{"street": "456 Main St", "zip": "90210"}',
         '{"latitude": 37.5, "longitude": -122.5}',
+        '{"guestPhone": "5551234567"}',
+        '{"guestPhone": "555-123-4567"}',
+        'phone="+1-555-1234"',
+        'phone_last4="1234"',
+        '{"guestAddress": "4417 Sentinel Hollow Road"}',
+        '{"email_address": "a@example.com"}',
         'headers = {"Authorization": "Bearer test_token"}',
         "# SPDX-FileCopyrightText: 2026 Owner <tyk" + "eal@bardic" + "grove.org>",
     ],
@@ -78,6 +89,11 @@ def test_synthetic_values_pass(text: str) -> None:
         ('{"longitude"' + ': "-0.12"}', "coordinate-box"),
         ('{"postalCode"' + ': "94107"}', "address-allowlist"),
         ("{'street'" + ": '1 Infinite Loop'}", "address-allowlist"),
+        ('{"guestPhone"' + ': "4152220000"}', "phone-number"),
+        ('{"guestPhone"' + ': "415-222-0000"}', "phone-number"),
+        (_assign("GUEST_PHONE", "222-0000"), "phone-number"),
+        ('{"guestAddress"' + ': "1 Infinite Loop"}', "address-allowlist"),
+        (_assign("GUEST_ADDRESS", "1 Infinite Loop"), "address-allowlist"),
     ],
 )
 def test_private_values_reported(text: str, rule: str) -> None:

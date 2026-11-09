@@ -46,12 +46,19 @@ POSTCODE_RE: Final = re.compile(
     _QUOTED_KEY.format(keys="postcode|postalCode|postal_code|zip|zipcode|zipCode")
     + r"""["']([^"']+)["']"""
 )
+# Dict keys, keyword arguments, and constants holding a string value,
+# e.g. ``"guestPhone": "..."``, ``phone="..."``, or ``GUEST_ADDRESS = "..."``.
+_STRING_FIELD: Final = r"""(?<!\w)["']?(?:{keys})["']?\s*[:=]\s*["']([^"'\n]*)["']"""
+PHONE_FIELD_RE: Final = re.compile(_STRING_FIELD.format(keys=r"\w*phone\w*"), re.I)
 STREET_RE: Final = re.compile(
-    _QUOTED_KEY.format(keys="street|address1|address2|full|display")
-    + r"""["']([^"']+)["']"""
+    _STRING_FIELD.format(keys=r"street|(?:guest_?)?address[12]?|full|display"),
+    re.I,
 )
 ALLOWED_POSTCODES: Final = frozenset({"00000", "12345", "90210"})
-ALLOWED_STREET_RE: Final = re.compile(r"^\d{1,5} (?:Beach|Example|Main|Test)\b")
+ALLOWED_STREET_RE: Final = re.compile(
+    r"^\d{1,5} (?:Beach|Example|Main|Sentinel|Test)\b"
+)
+MIN_PHONE_DIGITS: Final = 7
 SYNTHETIC_MIN_LAT: Final = 37.0
 SYNTHETIC_MAX_LAT: Final = 38.0
 SYNTHETIC_MIN_LON: Final = -123.0
@@ -123,6 +130,28 @@ def _is_fictional_phone(area: str, exchange: str) -> bool:
     return FICTIONAL_PHONE_PART in (area, exchange)
 
 
+def _is_fictional_phone_value(value: str) -> bool:
+    """Return whether a phone field value is synthetic or not a number.
+
+    Handles local formats such as ``4155550100`` or ``415-555-0100``
+    as well as country-code prefixed ones. Values with too few digits
+    to be a phone number, such as stored last-four digits, pass.
+
+    Args:
+        value: Raw phone field value.
+
+    Returns:
+        True when the value is not a full number outside the 555 range.
+    """
+    digits = re.sub(r"\D", "", value)
+    # Drop a NANP country code from 1 + NXX-XXXX or 1 + NPA-NXX-XXXX.
+    if digits.startswith("1") and len(digits) in {8, 11}:
+        digits = digits[1:]
+    if len(digits) < MIN_PHONE_DIGITS:
+        return True
+    return FICTIONAL_PHONE_PART in (digits[:3], digits[3:6])
+
+
 def _in_coordinate_box(key: str, value: float) -> bool:
     """Return whether a coordinate lies in the synthetic bounding box.
 
@@ -172,6 +201,9 @@ def _phone_findings(text: str) -> Iterator[tuple[int, str]]:
             yield match.start(), "phone-number"
     for match in INTL_PHONE_RE.finditer(text):
         yield match.start(), "phone-number"
+    for match in PHONE_FIELD_RE.finditer(text):
+        if not _is_fictional_phone_value(match.group(1)):
+            yield match.start(), "phone-number"
 
 
 def _location_findings(text: str) -> Iterator[tuple[int, str]]:
@@ -190,7 +222,7 @@ def _location_findings(text: str) -> Iterator[tuple[int, str]]:
         if match.group(2) not in ALLOWED_POSTCODES:
             yield match.start(), "address-allowlist"
     for match in STREET_RE.finditer(text):
-        if not ALLOWED_STREET_RE.match(match.group(2)):
+        if not ALLOWED_STREET_RE.match(match.group(1)):
             yield match.start(), "address-allowlist"
 
 
@@ -208,13 +240,13 @@ def scan_text(path: str, text: str) -> list[Hit]:
         _identity_findings(text), _phone_findings(text), _location_findings(text)
     )
     return sorted(
-        (
+        {
             Hit(path=path, line=_line_for(text, index), rule=rule)
             for index, rule in findings
             # Licence headers legitimately carry the copyright holder's identity.
             if "SPDX-FileCopyrightText:" not in _line_text(text, index)
-        ),
-        key=lambda hit: hit.line,
+        },
+        key=lambda hit: (hit.line, hit.rule),
     )
 
 
