@@ -1185,7 +1185,7 @@ class GuestyProvider(PMSProvider):
             check_out = _parse_date(check_out_raw)
         except PMSProviderError:
             logger.warning(
-                "Skipping reservation %s with unparseable dates",
+                "Skipping reservation %s with unparsable dates",
                 pms_booking_id,
             )
             return None
@@ -1672,7 +1672,7 @@ def _parse_optional_date(value: str | datetime | None) -> datetime | None:
         value: ISO-format timestamp string, datetime, or None/empty.
 
     Returns:
-        Timezone-aware UTC datetime, or None if absent/unparseable.
+        Timezone-aware UTC datetime, or None if absent/unparsable.
     """
     if not value:
         return None
@@ -1689,7 +1689,7 @@ def _parse_retry_after(response: httpx.Response) -> float | None:
         response: The httpx response to inspect.
 
     Returns:
-        Seconds to wait, or None if header is absent/unparseable.
+        Seconds to wait, or None if header is absent/unparsable.
     """
     header = response.headers.get("Retry-After")
     if header is None:
