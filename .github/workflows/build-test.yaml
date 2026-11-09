@@ -15,41 +15,40 @@ on:
         default: false
         required: false
   pull_request:
-    types: [opened, reopened, edited, synchronize]
+    types: [opened, reopened, synchronize]
     branches:
       - main
-      - master
 
 concurrency:
   group: "${{ github.workflow }}-${{ github.ref }}"
   cancel-in-progress: true
 
-permissions:
-  actions: write  # Required for cache deletion when clear_cache is true
+permissions: {}
 
 jobs:
   repository-metadata:
     name: "Repository Metadata"
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      pull-requests: read
+      contents: read  # Check out the repository
+      pull-requests: read  # Read pull request metadata
     timeout-minutes: 5
     steps:
       # yamllint disable-line rule:line-length
-      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43  # v2.22.3
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
         with:
-          egress-policy: audit
+          egress-policy: 'audit'
 
       # yamllint disable-line rule:line-length
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: "Gather repository metadata"
         id: repo-metadata
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/repository-metadata-action@2206d754f65f1a90f57b49be546712c5f594def2  # v0.3.3
+        uses: lfreleng-actions/repository-metadata-action@b5fc39002b54a9863975c89d0bd0c347a9861954  # v0.5.2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           github_summary: 'true'
@@ -57,61 +56,140 @@ jobs:
           artifact_upload: 'true'
           artifact_formats: 'json'
 
+  clear-cache:
+    name: 'Clear Python Caches'
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      && github.event.inputs.clear_cache == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write  # Delete GitHub Actions caches
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+    steps:
+      # yamllint disable-line rule:line-length
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
+        with:
+          egress-policy: 'audit'
+
+      - name: 'Clear Python dependency caches'
+        env:
+          REPO: "${{ github.repository }}"
+        run: |
+          # Clear Python dependency caches
+          echo "Clearing Python dependency caches 🗑️"
+          deleted=0
+          failed=0
+          for prefix in python- setup-python- setup-uv-; do
+            while true; do
+              if ! keys=$(gh cache list --repo "$REPO" \
+                --key "$prefix" --limit 100 \
+                --json key --jq '.[].key' 2>&1); then
+                echo "::warning::Failed to list caches" \
+                  "for prefix '$prefix': $keys"
+                echo "Warning: failed to list caches for" \
+                  "prefix \`$prefix\`: $keys" \
+                  >> "$GITHUB_STEP_SUMMARY"
+                failed=1
+                break
+              fi
+              [ -n "$keys" ] || break
+
+              batch_deleted=0
+              while IFS= read -r key; do
+                [ -n "$key" ] || continue
+                if delete_out=$(gh cache delete "$key" \
+                  --repo "$REPO" 2>&1); then
+                  echo "Deleted cache: $key"
+                  deleted=$((deleted + 1))
+                  batch_deleted=$((batch_deleted + 1))
+                else
+                  echo "::warning::Failed to delete" \
+                    "cache '$key': $delete_out"
+                  echo "Warning: failed to delete cache" \
+                    "\`$key\`: $delete_out" \
+                    >> "$GITHUB_STEP_SUMMARY"
+                  failed=1
+                fi
+              done <<< "$keys"
+
+              [ "$batch_deleted" -gt 0 ] || break
+            done
+          done
+          if [ "$deleted" -gt 0 ]; then
+            echo "Cleared $deleted Python cache(s) ✅" \
+              >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$failed" -eq 0 ]; then
+            echo "No Python caches found to clear 💬" \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "$failed" -ne 0 ]; then
+            echo "Cache clearing completed with errors ❌" \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
   python-build:
+    # Required status check in the repository ruleset; keep this name.
     name: 'Python Build'
+    needs: 'clear-cache'
+    # Run after clear-cache whether it ran, was skipped or failed
+    if: ${{ always() && !cancelled() }}
     runs-on: 'ubuntu-latest'
     outputs:
       matrix_json: "${{ steps.python-build.outputs.matrix_json }}"
       artefact_name: "${{ steps.python-build.outputs.artefact_name }}"
       artefact_path: "${{ steps.python-build.outputs.artefact_path }}"
     permissions:
-      contents: read
-      actions: write  # Required for cache deletion when clear_cache is true
+      contents: read  # Check out the repository
     timeout-minutes: 12
-    env:
-      GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
     steps:
       # Harden the runner used by this workflow
       # yamllint disable-line rule:line-length
-      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43  # v2.22.3
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
         with:
           egress-policy: 'audit'
 
       # yamllint disable-line rule:line-length
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: 'Build Python project'
         id: python-build
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/python-build-action@38b9a4e7ee34e56d178f5bd248df52e41f7d496e  # v1.0.6
+        uses: lfreleng-actions/python-build-action@3a996fe53edf0117e283b9fef8d3aacaa9adaf02  # v2.1.2
         with:
-          clear_cache: ${{ github.event.inputs.clear_cache || 'false' }}
           path_prefix: 'rentalsync-bridge/'
 
   python-tests:
     name: 'Python Tests'
     runs-on: 'ubuntu-latest'
     needs: 'python-build'
+    if: ${{ !cancelled() && needs.python-build.result == 'success' }}
     # Matrix job
     strategy:
       fail-fast: false
       matrix: "${{ fromJson(needs.python-build.outputs.matrix_json) }}"
     permissions:
-      contents: read
+      contents: read  # Check out the repository
     timeout-minutes: 12
     steps:
       # Harden the runner used by this workflow
       # yamllint disable-line rule:line-length
-      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43  # v2.22.3
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
         with:
-          egress-policy: audit
+          egress-policy: 'audit'
 
       # yamllint disable-line rule:line-length
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: "Python tests [pytest] ${{ matrix.python-version }}"
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/python-test-action@aa753462f090101dcb0c4708e9499f55e276e373  # v1.1.2
+        uses: lfreleng-actions/python-test-action@644a2008072617b9cf4846ca2b9d385691f9dc67  # v1.3.3
         with:
           python_version: ${{ matrix.python-version }}
           path_prefix: 'rentalsync-bridge/'
@@ -120,45 +198,57 @@ jobs:
     name: 'Python Audit'
     runs-on: 'ubuntu-latest'
     needs: 'python-build'
+    if: ${{ !cancelled() && needs.python-build.result == 'success' }}
     # Matrix job
     strategy:
       fail-fast: false
       matrix: "${{ fromJson(needs.python-build.outputs.matrix_json) }}"
     permissions:
-      contents: read
+      contents: read  # Check out the repository
     timeout-minutes: 10
     steps:
       # Harden the runner used by this workflow
       # yamllint disable-line rule:line-length
-      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43  # v2.22.3
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
         with:
           egress-policy: 'audit'
 
       # yamllint disable-line rule:line-length
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: "Audit dependencies ${{ matrix.python-version }}"
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/python-audit-action@47af793a2a28882b10ceb9109646cbbcecc2e7b0  # v0.6.1
+        uses: lfreleng-actions/python-audit-action@379a6a772cdf47b130bae3ab47718a22518bb83c  # v0.6.4
         with:
           python_version: "${{ matrix.python-version }}"
           path_prefix: 'rentalsync-bridge/'
+          permit_fail: "${{ vars.NO_BLOCK_AUDIT_FAIL == 'true' }}"
 
   sbom:
     name: 'Generate SBOM'
     runs-on: ubuntu-latest
     needs: 'python-build'
+    if: ${{ !cancelled() && needs.python-build.result == 'success' }}
     timeout-minutes: 10
     permissions:
-      contents: read
+      contents: read  # Check out the repository
     steps:
       # yamllint disable-line rule:line-length
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
+        with:
+          egress-policy: 'audit'
+
+      # yamllint disable-line rule:line-length
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: "Generate SBOM"
         id: sbom
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/python-sbom-action@ae4aca2ef28d7da4ec95049cc78be43e632d322a  # v0.1.0
+        uses: lfreleng-actions/python-sbom-action@639001a0def8109e045818dfb3ee82cf602657af  # v0.1.4
         with:
           include_dev: "false"
           sbom_format: "both"
@@ -176,7 +266,20 @@ jobs:
           path: |
             sbom-cyclonedx.json
             sbom-cyclonedx.xml
+          if-no-files-found: error
           retention-days: 45
+
+      - name: "SBOM summary"
+        env:
+          COMPONENT_COUNT: "${{ steps.sbom.outputs.component_count }}"
+          DEPENDENCY_MANAGER: "${{ steps.sbom.outputs.dependency_manager }}"
+        run: |
+            # SBOM summary
+            {
+              echo "## SBOM Summary"
+              echo "SBOM count: ${COMPONENT_COUNT}"
+              echo "Tool used: ${DEPENDENCY_MANAGER}"
+            } >> "$GITHUB_STEP_SUMMARY"
 
       - name: "Security scan with Grype (SARIF)"
         # yamllint disable-line rule:line-length
