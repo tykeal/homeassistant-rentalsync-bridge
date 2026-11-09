@@ -6,23 +6,43 @@ name: 'Autolabeler'
 
 # yamllint disable-line rule:truthy
 on:
+  # 'edited' is load-bearing. Every autolabeler rule in
+  # .github/release-drafter.yml matches on the pull request TITLE, so
+  # a title corrected after opening needs a fresh run to earn its
+  # label. 'synchronize' does not cover this, firing on a push rather
+  # than on a metadata edit.
   pull_request:
     types:
       - opened
       - synchronize
       - reopened
+      - edited
   pull_request_target:
     types:
       - opened
       - synchronize
       - reopened
+      - edited
 
 permissions: {}
 
 concurrency:
   # yamllint disable-line rule:line-length
   group: ${{ format('al-{0}-pr-{1}', github.event_name, github.event.pull_request.number) }}
-  cancel-in-progress: true
+  # Do NOT cancel: 'Autolabel PR' is a required status check in the
+  # 'Base rules' ruleset. A cancelled run leaves a cancelled check run
+  # beside a successful one for the same head SHA, so the merge box
+  # reads "Some checks were not successful" and ruleset evaluation
+  # blocks even though the check passed. The 'edited' trigger makes
+  # the back-to-back burst that produces this common.
+  #
+  # Queue rather than replace, matching semantic-pull-request.yaml.
+  # The default queue is 'single', which holds one pending run and
+  # cancels it when a third event arrives. 'queue: max' holds up to
+  # 100 and runs them in order; it cannot be combined with
+  # 'cancel-in-progress: true'. Labelling takes seconds.
+  cancel-in-progress: false
+  queue: max
 
 jobs:
   autolabel:
@@ -38,14 +58,14 @@ jobs:
     # here because the autolabeler action does NOT checkout any code
     # from the PR — it only reads the PR title/body via GitHub API.
     permissions:
-      contents: read
-      pull-requests: write
+      contents: read  # Read the release-drafter.yml config
+      pull-requests: write  # Apply labels to the pull request
     runs-on: 'ubuntu-latest'
     timeout-minutes: 3
     steps:
       # Harden the runner used by this workflow
       # yamllint disable-line rule:line-length
-      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
         with:
           egress-policy: 'audit'
 
