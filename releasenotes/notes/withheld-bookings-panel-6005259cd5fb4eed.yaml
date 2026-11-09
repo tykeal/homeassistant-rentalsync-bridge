@@ -1,0 +1,12 @@
+---
+features:
+  - |
+    New **Needs attention** panel in the admin UI. A booking whose
+    provider status RentalSync Bridge does not recognise is withheld
+    from the iCal export; until now that was only visible as a log
+    warning. The panel lists those bookings, with a count badge, and is
+    hidden when there is nothing to report. It shows no guest names,
+    emails or phone numbers, so it is safe to screenshot into an issue
+    report. The same data is available from the new
+    `GET /api/bookings/withheld` endpoint and as a withheld count on
+    `GET /api/status`.

@@ -1,0 +1,9 @@
+---
+security:
+  - |
+    Released add-on images are now scanned with Grype before they are
+    published, and a high or critical finding with a fix available
+    blocks the release. The image also applies the Alpine security
+    updates published since the base image was built, fixing zlib
+    CVE-2026-4738, and drops the unused `tempio` binary, whose bundled
+    Go runtime carried GO-2026-5972.
