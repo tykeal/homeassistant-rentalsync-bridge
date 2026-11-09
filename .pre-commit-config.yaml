@@ -70,6 +70,32 @@ repos:
     hooks:
       - id: gitlint
 
+  - repo: https://github.com/openstack/bashate
+    rev: fbd7c2534c2701351c603ff700ddf08202430a31  # frozen: 2.1.1
+    hooks:
+      - id: bashate
+        args: ["--ignore=E006,E011"]
+        exclude: ^\.specify/
+      # s6 run scripts have no .sh suffix and a bashio shebang, which
+      # file type detection does not recognise as shell.
+      - id: bashate
+        name: bashate (s6 run scripts)
+        args: ["--ignore=E006,E011"]
+        types: [file]
+        files: ^rentalsync-bridge/rootfs/etc/s6-overlay/s6-rc\.d/[^/]+/run$
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: 745eface02aef23e168a8afb6b5737818efbea95  # frozen: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        args: ["-x"]
+        exclude: ^\.specify/
+      - id: shellcheck
+        name: shellcheck (s6 run scripts)
+        args: ["-x"]
+        types: [file]
+        files: ^rentalsync-bridge/rootfs/etc/s6-overlay/s6-rc\.d/[^/]+/run$
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: c0f278f1254ccc8fb09676bcdb8d847e7db493e5  # frozen: v0.17.4
     hooks:

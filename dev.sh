@@ -38,11 +38,13 @@ mkdir -p "${SCRIPT_DIR}/data"
 # Generate or load encryption key for credential storage
 ENCRYPTION_KEY_FILE="${SCRIPT_DIR}/data/.encryption_key"
 if [[ -f "$ENCRYPTION_KEY_FILE" ]]; then
-    export ENCRYPTION_KEY=$(cat "$ENCRYPTION_KEY_FILE")
+    ENCRYPTION_KEY=$(cat "$ENCRYPTION_KEY_FILE")
+    export ENCRYPTION_KEY
 else
     echo "🔐 Generating new encryption key..."
     cd "${ADDON_DIR}"
-    export ENCRYPTION_KEY=$(uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+    ENCRYPTION_KEY=$(uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+    export ENCRYPTION_KEY
     echo "$ENCRYPTION_KEY" > "$ENCRYPTION_KEY_FILE"
     chmod 600 "$ENCRYPTION_KEY_FILE"
 fi

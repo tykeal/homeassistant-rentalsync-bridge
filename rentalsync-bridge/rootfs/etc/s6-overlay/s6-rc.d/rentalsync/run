@@ -1,4 +1,5 @@
 #!/command/with-contenv bashio
+# shellcheck shell=bash
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
 
@@ -30,7 +31,8 @@ export ICAL_BASE_URL="${ICAL_BASE_URL:-http://${HOSTNAME:-local-rentalsync-bridg
 # Generate or load encryption key for credential storage
 ENCRYPTION_KEY_FILE="/data/.encryption_key"
 if [ -f "$ENCRYPTION_KEY_FILE" ]; then
-    export ENCRYPTION_KEY=$(cat "$ENCRYPTION_KEY_FILE")
+    ENCRYPTION_KEY=$(cat "$ENCRYPTION_KEY_FILE")
+    export ENCRYPTION_KEY
 else
     bashio::log.info "Generating new encryption key..."
     if ! ENCRYPTION_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" 2>&1); then
