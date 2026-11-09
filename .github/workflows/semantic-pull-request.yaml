@@ -13,43 +13,52 @@ on:
 
 permissions: {}
 
+# A literal group, NOT '${{ github.workflow }}-${{ github.ref }}'.
+# github.workflow resolves to the workflow NAME, so any other workflow
+# in the repository carrying this same name would compute the same
+# group and one of the two would be cancelled.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: 'semantic-pull-request-${{ github.ref }}'
+  # Do NOT cancel, and queue rather than replace.
+  #
+  # 'Semantic Pull Request / Semantic Pull Request' is a required
+  # status check in the 'Base rules' ruleset. Closely-spaced 'edited'
+  # and 'synchronize' events would otherwise leave a cancelled check
+  # run beside a successful one for the same head SHA. The merge box
+  # then reads "Some checks were not successful", and ruleset
+  # evaluation blocks on the cancelled run even though the check
+  # passed.
+  #
+  # cancel-in-progress alone is not enough: the queue defaults to
+  # 'single', which holds one pending run and cancels it when a third
+  # event arrives. 'queue: max' holds up to 100 and runs them in
+  # order. It cannot be combined with 'cancel-in-progress: true',
+  # which is a validation error.
+  #
+  # The check takes seconds, so queueing costs little.
+  cancel-in-progress: false
+  queue: max
 
 jobs:
   semantic-pull-request:
     name: "Semantic Pull Request"
+    # Delegate to the shared reusable workflow, which tolerates Dependabot's
+    # truncated single-commit subjects for long dependency names that
+    # otherwise trip validateSingleCommitMatchesPrTitle.
+    #
+    # The reusable's job is also named 'Semantic Pull Request', so the
+    # check run is 'Semantic Pull Request / Semantic Pull Request'; the
+    # 'Base rules' ruleset requires that exact name.
+    #
+    # Every input is optional. The defaults already enforce this
+    # repository's policy: the capitalised types Fix, Feat, Chore, Docs,
+    # Style, Refactor, Perf, Test, Revert, CI and Build, plus
+    # validateSingleCommit and validateSingleCommitMatchesPrTitle. So
+    # this caller passes none. See generic-workflows'
+    # docs/semantic-pull-request.md.
+    # yamllint disable-line rule:line-length
+    uses: lfreleng-actions/generic-workflows/.github/workflows/semantic-pull-request.yaml@c98f3aaa4c67e656cb5a53e3a5ef22f6aa2d024e  # v0.8.0
+    # A called workflow's token is capped by its caller, so grant both.
     permissions:
       contents: read
-    runs-on: ubuntu-latest
-    timeout-minutes: 3
-    steps:
-      # Harden the runner used by this workflow
-      # yamllint disable-line rule:line-length
-      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
-        with:
-          egress-policy: audit
-
-      - name: "Validate pull request title"
-        # yamllint disable-line rule:line-length
-        uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          # Requires the type to be capitalised,
-          # but accept any of the standard types
-          types: |
-            Fix
-            Feat
-            Chore
-            Docs
-            Style
-            Refactor
-            Perf
-            Test
-            Revert
-            CI
-            Build
-          validateSingleCommit: true
-          validateSingleCommitMatchesPrTitle: true
+      pull-requests: read  # Gate step queries the PR API (avoids 403)

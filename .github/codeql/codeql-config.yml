@@ -1,0 +1,14 @@
+---
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+
+name: rentalsync-bridge-codeql
+
+# The Python application lives in the rentalsync-bridge/ subdirectory.
+# Scan the runtime source and the shipped Alembic migrations.
+paths:
+  - rentalsync-bridge/src
+  - rentalsync-bridge/alembic
+
+paths-ignore:
+  - rentalsync-bridge/tests
