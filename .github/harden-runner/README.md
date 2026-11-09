@@ -51,6 +51,7 @@ wildcard opens only the first port listed for it.
 ## Reusable workflows
 
 The reusable workflows called from `codeql.yml`,
-`openssf-scorecard.yaml` and `semantic-pull-request.yaml` run their
-own harden-runner steps in block mode against the `lfreleng-actions`
-shared allow-list.
+`openssf-scorecard.yaml`, `semantic-pull-request.yaml` and
+`linting.yaml` run their own harden-runner steps in block mode against
+the `lfreleng-actions` shared allow-list. Linting defaults to audit, so
+its caller sets `harden_runner_egress: 'block'`.

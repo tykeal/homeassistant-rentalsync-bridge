@@ -53,3 +53,7 @@ jobs:
       # no-commit-to-branch rejects 'main', so lint push runs from a
       # throwaway branch.
       branch_name: 'ci-linting'
+      # Enforce the reusable's harden-runner egress allow-list (the
+      # pinned lfreleng-actions shared list) rather than only auditing
+      # egress, as its other lanes already do by default.
+      harden_runner_egress: 'block'
