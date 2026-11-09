@@ -1,0 +1,119 @@
+---
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+
+name: '🔎 Type and Quality Gates'
+
+# yamllint disable-line rule:truthy
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions: {}
+
+# A literal group, NOT '${{ github.workflow }}-${{ github.ref }}', and
+# queued rather than cancelled, as in linting.yaml: both jobs are
+# required checks in the 'Base rules' ruleset, and a cancelled run
+# beside a successful one for the same head SHA blocks the merge.
+concurrency:
+  group: 'type-quality-gates-${{ github.ref }}'
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  mypy:
+    # Check run name required by the 'Base rules' ruleset.
+    name: 'Type check (mypy)'
+    runs-on: 'ubuntu-latest'
+    permissions:
+      contents: read  # Check out the repository.
+    timeout-minutes: 15
+    env:
+      UV_VERSION: '0.13.7'
+      # Keep in step with the mirrors-mypy rev in .pre-commit-config.yaml.
+      MYPY_VERSION: '2.4.1'
+    steps:
+      # yamllint disable-line rule:line-length
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
+        with:
+          egress-policy: 'audit'
+
+      # yamllint disable-line rule:line-length
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # yamllint disable-line rule:line-length
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: '3.14'
+
+      - name: 'Install uv'
+        run: python -m pip install "uv==${UV_VERSION}"
+
+      # Type-check against the locked project environment rather than
+      # the pre-commit hook's hand-maintained additional_dependencies,
+      # so third-party types match what the add-on actually runs.
+      - name: 'Sync project environment'
+        working-directory: rentalsync-bridge
+        run: uv sync --locked --all-extras --no-install-project
+
+      - name: 'Run mypy'
+        working-directory: rentalsync-bridge
+        run: |
+          uv run --no-sync --with "mypy==${MYPY_VERSION}" \
+            mypy --config-file ../.mypy.ini src
+
+  aislop:
+    # Check run name required by the 'Base rules' ruleset.
+    name: 'Quality gate (aislop)'
+    runs-on: 'ubuntu-latest'
+    permissions:
+      contents: read  # Check out the repository.
+    timeout-minutes: 15
+    steps:
+      # yamllint disable-line rule:line-length
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
+        with:
+          egress-policy: 'audit'
+
+      # yamllint disable-line rule:line-length
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The action needs Node.js 22.13.0 or newer.
+      # yamllint disable-line rule:line-length
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: '24'
+
+      # Full scans honour .aislop/ci-baseline.json, so only findings
+      # absent from the baseline fail the gate. The action pins
+      # aislop 0.20.0; keep the local aislop hook in step.
+      - name: 'Run aislop'
+        id: scan
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/aislop-scan-action@55990577547e440b145f3d7d89707ab0afaa6bfb  # v0.4.1
+        with:
+          scan-mode: 'full'
+
+      - name: 'Flag reduced coverage'
+        if: steps.scan.outputs.coverage-degraded == 'true'
+        run: |
+          echo '::warning::aislop ran with reduced coverage; its result' \
+            'is not conclusive. See the step summary.'
+
+      - name: 'Enforce quality gate'
+        if: steps.scan.outputs.exit-code != '0'
+        env:
+          EXIT_CODE: ${{ steps.scan.outputs.exit-code }}
+        run: |
+          echo "::error::aislop quality gate failed (exit ${EXIT_CODE})"
+          exit 1
