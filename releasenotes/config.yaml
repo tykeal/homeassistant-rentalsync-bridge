@@ -1,0 +1,55 @@
+---
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+
+# reno configuration. reno resolves this directory relative to the git
+# repository root, so run it from there with the uv project in
+# rentalsync-bridge/ (see the "Release Notes" section of README.md).
+# Notes are written in Markdown, not reStructuredText, because
+# rentalsync-bridge/scripts/render_release_notes.py renders them into
+# the GitHub release body.
+default_branch: main
+# Release tags are vX.Y.Z; any vX.Y.ZrcN tags fold into the final release.
+collapse_pre_releases: true
+# reno's default pattern expects a '.' before the pre-release number
+# ('1.0.0.0rc1'), so on 'v0.2.0rc1' it strips '.0rc1' and files the
+# notes under 'v0.2'. Strip only the suffix; a, b and rc are accepted.
+pre_release_tag_re: '(?P<pre_release>(?:a|b|rc)\d+)$'
+# Main is the only release branch, so scan its full history.
+stop_at_branch_base: false
+# Section order is the order of the rendered release notes. The optional
+# 'prelude' section is built into reno and always renders first.
+sections:
+  - [upgrade, Upgrade Notes]
+  - [features, New Features]
+  - [fixes, Bug Fixes]
+  - [deprecations, Deprecation Notes]
+  - [security, Security Issues]
+# Release Drafter, not reno, decides the next version number.
+semver_major: []
+semver_minor: []
+semver_patch: []
+# Template used by 'reno new'. Keep only the sections that apply.
+template: |
+  ---
+  # Write each item in Markdown. Delete every section you do not use,
+  # including this comment.
+  # prelude: |
+  #   Optional release summary, rendered above all sections.
+  upgrade:
+    - |
+      Action an operator must take when upgrading, such as a changed
+      add-on option, environment variable or database migration.
+  features:
+    - |
+      A new capability, described from the user's point of view.
+  fixes:
+    - |
+      A user-visible bug that is now fixed.
+  deprecations:
+    - |
+      Something that still works but will be removed later, and what to
+      use instead.
+  security:
+    - |
+      A security issue that is now fixed.

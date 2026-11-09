@@ -20,16 +20,47 @@ jobs:
   update_release_draft:
     name: 'Update Release Draft'
     permissions:
-      contents: write
-      pull-requests: read
+      contents: write  # Create and update the draft release.
+      pull-requests: read  # List merged pull requests for $CHANGES.
     runs-on: 'ubuntu-latest'
-    timeout-minutes: 3
+    # Rendering scans the full git history with reno, which takes far
+    # longer than Release Drafter alone did.
+    timeout-minutes: 10
     steps:
       # Harden the runner used by this workflow
       # yamllint disable-line rule:line-length
-      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
         with:
           egress-policy: 'audit'
 
+      # Full history and tags let reno find the notes added since the
+      # latest release tag.
       # yamllint disable-line rule:line-length
-      - uses: release-drafter/release-drafter@c2e2804cc59f45f57076a99af580d0fedb697927 # v7.3.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # No cache: this job holds contents: write.
+      # yamllint disable-line rule:line-length
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: '3.14'
+          enable-cache: false
+
+      # The draft body is rebuilt on every push, so release notes live in
+      # releasenotes/notes/ and are rendered into the config each time.
+      # reno resolves releasenotes/ from the git root, so this runs there
+      # against the uv project in rentalsync-bridge/.
+      - name: 'Render release notes into the Release Drafter config'
+        run: |
+          uv run --project rentalsync-bridge --frozen \
+            --only-group releasenotes \
+            python rentalsync-bridge/scripts/render_release_notes.py \
+            --release-drafter-config .github/release-drafter.yml \
+            --output .github/release-drafter-generated.yml
+
+      # yamllint disable-line rule:line-length
+      - uses: release-drafter/release-drafter@978bb0b30c5ee8cdd332ced253758157150d43f0 # v7.10.0
+        with:
+          config-name: 'file:.github/release-drafter-generated.yml'

@@ -100,6 +100,10 @@ version-resolver:
       - "code-quality"
       - "revert"
   default: patch
+# The release body is header + template. The release-drafter workflow
+# writes the reno notes from releasenotes/notes/ into the header (see
+# rentalsync-bridge/scripts/render_release_notes.py), placing them
+# above $CHANGES. With no notes the header stays unset.
 # yamllint disable rule:line-length
 template: |
   $CHANGES

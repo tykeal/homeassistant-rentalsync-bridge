@@ -39,3 +39,10 @@ path = [
 ]
 SPDX-License-Identifier = "Apache-2.0"
 SPDX-FileCopyrightText = "2026 Andrew Grimberg <tykeal@bardicgrove.org>"
+
+# reno release notes (created by 'reno new' from a template without headers)
+[[annotations]]
+path = "releasenotes/notes/*.yaml"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Andrew Grimberg <tykeal@bardicgrove.org>"
+SPDX-License-Identifier = "Apache-2.0"

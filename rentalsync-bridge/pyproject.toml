@@ -52,6 +52,13 @@ dev = [
     "types-PyYAML",
 ]
 
+# reno manages the repository-root releasenotes/notes/; kept in its own
+# group so CI can install it alone (uv run --only-group releasenotes).
+[dependency-groups]
+releasenotes = [
+    "reno>=4.1.0",
+]
+
 [build-system]
 requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
