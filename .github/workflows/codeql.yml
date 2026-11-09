@@ -1,0 +1,48 @@
+---
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+
+name: 'CodeQL'
+
+# yamllint disable-line rule:truthy
+on:
+  workflow_dispatch:
+  push:
+    branches: ['main']
+    paths-ignore:
+      - 'docs/**'
+  pull_request:
+    branches: ['main']
+  schedule:
+    - cron: '26 16 * * 2'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  scan:
+    name: 'Audit Repository'
+    # Uses the security lane in lfreleng-actions/security-workflows. The
+    # lane builds its matrix from the 'languages' input, which defaults
+    # to 'python', so this caller passes no languages.
+    #
+    # Check runs emitted: 'Audit Repository / Validate Workflow Inputs'
+    # and 'Audit Repository / Analyze (python)'. Keep any ruleset that
+    # requires them in step if this job or the lane is renamed.
+    # yamllint disable-line rule:line-length
+    uses: lfreleng-actions/security-workflows/.github/workflows/codeql.yaml@b9d7b83b5696ab8388bcc11c3fe931563861e258  # v0.10.0
+    with:
+      config_file: .github/codeql/codeql-config.yml
+      # Pin the code scanning category so alert history stays matched
+      # if the lane ever changes how it derives one. It is per
+      # language, so this must change if 'languages' ever does.
+      # yamllint disable-line rule:line-length
+      category: '.github/workflows/codeql.yml:analyze/build-mode:none/language:python'
+    permissions:
+      security-events: write  # Upload CodeQL results to code scanning.
+      packages: read  # Fetch internal or private CodeQL packs.
+      actions: read  # Read workflow metadata (private repos only).
+      contents: read  # Check out the repository to analyze.
