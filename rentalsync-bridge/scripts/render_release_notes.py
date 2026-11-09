@@ -105,7 +105,9 @@ def collect_notes(
             if prelude and prelude.strip():
                 notes.prelude.append(prelude)
             for name in section_names:
-                items = content.get(name) or []
+                items = content.get(name)
+                if items is None:
+                    items = []
                 if isinstance(items, str):
                     items = [items]
                 if not isinstance(items, list) or not all(

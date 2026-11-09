@@ -212,13 +212,15 @@ def test_main_defaults_repo_root_to_git_toplevel(
     assert capsys.readouterr().out == "- Note.\n"
 
 
-def test_collect_rejects_non_list_section() -> None:
+@pytest.mark.parametrize("value", [42, False, 0, {}])
+def test_collect_rejects_non_list_section(value: Any) -> None:
     """A section that is neither a string nor a list names the bad file.
 
-    reno lint only warns about it, so the renderer is the gate.
+    reno lint only warns about it, so the renderer is the gate. Falsy
+    values must not slip through as an empty section.
     """
     rrn = _load_renderer()
-    loader = FakeLoader({"v0.2.0-1": {"bad.yaml": {"features": 42}}})
+    loader = FakeLoader({"v0.2.0-1": {"bad.yaml": {"features": value}}})
 
     with pytest.raises(ValueError, match=r"bad\.yaml.*features"):
         rrn.collect_notes(loader, ["v0.2.0-1"], SECTION_NAMES, "prelude")
