@@ -40,16 +40,16 @@ repos:
       - id: gitlint
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: 6ce4b4fc349b8881cbce40207dac3bf78824a88e  # frozen: v0.14.11
+    rev: c0f278f1254ccc8fb09676bcdb8d847e7db493e5  # frozen: v0.17.4
     hooks:
-      - id: ruff
+      - id: ruff-check
         files: ^rentalsync-bridge/(scripts|tests|src)/.+\.py$
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
         files: ^rentalsync-bridge/(scripts|tests|src)/.+\.py$
 
   - repo: https://github.com/adrienverge/yamllint.git
-    rev: 79a6b2b1392eaf49cdd32ac4f14be1a809bbd8f7  # frozen: v1.37.1
+    rev: cba56bcde1fdd01c1deb3f945e69764c291a6530  # frozen: v1.38.0
     hooks:
       - id: yamllint
 
@@ -68,7 +68,7 @@ repos:
           - setuptools
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: a66e98df7b4aeeb3724184b332785976d062b92e  # frozen: v1.19.1
+    rev: ad26ebfa797fcb9b8f83275937c1c1d6e126719c  # frozen: v2.4.1
     hooks:
       - id: mypy
         files: ^rentalsync-bridge/src/.+\.py$
@@ -91,7 +91,7 @@ repos:
           - aiosqlite
 
   - repo: https://github.com/fsfe/reuse-tool
-    rev: 9fabf9eb815a57aac116b435e8346c200cdb8604  # frozen: v6.2.0
+    rev: ea739bff9c6daa1c4c8a5c5dfd069f3fb0374728  # frozen: v6.3.0
     hooks:
       - id: reuse
 
