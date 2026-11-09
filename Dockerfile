@@ -6,7 +6,7 @@
 # Source files are in rentalsync-bridge/ subdirectory
 
 # Stage 1: Build stage
-FROM python:3.13-slim AS builder
+FROM python:3.14-slim AS builder
 
 # Build version for hatch-vcs fallback (no .git in container)
 ARG BUILD_VERSION=0.0.0
@@ -31,7 +31,7 @@ RUN SETUPTOOLS_SCM_PRETEND_VERSION="${BUILD_VERSION}" \
     uv sync --frozen --no-dev
 
 # Stage 2: Runtime stage
-FROM python:3.13-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 # Create non-root user
 RUN groupadd --gid 1000 rentalsync \
