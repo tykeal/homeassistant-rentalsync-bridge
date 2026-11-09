@@ -12,7 +12,7 @@ ci:
     Chore: pre-commit autoupdate
 
     Signed-off-by: pre-commit-ci[bot] <66853113+pre-commit-ci[bot]@users.noreply.github.com>
-
+  skip: [aislop]
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -99,3 +99,18 @@ repos:
     rev: 08bb2c4f0d039744455b87aef1c647fb8b66d37b  # frozen: v1.17.0
     hooks:
       - id: actionlint
+
+  # Baselined in .aislop/ci-baseline.json, so only new findings fail.
+  # CI runs it through lfreleng-actions/aislop-scan-action in
+  # type-quality-gates.yaml; keep this pin in step with that action's.
+  - repo: local
+    hooks:
+      - id: aislop
+        name: aislop ci
+        entry: aislop
+        args: [ci]
+        language: node
+        additional_dependencies:
+          - aislop@0.20.0
+        pass_filenames: false
+        require_serial: true
