@@ -60,6 +60,8 @@ jobs:
             --release-drafter-config .github/release-drafter.yml \
             --output .github/release-drafter-generated.yml
 
+      # A 'file:' config-name is read from the checkout and resolved
+      # relative to GITHUB_WORKSPACE (the repository root), not .github/.
       # yamllint disable-line rule:line-length
       - uses: release-drafter/release-drafter@978bb0b30c5ee8cdd332ced253758157150d43f0 # v7.10.0
         with:
