@@ -418,10 +418,10 @@ jobs:
           echo "build_from=$BUILD_FROM" \
             >> "$GITHUB_OUTPUT"
 
-      # Build into the local Docker engine first, without pushing, so
-      # the image is scanned before any tag reaches GHCR. The push
-      # build below then reuses the layers from the build cache.
-      - name: 'Build container image for scanning'
+      # Build into the local Docker engine without pushing, so the
+      # image is scanned before any tag reaches GHCR. The steps below
+      # then push and sign that same scanned image; nothing is rebuilt.
+      - name: 'Build container image'
         # yamllint disable-line rule:line-length
         uses: home-assistant/builder/actions/build-image@7412f0023ea9b6e58e8bb5059f1660f51376f49a  # 2026.09.0
         with:
@@ -459,22 +459,44 @@ jobs:
           summary-title: "Grype Container Scan (${{ matrix.arch }})"
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 'Build and push container image'
+      - name: 'Log in to GHCR'
         # yamllint disable-line rule:line-length
-        uses: home-assistant/builder/actions/build-image@7412f0023ea9b6e58e8bb5059f1660f51376f49a  # 2026.09.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550  # v4.8.0
         with:
-          arch: ${{ matrix.arch }}
-          # yamllint disable-line rule:line-length
-          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
-          context: 'rentalsync-bridge'
-          image: ${{ matrix.image }}
-          image-tags: |
-            ${{ needs.tag-validate.outputs.version }}
-          push: 'true'
-          version: ${{ needs.tag-validate.outputs.version }}
-          build-args: |
-            BUILD_FROM=${{ steps.base-image.outputs.build_from }}
-          cosign: 'true'
+          registry: 'ghcr.io'
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 'Install Cosign'
+        # yamllint disable-line rule:line-length
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532  # v4.1.3
+
+      - name: 'Push and sign scanned image'
+        shell: bash
+        env:
+          IMAGE: "${{ matrix.image }}"
+          VERSION: "${{ needs.tag-validate.outputs.version }}"
+        run: |
+          # Push the exact image Grype scanned, then sign its digest
+          docker push "${IMAGE}:${VERSION}"
+          DIGEST=$(docker buildx imagetools inspect \
+            "${IMAGE}:${VERSION}" --format '{{json .Manifest}}' | \
+            jq -r '.digest')
+          if [[ ! "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Could not resolve pushed digest: ${DIGEST}"
+            exit 1
+          fi
+          IMAGE_REF="${IMAGE}@${DIGEST}"
+          for i in 1 2 3 4 5; do
+            if cosign sign --yes "${IMAGE_REF}"; then
+              echo "Signed: ${IMAGE_REF}"
+              exit 0
+            fi
+            echo "Signing attempt ${i} failed, retrying..."
+            sleep $((2 ** i))
+          done
+          echo "::error::Failed to sign image ${IMAGE_REF}"
+          exit 1
 
   container-publish:
     name: 'Publish Multi-arch Manifest'
