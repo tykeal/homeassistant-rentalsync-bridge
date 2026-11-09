@@ -7,3 +7,6 @@ version: 1
 
 ci:
   baseline: .aislop/ci-baseline.json
+  # The pre-commit hook installs only aislop, which relies on ruff being
+  # on PATH for Python analysis. Fail rather than silently skip it.
+  failOnMissingTools: true
