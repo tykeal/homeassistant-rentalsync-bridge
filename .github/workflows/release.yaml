@@ -374,6 +374,7 @@ jobs:
     permissions:
       contents: read  # Check out the repository
       id-token: write  # Cosign keyless signing of the image (OIDC)
+      issues: read  # Read maintainer-approved Grype bypass issues
       packages: write  # Push the per-arch image to GHCR
     timeout-minutes: 30
     strategy:
@@ -417,7 +418,48 @@ jobs:
           echo "build_from=$BUILD_FROM" \
             >> "$GITHUB_OUTPUT"
 
-      - name: 'Build container image'
+      # Build into the local Docker engine first, without pushing, so
+      # the image is scanned before any tag reaches GHCR. The push
+      # build below then reuses the layers from the build cache.
+      - name: 'Build container image for scanning'
+        # yamllint disable-line rule:line-length
+        uses: home-assistant/builder/actions/build-image@7412f0023ea9b6e58e8bb5059f1660f51376f49a  # 2026.09.0
+        with:
+          arch: ${{ matrix.arch }}
+          # Not pushing, so the action skips the registry login
+          container-registry-password: ''
+          context: 'rentalsync-bridge'
+          image: ${{ matrix.image }}
+          image-tags: |
+            ${{ needs.tag-validate.outputs.version }}
+          push: 'false'
+          load: 'true'
+          version: ${{ needs.tag-validate.outputs.version }}
+          build-args: |
+            BUILD_FROM=${{ steps.base-image.outputs.build_from }}
+          cosign: 'true'
+
+      - name: 'Grype scan container image'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/grype-scan-action@f65dca2762823cfc8f376e32fee9baa6f3292696  # v0.6.2
+        with:
+          # yamllint disable-line rule:line-length
+          target: "docker:${{ matrix.image }}:${{ needs.tag-validate.outputs.version }}"
+          name: "${{ matrix.arch }} container image"
+          # Gate on high and critical OS and application packages with
+          # an upgrade available; unfixed advisories are reported as
+          # warnings in the summary and SARIF.
+          fail-on: 'high'
+          only-fixed: 'true'
+          dependency-policy: 'all'
+          # The SBOM grype job keeps the database cache current
+          cache-db: 'restore-only'
+          artifact-name: "grype-image-scan-${{ matrix.arch }}"
+          retention-days: 90
+          summary-title: "Grype Container Scan (${{ matrix.arch }})"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 'Build and push container image'
         # yamllint disable-line rule:line-length
         uses: home-assistant/builder/actions/build-image@7412f0023ea9b6e58e8bb5059f1660f51376f49a  # 2026.09.0
         with:
