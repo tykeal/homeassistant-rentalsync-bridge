@@ -13,3 +13,6 @@ raw.githubusercontent.com:443
 # pip-audit installs and PyPI vulnerability queries
 pypi.org:443
 files.pythonhosted.org:443
+# actions/setup-python downloads a Python build that is missing from
+# the runner tool cache from a GitHub release asset
+release-assets.githubusercontent.com:443
