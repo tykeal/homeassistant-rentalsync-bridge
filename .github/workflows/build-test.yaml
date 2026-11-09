@@ -83,36 +83,39 @@ jobs:
           failed=0
           for prefix in python- setup-python- setup-uv-; do
             while true; do
-              if ! keys=$(gh cache list --repo "$REPO" \
+              # List cache IDs, not keys: a key can repeat across refs
+              # and deleting by key removes every matching entry, so a
+              # later duplicate would then fail as not found.
+              if ! ids=$(gh cache list --repo "$REPO" \
                 --key "$prefix" --limit 100 \
-                --json key --jq '.[].key' 2>&1); then
+                --json id --jq '.[].id' 2>&1); then
                 echo "::warning::Failed to list caches" \
-                  "for prefix '$prefix': $keys"
+                  "for prefix '$prefix': $ids"
                 echo "Warning: failed to list caches for" \
-                  "prefix \`$prefix\`: $keys" \
+                  "prefix \`$prefix\`: $ids" \
                   >> "$GITHUB_STEP_SUMMARY"
                 failed=1
                 break
               fi
-              [ -n "$keys" ] || break
+              [ -n "$ids" ] || break
 
               batch_deleted=0
-              while IFS= read -r key; do
-                [ -n "$key" ] || continue
-                if delete_out=$(gh cache delete "$key" \
+              while IFS= read -r id; do
+                [ -n "$id" ] || continue
+                if delete_out=$(gh cache delete "$id" \
                   --repo "$REPO" 2>&1); then
-                  echo "Deleted cache: $key"
+                  echo "Deleted cache: $id"
                   deleted=$((deleted + 1))
                   batch_deleted=$((batch_deleted + 1))
                 else
                   echo "::warning::Failed to delete" \
-                    "cache '$key': $delete_out"
+                    "cache '$id': $delete_out"
                   echo "Warning: failed to delete cache" \
-                    "\`$key\`: $delete_out" \
+                    "\`$id\`: $delete_out" \
                     >> "$GITHUB_STEP_SUMMARY"
                   failed=1
                 fi
-              done <<< "$keys"
+              done <<< "$ids"
 
               [ "$batch_deleted" -gt 0 ] || break
             done
