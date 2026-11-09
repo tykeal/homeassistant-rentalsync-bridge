@@ -1,0 +1,9 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+
+# Keep MD013's 80-column limit for prose, but exempt constructs that
+# cannot be wrapped without harming readability.
+MD013:
+  tables: false
+  code_blocks: false

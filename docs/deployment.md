@@ -44,7 +44,7 @@ podman run -d \
 ## Environment Variables
 
 | Variable | Description | Default |
-|----------|-------------|---------|
+| ---------- | ------------- | --------- |
 | `STANDALONE_MODE` | Enable standalone mode (bypass HA auth) | `false` |
 | `DATABASE_URL` | SQLite database path | `sqlite:///data/rentalsync.db` |
 | `CLOUDBEDS_API_KEY` | Cloudbeds API key | - |
@@ -101,6 +101,7 @@ additional configuration is required.
 ### HTTP-Only Deployments
 
 HTTP without TLS is acceptable **only** when:
+
 - Running behind a TLS-terminating proxy
 - In development/testing environments
 - On isolated private networks
@@ -167,6 +168,7 @@ curl http://localhost:8099/health
 ```
 
 **Expected response:**
+
 ```json
 {"status": "healthy", "version": "0.1.0"}
 ```

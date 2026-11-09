@@ -17,7 +17,7 @@ export, and serves publicly accessible iCal URLs for calendar subscription.
 ## Supported PMS Providers
 
 | Provider | Auth Method | Notes |
-|----------|------------|-------|
+| ---------- | ------------ | ------- |
 | **Cloudbeds** | OAuth 2.0 or API Key | Full support for listings, rooms, bookings, and guest data |
 | **Guesty** | OAuth 2.0 (client credentials) | Token rate limiting (5 requests/24h), custom fields via v3 API |
 
@@ -77,7 +77,7 @@ sync individual room availability to Airbnb and other OTAs.
 
 Room-level iCal URLs follow the pattern:
 
-```
+```text
 /ical/{listing-slug}/{room-slug}.ics
 ```
 
@@ -133,7 +133,7 @@ enter credentials, and save. Alternatively, set environment variables:
 ## Configuration
 
 | Variable | Default | Description |
-|----------|---------|-------------|
+| ---------- | --------- | ------------- |
 | `PMS_TYPE` | auto-detect | PMS provider: `cloudbeds` or `guesty` |
 | `DATABASE_URL` | `sqlite:///./data/rentalsync.db` | SQLite database URL |
 | `SYNC_INTERVAL_MINUTES` | `5` | Background sync interval (1–60) |
@@ -223,7 +223,7 @@ docker run -d \
 
 ### Project Structure
 
-```
+```text
 rentalsync-bridge/          # Add-on folder (contains all source)
 ├── src/                    # Application source code
 │   ├── api/                # FastAPI route handlers

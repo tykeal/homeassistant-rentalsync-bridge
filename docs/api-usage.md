@@ -32,6 +32,7 @@ GET /health
 Returns service health status.
 
 **Response:**
+
 ```json
 {
   "status": "healthy",
@@ -48,6 +49,7 @@ GET /api/listings
 ```
 
 **Response:**
+
 ```json
 {
   "listings": [
@@ -74,6 +76,7 @@ GET /api/listings/{id}
 ```
 
 **Response includes rooms:**
+
 ```json
 {
   "id": 1,
@@ -120,9 +123,11 @@ Content-Type: application/json
 POST /api/listings/sync-properties
 ```
 
-Fetches all properties and their rooms from Cloudbeds and creates/updates listings and rooms.
+Fetches all properties and their rooms from Cloudbeds and creates/updates
+listings and rooms.
 
 **Response:**
+
 ```json
 {
   "message": "Synced 3 properties from Cloudbeds",
@@ -139,6 +144,7 @@ POST /api/listings/{id}/sync
 Triggers immediate booking sync from Cloudbeds.
 
 **Response:**
+
 ```json
 {
   "message": "Sync completed successfully",
@@ -159,6 +165,7 @@ GET /api/listings/{id}/rooms
 Returns all rooms for a specific listing.
 
 **Response:**
+
 ```json
 {
   "rooms": [
@@ -195,6 +202,7 @@ GET /api/rooms/{id}
 ```
 
 **Response:**
+
 ```json
 {
   "id": 1,
@@ -222,10 +230,13 @@ Content-Type: application/json
 ```
 
 **Fields:**
+
 - `enabled` (optional): Enable or disable room for iCal export
-- `ical_url_slug` (optional): Custom URL slug (lowercase letters, numbers, hyphens only)
+- `ical_url_slug` (optional): Custom URL slug (lowercase letters, numbers,
+  hyphens only)
 
 **Response:**
+
 ```json
 {
   "id": 1,
@@ -251,18 +262,21 @@ GET /ical/{listing-slug}/{room-slug}.ics
 Returns RFC 5545 compliant iCal calendar for a specific room.
 
 **Example:**
-```
+
+```http
 GET /ical/beach-house/master-bedroom.ics
 GET /ical/beach-house/guest-room.ics
 ```
 
 **Headers:**
-```
+
+```http
 Content-Type: text/calendar
 Content-Disposition: attachment; filename="master-bedroom.ics"
 ```
 
 **Response Example:**
+
 ```ical
 BEGIN:VCALENDAR
 VERSION:2.0
@@ -281,7 +295,9 @@ END:VEVENT
 END:VCALENDAR
 ```
 
-**Note**: Property-level iCal URLs (`/ical/{slug}.ics`) are no longer supported and will return HTTP 410 Gone. Use room-level URLs for all calendar exports.
+**Note**: Property-level iCal URLs (`/ical/{slug}.ics`) are no longer
+supported and will return HTTP 410 Gone. Use room-level URLs for all calendar
+exports.
 
 ### Custom Fields
 
@@ -294,6 +310,7 @@ GET /api/listings/{id}/available-custom-fields
 Returns list of available custom fields that can be configured for a listing.
 
 **Response:**
+
 ```json
 {
   "available_fields": [
@@ -333,6 +350,7 @@ GET /api/listings/{id}/custom-fields
 ```
 
 **Response:**
+
 ```json
 {
   "custom_fields": [
@@ -381,6 +399,7 @@ GET /api/oauth/status
 ```
 
 **Response:**
+
 ```json
 {
   "configured": true,
@@ -411,6 +430,7 @@ GET /api/status/sync
 ```
 
 **Response:**
+
 ```json
 {
   "scheduler_running": true,
@@ -435,6 +455,7 @@ All errors return JSON with `detail` field:
 ```
 
 Common HTTP status codes:
+
 - `400` - Bad request (invalid parameters)
 - `401` - Unauthorized (authentication required)
 - `404` - Resource not found
@@ -444,6 +465,7 @@ Common HTTP status codes:
 ## Rate Limiting
 
 The API implements rate limiting for Cloudbeds API calls:
+
 - Maximum 30 requests per minute
 - Automatic retry with exponential backoff
 - Rate limit errors return HTTP 429

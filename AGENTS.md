@@ -21,7 +21,7 @@ there is any conflict between the two documents.
 
 Use **Conventional Commits** with **capitalized types**:
 
-```
+```text
 Type(scope): Short description
 
 Optional body with more details. Wrap at 80 characters.
@@ -30,6 +30,7 @@ Co-Authored-By: <AI Model Name> <appropriate-email@provider.com>
 ```
 
 **Allowed types** (capitalized):
+
 - `Fix` - Bug fixes
 - `Feat` - New features
 - `Chore` - Maintenance tasks
@@ -66,7 +67,7 @@ All AI-assisted commits MUST include a Co-Authored-By trailer identifying the
 AI model used. Use the appropriate name and email for your model:
 
 | Model | Co-Authored-By |
-|-------|----------------|
+| ------- | ---------------- |
 | Claude | `Co-Authored-By: Claude <claude@anthropic.com>` |
 | ChatGPT | `Co-Authored-By: ChatGPT <chatgpt@openai.com>` |
 | Gemini | `Co-Authored-By: Gemini <gemini@google.com>` |
@@ -131,18 +132,22 @@ Check `REUSE.toml` for file-type-specific header requirements.
 The Python project lives under `rentalsync-bridge/`. Run commands from that
 directory using `uv`:
 
-- Run tests before committing: `cd rentalsync-bridge && uv run pytest tests/`
-- Run linting before committing: `cd rentalsync-bridge && uv run ruff check src/ tests/`
+- Run tests before committing:
+  `cd rentalsync-bridge && uv run pytest tests/`
+- Run linting before committing:
+  `cd rentalsync-bridge && uv run ruff check src/ tests/`
 - All tests must pass before pushing
 - New features should include appropriate test coverage
 
 ## Development Workflow Summary
 
 1. Make changes to code
-2. Run tests locally to verify: `cd rentalsync-bridge && uv run pytest tests/ -x -q`
+2. Run tests locally to verify:
+   `cd rentalsync-bridge && uv run pytest tests/ -x -q`
 3. Run linting: `cd rentalsync-bridge && uv run ruff check src/ tests/`
 4. Stage changes: `git add <files>`
 5. Commit with sign-off and co-authorship:
+
    ```bash
    git commit -s -m "Type(scope): Description
 
@@ -150,13 +155,14 @@ directory using `uv`:
 
    Co-Authored-By: <AI Model> <email@provider.com>"
    ```
+
 6. If pre-commit fails, fix issues and commit again (don't reset)
 7. Push when ready
 
 ## Quick Reference
 
 | Requirement | Command/Format |
-|------------|----------------|
+| ------------ | ---------------- |
 | Sign-off | `git commit -s` |
 | Co-author | `Co-Authored-By: <Model> <email@provider.com>` |
 | Subject format | `Type(scope): description` |

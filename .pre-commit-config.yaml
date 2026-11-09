@@ -56,6 +56,15 @@ repos:
       - id: requirements-txt-fixer
       - id: trailing-whitespace
 
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: cbcdc463be5464e25e3e955a511599a67b9b987f  # frozen: v0.50.0
+    hooks:
+      - id: markdownlint
+        args: ["--fix"]
+        # specs/ holds the historical, completed spec-kit feature
+        # artefacts; they are not maintained documentation.
+        exclude: ^(\.specify|\.github|specs)/
+
   - repo: https://github.com/jorisroovers/gitlint
     rev: acc9d9de6369b76d22cb4167029d2035e8730b98 # frozen: v0.19.1
     hooks:
