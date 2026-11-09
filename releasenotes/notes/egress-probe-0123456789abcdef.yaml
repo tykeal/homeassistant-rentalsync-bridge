@@ -1,5 +1,5 @@
 ---
-other:
+fixes:
   - |
     Probe note to exercise the Release Notes job in block mode. Not for
     merge.
