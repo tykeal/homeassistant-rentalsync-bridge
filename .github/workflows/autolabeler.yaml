@@ -17,7 +17,11 @@ on:
       - synchronize
       - reopened
       - edited
-  pull_request_target:
+  # Accepted risk: the job below never checks out or executes PR code.
+  # It only reads the PR title/body via the API to apply labels, and
+  # runs on this trigger solely for fork PRs, whose pull_request token
+  # cannot write labels. Same-repo PRs use pull_request instead.
+  pull_request_target:  # zizmor: ignore[dangerous-triggers]
     types:
       - opened
       - synchronize
