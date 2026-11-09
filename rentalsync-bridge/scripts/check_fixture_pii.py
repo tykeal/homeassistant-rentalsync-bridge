@@ -59,6 +59,7 @@ ALLOWED_STREET_RE: Final = re.compile(
     r"^\d{1,5} (?:Beach|Example|Main|Sentinel|Test)\b"
 )
 MIN_PHONE_DIGITS: Final = 7
+NANP_DIGITS: Final = 10
 SYNTHETIC_MIN_LAT: Final = 37.0
 SYNTHETIC_MAX_LAT: Final = 38.0
 SYNTHETIC_MIN_LON: Final = -123.0
@@ -141,7 +142,8 @@ def _is_fictional_phone_value(value: str) -> bool:
         value: Raw phone field value.
 
     Returns:
-        True when the value is not a full number outside the 555 range.
+        True when the value is too short to be a phone number or is a
+        NANP number using the 555 area code or exchange.
     """
     digits = re.sub(r"\D", "", value)
     # Drop a NANP country code from 1 + NXX-XXXX or 1 + NPA-NXX-XXXX.
@@ -149,7 +151,11 @@ def _is_fictional_phone_value(value: str) -> bool:
         digits = digits[1:]
     if len(digits) < MIN_PHONE_DIGITS:
         return True
-    return FICTIONAL_PHONE_PART in (digits[:3], digits[3:6])
+    if len(digits) == MIN_PHONE_DIGITS:
+        return digits[:3] == FICTIONAL_PHONE_PART
+    if len(digits) == NANP_DIGITS:
+        return FICTIONAL_PHONE_PART in (digits[:3], digits[3:6])
+    return False
 
 
 def _in_coordinate_box(key: str, value: float) -> bool:
