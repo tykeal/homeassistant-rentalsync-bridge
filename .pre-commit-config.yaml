@@ -19,15 +19,37 @@ repos:
     rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
     hooks:
       - id: check-added-large-files
+        args: ["--maxkb=1000"]
       - id: check-ast
+      - id: check-builtin-literals
+      - id: check-case-conflict
+      - id: check-docstring-first
+      - id: check-executables-have-shebangs
+      - id: check-illegal-windows-names
+        exclude: (^|/)\.git($|/)
       - id: check-json
       - id: check-merge-conflict
+      - id: check-shebang-scripts-are-executable
+      - id: check-symlinks
+      - id: check-toml
+      - id: check-vcs-permalinks
       - id: check-xml
       - id: check-yaml
       - id: debug-statements
+      - id: destroyed-symlinks
+      - id: detect-aws-credentials
+        args: ["--allow-missing-credentials"]
+      - id: detect-private-key
       - id: end-of-file-fixer
+      - id: fix-byte-order-marker
+      - id: forbid-new-submodules
+      - id: forbid-submodules
       - id: mixed-line-ending
         args: ["--fix=lf"]
+      - id: name-tests-test
+        args: ["--pytest-test-first"]
+        files: ^rentalsync-bridge/tests/.+\.py$
+        exclude: ^rentalsync-bridge/tests/(.+/)?(__init__|conftest)\.py$
       - id: no-commit-to-branch
         args:
           - --branch=main
