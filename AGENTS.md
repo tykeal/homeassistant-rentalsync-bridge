@@ -139,6 +139,20 @@ directory using `uv`:
 - All tests must pass before pushing
 - New features should include appropriate test coverage
 
+## Release Notes
+
+Describe user-visible changes with a
+[reno](https://docs.openstack.org/reno/latest/) note in the same pull
+request. Notes live in `releasenotes/notes/` at the repository root, so
+run reno from there against the uv project:
+`uv run --project rentalsync-bridge --only-group releasenotes reno new <slug>`.
+Fill in the sections that apply in Markdown, delete the rest, and check
+it with the same command using `reno lint`. A note is **required** for
+a breaking change (a `Type!:` title or the `breaking-change` label); CI
+fails without one. Upgrade actions belong in `upgrade`. CI, test and
+refactoring changes need no note; the draft release lists every merged
+pull request below the notes.
+
 ## Development Workflow Summary
 
 1. Make changes to code

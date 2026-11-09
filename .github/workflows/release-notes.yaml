@@ -1,0 +1,124 @@
+---
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+
+name: 'Release Notes'
+
+# yamllint disable-line rule:truthy
+on:
+  # 'edited', 'labeled' and 'unlabeled' re-evaluate the breaking-change
+  # rule when the title or labels change.
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - edited
+      - labeled
+      - unlabeled
+    branches:
+      - main
+
+permissions: {}
+
+# A literal group prefix rather than '${{ github.workflow }}', which
+# resolves to the workflow NAME and could collide with another workflow
+# of the same name.
+concurrency:
+  group: 'release-notes-${{ github.ref }}'
+  # Do NOT cancel, and queue rather than replace, as in
+  # autolabeler.yaml: the autolabeler labels a new pull request moments
+  # after it opens, and a cancelled run beside a passing one for the
+  # same head SHA blocks ruleset evaluation of this required check.
+  # 'queue: max' cannot be combined with 'cancel-in-progress: true'.
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  release-notes:
+    name: 'Release Notes'
+    runs-on: 'ubuntu-latest'
+    permissions:
+      contents: read  # Check out the repository and its history.
+    timeout-minutes: 10
+    steps:
+      # Harden the runner used by this workflow
+      # yamllint disable-line rule:line-length
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: 'audit'
+
+      # reno lint scans the git history, so fetch all of it.
+      # yamllint disable-line rule:line-length
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 'Find release note changes'
+        id: changes
+        run: |
+          # HEAD is the pull request merge commit; its first parent is
+          # the tip of the base branch.
+          added=$(git diff --name-only --diff-filter=A HEAD^1 HEAD \
+            -- 'releasenotes/notes/*.yaml')
+          # The renderer and its dependency group can break rendering as
+          # surely as a note can, so they also trigger the checks below.
+          changed=$(git diff --name-only HEAD^1 HEAD -- releasenotes/ \
+            rentalsync-bridge/scripts/render_release_notes.py \
+            rentalsync-bridge/pyproject.toml rentalsync-bridge/uv.lock \
+            .github/release-drafter.yml)
+          echo "Added notes: ${added:-none}"
+          {
+            echo "added=$([ -n "$added" ] && echo true || echo false)"
+            echo "changed=$([ -n "$changed" ] && echo true || echo false)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 'Require a release note for breaking changes'
+        env:
+          ADDED: ${{ steps.changes.outputs.added }}
+          # yamllint disable-line rule:line-length
+          LABELLED: ${{ contains(github.event.pull_request.labels.*.name, 'breaking-change') }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # The autolabeler adds 'breaking-change' with GITHUB_TOKEN,
+          # which does not start a new run, so also apply its title rule
+          # from .github/release-drafter.yml here.
+          breaking="$LABELLED"
+          shopt -s nocasematch
+          title_rule='^[a-z]+(\([^)]+\))?!:'
+          if [[ "$PR_TITLE" =~ $title_rule ]]; then
+            breaking=true
+          fi
+          if [ "$breaking" = true ] && [ "$ADDED" != true ]; then
+            echo "::error::Breaking changes must add a release note:" \
+              "run 'uv run --project rentalsync-bridge --only-group" \
+              "releasenotes reno new <slug>' from the repository root" \
+              "and fill in the upgrade section."
+            exit 1
+          fi
+
+      # yamllint disable-line rule:line-length
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        if: steps.changes.outputs.changed == 'true'
+        with:
+          python-version: '3.14'
+          enable-cache: false
+
+      - name: 'Lint release notes'
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          uv run --project rentalsync-bridge --frozen \
+            --only-group releasenotes reno lint
+
+      # reno lint only warns about a section that is not a string or a
+      # list of strings; the renderer rejects it. Render exactly as the
+      # release-drafter workflow does so such a note fails here rather
+      # than breaking the draft release after merge.
+      - name: 'Render release notes'
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          uv run --project rentalsync-bridge --frozen \
+            --only-group releasenotes \
+            python rentalsync-bridge/scripts/render_release_notes.py \
+            --release-drafter-config .github/release-drafter.yml

@@ -221,6 +221,34 @@ docker run -d \
   rentalsync-bridge:local
 ```
 
+### Release Notes
+
+Release notes live in `releasenotes/notes/` at the repository root as
+[reno](https://docs.openstack.org/reno/latest/) snippets, written in
+Markdown. Add one in the same pull request as any user-visible change.
+reno finds `releasenotes/` from the git root, so run it there against
+the uv project in `rentalsync-bridge/`:
+
+```bash
+uv run --project rentalsync-bridge --only-group releasenotes reno new <slug>
+uv run --project rentalsync-bridge --only-group releasenotes reno lint
+```
+
+Fill in the sections that apply (`upgrade`, `features`, `fixes`,
+`deprecations` or `security`) and delete the rest. A breaking change
+(a `Type!:` title or the `breaking-change` label) must add a note; the
+**Release Notes** check fails without one. Internal changes such as CI,
+tests or refactoring need no note: the draft GitHub release already
+lists every merged pull request, grouped by its title prefix, below the
+notes. The draft shows every note added since the last release tag
+above that list. To preview it (reno only sees notes that are
+committed or staged with `git add`):
+
+```bash
+uv run --project rentalsync-bridge --only-group releasenotes \
+  python rentalsync-bridge/scripts/render_release_notes.py
+```
+
 ### Project Structure
 
 ```text
@@ -240,10 +268,11 @@ rentalsync-bridge/          # Add-on folder (contains all source)
 │   └── templates/          # HTML templates for admin UI
 ├── tests/                  # Test suite (unit, integration, contract)
 ├── alembic/                # Database migrations
-├── scripts/                # Startup scripts
+├── scripts/                # Startup, PII guard and release note scripts
 ├── Dockerfile              # HA add-on Dockerfile
 ├── config.yaml             # HA add-on configuration
 └── pyproject.toml          # Python dependencies
+releasenotes/               # reno release notes (config.yaml, notes/)
 specs/                      # Feature specifications
 Dockerfile                  # Standalone/Podman Dockerfile (at repo root)
 repository.json             # HA add-on repository metadata
