@@ -46,9 +46,14 @@ POSTCODE_RE: Final = re.compile(
     _QUOTED_KEY.format(keys="postcode|postalCode|postal_code|zip|zipcode|zipCode")
     + r"""["']([^"']+)["']"""
 )
-# Dict keys, keyword arguments, and constants holding a string value,
-# e.g. ``"guestPhone": "..."``, ``phone="..."``, or ``GUEST_ADDRESS = "..."``.
-_STRING_FIELD: Final = r"""(?<!\w)["']?(?:{keys})["']?\s*[:=]\s*["']([^"'\n]*)["']"""
+# Dict keys, keyword arguments, constants, and annotated assignments or
+# typed parameter defaults holding a string value, e.g.
+# ``"guestPhone": "..."``, ``phone="..."``, ``GUEST_ADDRESS = "..."``, or
+# ``phone: str | None = "..."``.
+_STRING_FIELD: Final = (
+    r"""(?<!\w)["']?(?:{keys})["']?"""
+    r"""(?:\s*:\s*[\w.\[\]| ]+?)?\s*[:=]\s*["']([^"'\n]*)["']"""
+)
 PHONE_FIELD_RE: Final = re.compile(_STRING_FIELD.format(keys=r"\w*phone\w*"), re.I)
 STREET_RE: Final = re.compile(
     _STRING_FIELD.format(keys=r"street|(?:guest_?)?address[12]?|full|display"),

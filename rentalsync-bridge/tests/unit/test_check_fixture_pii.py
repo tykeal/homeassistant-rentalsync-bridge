@@ -65,6 +65,8 @@ def _rules(text: str) -> list[str]:
         '{"guestPhone": "555-123-4567"}',
         'phone="+1-555-1234"',
         'phone_last4="1234"',
+        'phone: str | None = "+15551234567"',
+        'full_name: str = "Jane Doe"',
         '{"guestAddress": "4417 Sentinel Hollow Road"}',
         '{"email_address": "a@example.com"}',
         'headers = {"Authorization": "Bearer test_token"}',
@@ -97,6 +99,9 @@ def test_synthetic_values_pass(text: str) -> None:
         (_assign("GUEST_PHONE", "02 9876 5432"), "phone-number"),
         ('{"guestAddress"' + ': "1 Infinite Loop"}', "address-allowlist"),
         (_assign("GUEST_ADDRESS", "1 Infinite Loop"), "address-allowlist"),
+        (_assign("GUEST_PHONE: str", "4152220000"), "phone-number"),
+        (_assign("GUEST_ADDRESS: Final[str]", "1 Infinite Loop"), "address-allowlist"),
+        (_assign("def f(phone: str | None", "4152220000"), "phone-number"),
     ],
 )
 def test_private_values_reported(text: str, rule: str) -> None:
