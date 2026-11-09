@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+#
+# Egress allow-list for build-test.yaml / 'Python Build'.
+# See .github/harden-runner/README.md for how it is loaded and how to
+# update it. Each entry names the process seen calling it in
+# harden-runner audit telemetry, or the documented reason for it.
+
+# Checkout and python-build-action's GitHub API queries
+github.com:443
+api.github.com:443
+# setup-uv and setup-python downloads and version manifests
+releases.astral.sh:443
+raw.githubusercontent.com:443
+release-assets.githubusercontent.com:443
+# Build dependencies (uv, pip)
+pypi.org:443
+files.pythonhosted.org:443
+# build-metadata looks up Python support dates
+endoflife.date:443
+# A Go module download by the action's metadata tooling
+proxy.golang.org:443

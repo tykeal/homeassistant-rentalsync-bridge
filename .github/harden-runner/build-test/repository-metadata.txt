@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+#
+# Egress allow-list for build-test.yaml / 'Repository Metadata'.
+# See .github/harden-runner/README.md for how it is loaded and how to
+# update it. Each entry names the process seen calling it in
+# harden-runner audit telemetry, or the documented reason for it.
+
+# Checkout, and repository-metadata-action's GitHub API queries
+github.com:443
+api.github.com:443
+# setup-uv and the uv-managed tooling the action installs
+releases.astral.sh:443
+release-assets.githubusercontent.com:443
+pypi.org:443
+files.pythonhosted.org:443

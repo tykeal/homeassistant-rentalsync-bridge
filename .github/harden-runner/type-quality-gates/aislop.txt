@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+#
+# Egress allow-list for type-quality-gates.yaml / 'Quality gate (aislop)'.
+# See .github/harden-runner/README.md for how it is loaded and how to
+# update it. Each entry names the process seen calling it in
+# harden-runner audit telemetry, or the documented reason for it.
+
+# Checkout, and setup-node's version manifest and downloads on a
+# runner tool-cache miss
+github.com:443
+raw.githubusercontent.com:443
+release-assets.githubusercontent.com:443
+# aislop install (npm ci)
+registry.npmjs.org:443
+# Optional .NET analyzers fetched by aislop-tools
+api.nuget.org:443
+# Not allowed: eu.i.posthog.com, aislop's usage telemetry, which no
+# scan needs.

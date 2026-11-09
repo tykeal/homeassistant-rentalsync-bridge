@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+#
+# Egress allow-list for build-test.yaml / 'Grype Audit SBOM'.
+# See .github/harden-runner/README.md for how it is loaded and how to
+# update it. Each entry names the process seen calling it in
+# harden-runner audit telemetry, or the documented reason for it.
+
+# Grype install (curl) and bypass-issue lookups via the GitHub API
+github.com:443
+api.github.com:443
+raw.githubusercontent.com:443
+release-assets.githubusercontent.com:443
+# Grype vulnerability database
+grype.anchore.io:443

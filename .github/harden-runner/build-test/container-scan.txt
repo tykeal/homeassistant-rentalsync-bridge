@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+#
+# Egress allow-list for build-test.yaml / 'Container Scan'.
+# See .github/harden-runner/README.md for how it is loaded and how to
+# update it. Each entry names the process seen calling it in
+# harden-runner audit telemetry, or the documented reason for it.
+
+# Checkout, Grype install (curl) and bypass-issue lookups
+github.com:443
+api.github.com:443
+raw.githubusercontent.com:443
+release-assets.githubusercontent.com:443
+# Docker Hub: buildx's BuildKit image (dockerd, docker-buildx)
+registry-1.docker.io:443
+auth.docker.io:443
+production.cloudfront.docker.com:443
+# GHCR: Home Assistant base image and the uv image (buildkitd)
+ghcr.io:443
+pkg-containers.githubusercontent.com:443
+# Inside the image build: apk, and uv installing the add-on
+dl-cdn.alpinelinux.org:443
+pypi.org:443
+files.pythonhosted.org:443
+wheels.home-assistant.io:443
+# Grype vulnerability database
+grype.anchore.io:443

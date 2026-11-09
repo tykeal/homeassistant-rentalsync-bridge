@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+#
+# Egress allow-list for type-quality-gates.yaml / 'Type check (mypy)'.
+# See .github/harden-runner/README.md for how it is loaded and how to
+# update it. Each entry names the process seen calling it in
+# harden-runner audit telemetry, or the documented reason for it.
+
+# Checkout, and setup-python's version manifest and downloads on a
+# runner tool-cache miss
+github.com:443
+raw.githubusercontent.com:443
+release-assets.githubusercontent.com:443
+# uv install (pip) and the locked project environment
+pypi.org:443
+files.pythonhosted.org:443
