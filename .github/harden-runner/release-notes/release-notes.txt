@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+#
+# Egress allow-list for release-notes.yaml / 'Release Notes'.
+# See .github/harden-runner/README.md for how it is loaded and how to
+# update it. Each entry names the process seen calling it in
+# harden-runner audit telemetry, or the documented reason for it.
+
+# Checkout
+github.com:443
+# setup-uv, and uv-managed Python downloads on a cache miss
+releases.astral.sh:443
+release-assets.githubusercontent.com:443
+# The locked releasenotes dependency group (reno)
+files.pythonhosted.org:443

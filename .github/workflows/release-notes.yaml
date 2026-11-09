@@ -42,11 +42,20 @@ jobs:
       contents: read  # Check out the repository and its history.
     timeout-minutes: 10
     steps:
-      # Harden the runner used by this workflow
+      # Load this job's egress allow-list, then block everything
+      # else; see .github/harden-runner/README.md.
       # yamllint disable-line rule:line-length
-      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+      - uses: lfreleng-actions/harden-runner-block-action@f5a475661142cd2f1611ae6fbf8af2be0f36a9a7  # v0.16.3
         with:
-          egress-policy: 'audit'
+          # yamllint disable-line rule:line-length
+          config: '${{ github.repository }}//.github/harden-runner/release-notes/release-notes.txt@${{ github.sha }}'
+          token: ${{ github.token }}
+
+      # yamllint disable-line rule:line-length
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
+        with:
+          egress-policy: 'block'
+          allowed-endpoints: ${{ env.CONNECTION_ALLOW_LIST }}
 
       # reno lint scans the git history, so fetch all of it.
       # yamllint disable-line rule:line-length

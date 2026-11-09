@@ -25,6 +25,13 @@ jobs:
       pull-requests: read  # Read pull request metadata
     timeout-minutes: 5
     steps:
+      # Audit, not block: it runs on tag pushes only, so no pull request
+      # can prove an allow-list for it. Endpoints seen in harden-runner
+      # telemetry, for its list once a run confirms them (see
+      # .github/harden-runner/README.md):
+      #   github.com:443 api.github.com:443 releases.astral.sh:443
+      #   release-assets.githubusercontent.com:443 pypi.org:443
+      #   files.pythonhosted.org:443
       # yamllint disable-line rule:line-length
       - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
         with:
@@ -57,6 +64,13 @@ jobs:
       tag: "${{ steps.tag-validate.outputs.tag_name }}"
       version: "${{ steps.strip-v.outputs.version }}"
     steps:
+      # Audit, not block: it runs on tag pushes only, so no pull request
+      # can prove an allow-list for it. Endpoints seen in harden-runner
+      # telemetry, for its list once a run confirms them (see
+      # .github/harden-runner/README.md):
+      #   github.com:443 api.github.com:443 releases.astral.sh:443
+      #   raw.githubusercontent.com:443 pypi.org:443
+      #   files.pythonhosted.org:443
       # yamllint disable-line rule:line-length
       - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
         with:
@@ -132,6 +146,19 @@ jobs:
     env:
       GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
     steps:
+      # Audit, not block: it runs on tag pushes only, so no pull request
+      # can prove an allow-list for it. Attestation signing adds the
+      # sigstore hosts to the pull request list in
+      # build-test/python-build.txt. Endpoints seen in harden-runner
+      # telemetry, for its list once a run confirms them (see
+      # .github/harden-runner/README.md):
+      #   github.com:443 api.github.com:443 releases.astral.sh:443
+      #   raw.githubusercontent.com:443
+      #   release-assets.githubusercontent.com:443 pypi.org:443
+      #   files.pythonhosted.org:443 endoflife.date:443
+      #   proxy.golang.org:443 fulcio.sigstore.dev:443
+      #   rekor.sigstore.dev:443 timestamp.sigstore.dev:443
+      #   tuf-repo-cdn.sigstore.dev:443
       # yamllint disable-line rule:line-length
       - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
         with:
@@ -164,6 +191,14 @@ jobs:
       contents: read  # Check out the repository
     timeout-minutes: 12
     steps:
+      # Audit, not block: it runs on tag pushes only, so no pull request
+      # can prove an allow-list for it. Endpoints seen in harden-runner
+      # telemetry, for its list once a run confirms them (see
+      # .github/harden-runner/README.md):
+      #   github.com:443 releases.astral.sh:443
+      #   raw.githubusercontent.com:443
+      #   release-assets.githubusercontent.com:443 pypi.org:443
+      #   files.pythonhosted.org:443
       # yamllint disable-line rule:line-length
       - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
         with:
@@ -192,6 +227,12 @@ jobs:
       contents: read  # Check out the repository
     timeout-minutes: 10
     steps:
+      # Audit, not block: it runs on tag pushes only, so no pull request
+      # can prove an allow-list for it. Endpoints seen in harden-runner
+      # telemetry, for its list once a run confirms them (see
+      # .github/harden-runner/README.md):
+      #   github.com:443 raw.githubusercontent.com:443 pypi.org:443
+      #   files.pythonhosted.org:443
       # yamllint disable-line rule:line-length
       - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
         with:
@@ -217,6 +258,14 @@ jobs:
     permissions:
       contents: read  # Check out the repository
     steps:
+      # Audit, not block: it runs on tag pushes only, so no pull request
+      # can prove an allow-list for it. Endpoints seen in harden-runner
+      # telemetry, for its list once a run confirms them (see
+      # .github/harden-runner/README.md):
+      #   github.com:443 astral.sh:443 releases.astral.sh:443
+      #   raw.githubusercontent.com:443
+      #   release-assets.githubusercontent.com:443 pypi.org:443
+      #   files.pythonhosted.org:443 grype.anchore.io:443
       # yamllint disable-line rule:line-length
       - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
         with:
@@ -259,6 +308,14 @@ jobs:
     permissions:
       issues: read  # Read maintainer-approved bypass issues
     steps:
+      # Audit, not block: it runs on tag pushes only, so no pull request
+      # can prove an allow-list for it. No release run has recorded this
+      # job yet, so these are the endpoints of its pull request twin in
+      # build-test.yaml. Endpoints seen in harden-runner telemetry, for
+      # its list once a run confirms them (see
+      # .github/harden-runner/README.md):
+      #   github.com:443 api.github.com:443 raw.githubusercontent.com:443
+      #   release-assets.githubusercontent.com:443 grype.anchore.io:443
       # yamllint disable-line rule:line-length
       - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
         with:
@@ -301,6 +358,11 @@ jobs:
       contents: read  # Check out the repository
     timeout-minutes: 5
     steps:
+      # Audit, not block: it runs on tag pushes only, so no pull request
+      # can prove an allow-list for it. Endpoints seen in harden-runner
+      # telemetry, for its list once a run confirms them (see
+      # .github/harden-runner/README.md):
+      #   github.com:443
       # yamllint disable-line rule:line-length
       - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
         with:
@@ -345,6 +407,11 @@ jobs:
       architectures: ${{ steps.arch.outputs.architectures }}
       matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
+      # Audit, not block: it runs on tag pushes only, so no pull request
+      # can prove an allow-list for it. Endpoints seen in harden-runner
+      # telemetry, for its list once a run confirms them (see
+      # .github/harden-runner/README.md):
+      #   github.com:443
       # yamllint disable-line rule:line-length
       - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
         with:
@@ -381,6 +448,21 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.container-init.outputs.matrix) }}
     steps:
+      # Audit, not block: it runs on tag pushes only, so no pull request
+      # can prove an allow-list for it. The last recorded release predates
+      # the Grype scan, so api.github.com and grype.anchore.io come from
+      # the Container Scan job in build-test.yaml. Endpoints seen in
+      # harden-runner telemetry, for its list once a run confirms them
+      # (see .github/harden-runner/README.md):
+      #   github.com:443 api.github.com:443 raw.githubusercontent.com:443
+      #   release-assets.githubusercontent.com:443
+      #   registry-1.docker.io:443 auth.docker.io:443
+      #   production.cloudfront.docker.com:443 ghcr.io:443
+      #   pkg-containers.githubusercontent.com:443
+      #   dl-cdn.alpinelinux.org:443 pypi.org:443
+      #   files.pythonhosted.org:443 wheels.home-assistant.io:443
+      #   grype.anchore.io:443 fulcio.sigstore.dev:443
+      #   rekor.sigstore.dev:443 tuf-repo-cdn.sigstore.dev:443
       # yamllint disable-line rule:line-length
       - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
         with:
@@ -513,6 +595,16 @@ jobs:
       digest: "${{ steps.digest.outputs.digest }}"
       image: "${{ steps.digest.outputs.image }}"
     steps:
+      # Audit, not block: it runs on tag pushes only, so no pull request
+      # can prove an allow-list for it. Endpoints seen in harden-runner
+      # telemetry, for its list once a run confirms them (see
+      # .github/harden-runner/README.md):
+      #   github.com:443 raw.githubusercontent.com:443
+      #   release-assets.githubusercontent.com:443
+      #   registry-1.docker.io:443 auth.docker.io:443
+      #   production.cloudfront.docker.com:443 ghcr.io:443
+      #   pkg-containers.githubusercontent.com:443 fulcio.sigstore.dev:443
+      #   rekor.sigstore.dev:443 tuf-repo-cdn.sigstore.dev:443
       # yamllint disable-line rule:line-length
       - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
         with:
@@ -608,6 +700,11 @@ jobs:
     env:
       GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
     steps:
+      # Audit, not block: it runs on tag pushes only, so no pull request
+      # can prove an allow-list for it. Endpoints seen in harden-runner
+      # telemetry, for its list once a run confirms them (see
+      # .github/harden-runner/README.md):
+      #   github.com:443 api.github.com:443 uploads.github.com:443
       # yamllint disable-line rule:line-length
       - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
         with:
@@ -661,6 +758,11 @@ jobs:
       # yamllint disable-line rule:line-length
       release_url: "${{ steps.promote-release.outputs.release_url || steps.set-promoted-url.outputs.release_url }}"
     steps:
+      # Audit, not block: it runs on tag pushes only, so no pull request
+      # can prove an allow-list for it. Endpoints seen in harden-runner
+      # telemetry, for its list once a run confirms them (see
+      # .github/harden-runner/README.md):
+      #   github.com:443 api.github.com:443
       # yamllint disable-line rule:line-length
       - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
         with:
@@ -757,6 +859,11 @@ jobs:
     permissions: {}
     timeout-minutes: 5
     steps:
+      # Audit, not block: it runs on tag pushes only, so no pull request
+      # can prove an allow-list for it. Endpoints seen in harden-runner
+      # telemetry, for its list once a run confirms them (see
+      # .github/harden-runner/README.md):
+      #   api.github.com:443
       # yamllint disable-line rule:line-length
       - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
         with:

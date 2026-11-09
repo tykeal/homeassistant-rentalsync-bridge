@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+#
+# Egress allow-list for build-test.yaml / 'Python Audit'.
+# See .github/harden-runner/README.md for how it is loaded and how to
+# update it. Each entry names the process seen calling it in
+# harden-runner audit telemetry, or the documented reason for it.
+
+# Checkout, and the shared vulnerability allow-list python-audit-action
+# fetches from lfreleng-actions/.github
+github.com:443
+raw.githubusercontent.com:443
+# pip-audit installs and PyPI vulnerability queries
+pypi.org:443
+files.pythonhosted.org:443
+# actions/setup-python downloads a Python build that is missing from
+# the runner tool cache from a GitHub release asset
+release-assets.githubusercontent.com:443

@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+#
+# Egress allow-list for zizmor.yaml / 'Zizmor audit'.
+# See .github/harden-runner/README.md for how it is loaded and how to
+# update it. Each entry names the process seen calling it in
+# harden-runner audit telemetry, or the documented reason for it.
+
+# Checkout, zizmor's online audits, and the SARIF upload on main
+github.com:443
+api.github.com:443
+# zizmor download and its attestation check (gh attestation verify)
+release-assets.githubusercontent.com:443
+tuf-repo-cdn.sigstore.dev:443
+tuf-repo.github.com:443
+# gh attestation verify fetches the attestation bundle from GitHub's
+# attestation store
+tmaproduction.blob.core.windows.net:443
