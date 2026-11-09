@@ -166,6 +166,15 @@ repos:
         args: ["-L", "checkin,selectin,idel"]
         exclude: uv\.lock$
 
+  # Provider payloads in tests are inline dicts, so .py is scanned too.
+  - repo: local
+    hooks:
+      - id: check-fixture-pii
+        name: check test fixtures for PII
+        entry: python rentalsync-bridge/scripts/check_fixture_pii.py
+        language: python
+        files: ^rentalsync-bridge/tests/.+\.(py|json)$
+
   # Baselined in .aislop/ci-baseline.json, so only new findings fail.
   # CI runs it through lfreleng-actions/aislop-scan-action in
   # type-quality-gates.yaml; keep this pin in step with that action's.
