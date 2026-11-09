@@ -103,6 +103,10 @@ jobs:
         uses: lfreleng-actions/aislop-scan-action@55990577547e440b145f3d7d89707ab0afaa6bfb  # v0.4.1
         with:
           scan-mode: 'full'
+          # Annotations list the top findings even when they are already
+          # accepted in .aislop/ci-baseline.json, which would flag the
+          # same baselined lines on every PR.
+          annotate: 'false'
 
       - name: 'Flag reduced coverage'
         if: steps.scan.outputs.coverage-degraded == 'true'
