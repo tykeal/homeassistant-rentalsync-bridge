@@ -1,0 +1,84 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+
+name: '🌈 Zizmor'
+
+# No path filter: 'Zizmor audit' is a required status check in the
+# 'Base rules' ruleset, and a workflow skipped by a path filter never
+# reports, which would leave every non-workflow PR unmergeable.
+# yamllint disable-line rule:truthy
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+  push:
+    branches:
+      - main
+
+permissions: {}
+
+# A literal group, NOT '${{ github.workflow }}-${{ github.ref }}'.
+# github.workflow resolves to the workflow NAME, so any other workflow
+# in the repository carrying this same name would compute the same
+# group and one of the two would be cancelled.
+concurrency:
+  group: 'zizmor-${{ github.ref }}'
+  # Do NOT cancel, and queue rather than replace, so a burst of pushes
+  # cannot leave a cancelled check run beside a successful one for the
+  # same head SHA; ruleset evaluation blocks on a cancelled run.
+  # 'queue: max' cannot be combined with 'cancel-in-progress: true'.
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  zizmor:
+    name: 'Zizmor audit'
+    runs-on: 'ubuntu-latest'
+    timeout-minutes: 10
+    permissions:
+      contents: read  # Check out the repository under audit
+      # Pull request runs only audit and gate; they never upload.
+      security-events: write  # Upload SARIF on pushes to main
+    steps:
+      # Harden the runner used by this workflow
+      # yamllint disable-line rule:line-length
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: 'audit'
+
+      # yamllint disable-line rule:line-length
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Runs zizmor online (the action passes github.token) with the
+      # auditor persona and every severity. SARIF mode always exits
+      # zero, so the next step turns any finding into a failure.
+      - name: 'Run zizmor audit'
+        id: 'zizmor'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/zizmor-scan-action@777b537a9c616bb820b6e59173e22d651cfb18a8  # v0.6.1
+        with:
+          persona: 'auditor'
+          min-severity: 'informational'
+          # yamllint disable-line rule:line-length
+          upload-sarif: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
+      # Fail on any finding. Findings suppressed with an inline
+      # '# zizmor: ignore[...]' comment are not in the SARIF results.
+      - name: 'Fail on findings'
+        env:
+          SARIF: ${{ steps.zizmor.outputs.sarif-file }}
+        run: |
+          set -euo pipefail
+          python3 -I - "${SARIF}" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as fh:
+              sarif = json.load(fh)
+          count = sum(len(run.get("results", [])) for run in sarif["runs"])
+          if count:
+              print(f"::error::zizmor reported {count} finding(s);"
+                    " see the job summary and annotations")
+              sys.exit(1)
+          print("zizmor: no findings")
+          PY

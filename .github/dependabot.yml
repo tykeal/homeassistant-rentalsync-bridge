@@ -16,6 +16,11 @@ updates:
     commit-message:
       prefix: "Chore"
     open-pull-requests-limit: 15
+    # Let fresh releases settle before proposing them (supply-chain
+    # hardening; zizmor dependabot-cooldown). Security updates bypass
+    # the cooldown.
+    cooldown:
+      default-days: 7
   - package-ecosystem: "uv"
     directory: "/rentalsync-bridge"
     schedule:
@@ -23,6 +28,11 @@ updates:
     commit-message:
       prefix: "Chore"
     open-pull-requests-limit: 15
+    # Let fresh releases settle before proposing them (supply-chain
+    # hardening; zizmor dependabot-cooldown). Security updates bypass
+    # the cooldown.
+    cooldown:
+      default-days: 7
   - package-ecosystem: "docker"
     directory: "/rentalsync-bridge"
     schedule:
@@ -30,6 +40,11 @@ updates:
     commit-message:
       prefix: "Chore"
     open-pull-requests-limit: 15
+    # Let fresh releases settle before proposing them (supply-chain
+    # hardening; zizmor dependabot-cooldown). Security updates bypass
+    # the cooldown.
+    cooldown:
+      default-days: 7
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
@@ -37,3 +52,8 @@ updates:
     commit-message:
       prefix: "Chore"
     open-pull-requests-limit: 15
+    # Let fresh releases settle before proposing them (supply-chain
+    # hardening; zizmor dependabot-cooldown). Security updates bypass
+    # the cooldown.
+    cooldown:
+      default-days: 7
