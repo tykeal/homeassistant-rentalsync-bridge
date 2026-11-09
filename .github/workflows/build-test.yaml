@@ -78,6 +78,11 @@ jobs:
     env:
       GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
     steps:
+      # Audit, not block: it runs on manual dispatch only, so no pull
+      # request can prove an allow-list for it. Endpoints seen in
+      # harden-runner telemetry, for its list once a run confirms them
+      # (see .github/harden-runner/README.md):
+      #   api.github.com:443
       # yamllint disable-line rule:line-length
       - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
         with:

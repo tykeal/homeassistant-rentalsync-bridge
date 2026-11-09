@@ -48,6 +48,17 @@ call shows up there too. When a job fails on a blocked endpoint:
 Keep one `host:port` entry per line. Prefer exact hosts: a `*.host`
 wildcard opens only the first port listed for it.
 
+## Jobs still in audit mode
+
+A job that never runs on a pull request cannot prove its list before
+the list gates real work, so it stays in `audit` mode. A comment beside
+its harden-runner step lists the endpoints seen in its telemetry, ready
+to become a list here once a run confirms them:
+
+- `release.yaml`: every job (tag pushes only).
+- `release-drafter.yaml`: pushes to `main` only.
+- `build-test.yaml` `clear-cache`: manual dispatch only.
+
 ## Reusable workflows
 
 The reusable workflows called from `codeql.yml`,
