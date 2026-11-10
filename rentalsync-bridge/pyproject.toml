@@ -96,7 +96,7 @@ exclude_lines = [
 ]
 
 [tool.ruff]
-target-version = "py313"
+target-version = "py314"
 line-length = 88
 src = ["src", "tests"]
 
@@ -126,6 +126,12 @@ ignore = [
     "ANN401", # Dynamically typed expressions (Any)
     "PLR0913", # Too many arguments
     "PLR0917", # Too many positional arguments
+    # Python 3.14 defers annotation evaluation (PEP 649), so ruff would move
+    # annotation-only imports under TYPE_CHECKING. FastAPI, Pydantic and
+    # SQLAlchemy resolve annotations at runtime and need them importable.
+    "TC001",  # typing-only-first-party-import
+    "TC002",  # typing-only-third-party-import
+    "TC003",  # typing-only-standard-library-import
 ]
 
 [tool.ruff.lint.pydocstyle]

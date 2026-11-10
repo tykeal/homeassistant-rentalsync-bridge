@@ -54,8 +54,8 @@ class Room(Base):
     )
 
     # Relationships
-    listing: Mapped["Listing"] = relationship("Listing", back_populates="rooms")
-    bookings: Mapped[list["Booking"]] = relationship(
+    listing: Mapped[Listing] = relationship("Listing", back_populates="rooms")
+    bookings: Mapped[list[Booking]] = relationship(
         "Booking",
         back_populates="room",
         lazy="selectin",

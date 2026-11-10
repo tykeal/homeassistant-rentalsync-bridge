@@ -176,7 +176,7 @@ async def list_listings(
 
 
 async def _sync_rooms_for_listing(
-    provider: "PMSProvider",
+    provider: PMSProvider,
     room_repo: RoomRepository,
     listing: Listing,
     property_pms_id: str,

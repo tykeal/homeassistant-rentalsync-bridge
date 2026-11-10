@@ -278,7 +278,7 @@ class GuestyTokenManager:
         expires_in = data.get("expires_in", 86400)
         try:
             expires_in = int(expires_in)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             expires_in = 86400  # Default 24h
         expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)
 

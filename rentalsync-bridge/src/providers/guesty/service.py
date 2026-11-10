@@ -267,7 +267,7 @@ class GuestyProvider(PMSProvider):
 
     def __init__(
         self,
-        credential_repo: "CredentialRepository | None" = None,
+        credential_repo: CredentialRepository | None = None,
         credential_id: int | None = None,
         client_id: str | None = None,
         client_secret: str | None = None,
@@ -314,7 +314,7 @@ class GuestyProvider(PMSProvider):
             await self._http_client.aclose()
             self._http_client = None
 
-    async def __aenter__(self) -> "GuestyProvider":
+    async def __aenter__(self) -> GuestyProvider:
         """Enter the async context manager."""
         return self
 
@@ -988,7 +988,7 @@ class GuestyProvider(PMSProvider):
 
     async def refresh_token(
         self,
-        credential: "OAuthCredential",
+        credential: OAuthCredential,
     ) -> TokenResult:
         """Refresh the Guesty OAuth token.
 
@@ -1063,7 +1063,7 @@ class GuestyProvider(PMSProvider):
         expires_in = data.get("expires_in", 86400)
         try:
             expires_in = int(expires_in)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             expires_in = 86400  # Default 24h
 
         return TokenResult(
@@ -1651,7 +1651,7 @@ def _parse_date(value: str | datetime | None) -> datetime:
 
     try:
         dt = datetime.fromisoformat(value)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         try:
             dt = datetime.strptime(value, "%Y-%m-%d")
         except (ValueError, TypeError) as exc:
@@ -1696,7 +1696,7 @@ def _parse_retry_after(response: httpx.Response) -> float | None:
         return None
     try:
         return float(header)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None
 
 

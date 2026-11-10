@@ -45,7 +45,7 @@ class PMSListing:
     name: str
     timezone: str
     address: str | None = None
-    rooms: tuple["PMSRoom", ...] = field(default_factory=tuple)
+    rooms: tuple[PMSRoom, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -267,7 +267,7 @@ class PMSProvider(ABC):
         return {}
 
     @abstractmethod
-    async def refresh_token(self, credential: "OAuthCredential") -> TokenResult:
+    async def refresh_token(self, credential: OAuthCredential) -> TokenResult:
         """Refresh the OAuth token for providers that support direct refresh.
 
         Providers that manage tokens through an external mechanism
