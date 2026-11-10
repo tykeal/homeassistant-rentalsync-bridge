@@ -51,25 +51,25 @@ class Listing(Base):
     )
 
     # Relationships
-    bookings: Mapped[list["Booking"]] = relationship(
+    bookings: Mapped[list[Booking]] = relationship(
         "Booking",
         back_populates="listing",
         cascade="all, delete-orphan",
         lazy="selectin",
     )
-    custom_fields: Mapped[list["CustomField"]] = relationship(
+    custom_fields: Mapped[list[CustomField]] = relationship(
         "CustomField",
         back_populates="listing",
         cascade="all, delete-orphan",
         lazy="selectin",
     )
-    rooms: Mapped[list["Room"]] = relationship(
+    rooms: Mapped[list[Room]] = relationship(
         "Room",
         back_populates="listing",
         cascade="all, delete-orphan",
         lazy="selectin",
     )
-    available_fields: Mapped[list["AvailableField"]] = relationship(
+    available_fields: Mapped[list[AvailableField]] = relationship(
         "AvailableField",
         back_populates="listing",
         cascade="all, delete-orphan",

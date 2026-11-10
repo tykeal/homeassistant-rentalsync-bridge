@@ -52,7 +52,7 @@ class CustomField(Base):
     )
 
     # Relationships
-    listing: Mapped["Listing"] = relationship("Listing", back_populates="custom_fields")
+    listing: Mapped[Listing] = relationship("Listing", back_populates="custom_fields")
 
     __table_args__ = (
         UniqueConstraint(

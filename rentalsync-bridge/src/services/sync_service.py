@@ -137,7 +137,7 @@ class SyncService:
         self,
         session: AsyncSession,
         calendar_cache: CalendarCache | None = None,
-        session_factory: "async_sessionmaker[AsyncSession] | None" = None,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
     ) -> None:
         """Initialize SyncService.
 
@@ -1056,7 +1056,7 @@ class SyncService:
         reservation: PMSReservation,
         guests: dict[str, PMSGuest],
         failed_guest_ids: set[str],
-        cached: "_StoredEnrichment | None",
+        cached: _StoredEnrichment | None,
     ) -> tuple[dict, str | None, bool]:
         """Build the guest-owned enrichment values for a reservation.
 
@@ -1103,7 +1103,7 @@ class SyncService:
         self,
         provider: PMSProvider,
         reservation: PMSReservation,
-        cached: "_StoredEnrichment | None",
+        cached: _StoredEnrichment | None,
         payload_keys: set[str],
     ) -> tuple[dict, bool]:
         """Fetch the custom-field values for a reservation.
@@ -1145,7 +1145,7 @@ class SyncService:
 
     @staticmethod
     def _bootstrap_custom_fields(
-        cached: "_StoredEnrichment",
+        cached: _StoredEnrichment,
         payload_keys: set[str],
     ) -> dict:
         """Recover published values for a row written before the upgrade.
@@ -1228,7 +1228,7 @@ class SyncService:
     async def _stored_enrichment_state(
         self,
         listing: Listing,
-    ) -> dict[str, "_StoredEnrichment"]:
+    ) -> dict[str, _StoredEnrichment]:
         """Load the last-synced enrichment state for a listing.
 
         Keyed by the base reservation ID so multi-room bookings (stored as
@@ -1279,7 +1279,7 @@ class SyncService:
         cls,
         reservation: PMSReservation,
         listing: Listing,
-        cached: "_StoredEnrichment | None",
+        cached: _StoredEnrichment | None,
     ) -> bool:
         """Decide whether stored enrichment may stand in for fresh fetches.
 

@@ -44,7 +44,7 @@ class AvailableField(Base):
     )
 
     # Relationships
-    listing: Mapped["Listing"] = relationship(
+    listing: Mapped[Listing] = relationship(
         "Listing", back_populates="available_fields"
     )
 

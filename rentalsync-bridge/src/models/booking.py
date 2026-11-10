@@ -85,8 +85,8 @@ class Booking(Base):
     )
 
     # Relationships
-    listing: Mapped["Listing"] = relationship("Listing", back_populates="bookings")
-    room: Mapped["Room | None"] = relationship("Room", back_populates="bookings")
+    listing: Mapped[Listing] = relationship("Listing", back_populates="bookings")
+    room: Mapped[Room | None] = relationship("Room", back_populates="bookings")
 
     __table_args__ = (
         UniqueConstraint("listing_id", "pms_booking_id", name="uq_booking_listing_pms"),

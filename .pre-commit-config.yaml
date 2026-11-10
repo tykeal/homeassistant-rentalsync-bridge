@@ -14,6 +14,12 @@ ci:
     Signed-off-by: pre-commit-ci[bot] <66853113+pre-commit-ci[bot]@users.noreply.github.com>
   skip: [aislop]
 
+# The project targets Python 3.14 only; hooks that parse the source
+# (check-ast, debug-statements, mypy, ...) must run on 3.14 to
+# understand its syntax.
+default_language_version:
+  python: python3.14
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
@@ -114,6 +120,8 @@ repos:
     rev: a6268877efd41a21197445cc04cbf28f9c6facba # frozen: 1.7.0
     hooks:
       - id: interrogate
+        # Its manifest pins python3, overriding default_language_version.
+        language_version: python3.14
         files: ^rentalsync-bridge/(scripts|tests|src)/.+\.py$
         args:
           - -vv

@@ -96,7 +96,7 @@ class Settings(BaseSettings):
     )
 
     @model_validator(mode="after")
-    def _detect_pms_type(self) -> "Settings":
+    def _detect_pms_type(self) -> Settings:
         """Auto-detect PMS type from credentials when not explicit.
 
         Priority:

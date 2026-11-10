@@ -411,7 +411,7 @@ class CloudbedsProvider(PMSProvider):
 
     async def refresh_token(
         self,
-        credential: "OAuthCredential",
+        credential: OAuthCredential,
     ) -> TokenResult:
         """Refresh the OAuth token.
 
@@ -529,7 +529,7 @@ def _parse_date(value: str | datetime | None) -> datetime:
 
     try:
         dt = datetime.fromisoformat(value)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         try:
             dt = datetime.strptime(value, "%Y-%m-%d")
         except (ValueError, TypeError) as exc:
