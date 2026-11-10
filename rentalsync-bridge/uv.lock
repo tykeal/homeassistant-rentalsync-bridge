@@ -247,7 +247,7 @@ wheels = [
 
 [[package]]
 name = "cloudbeds-pms"
-version = "2.13.0"
+version = "2.14.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
@@ -255,9 +255,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5d/f9/39dff2b55cab81156b6eed715df83189f09d6ad582f00f4839468416b48e/cloudbeds_pms-2.13.0.tar.gz", hash = "sha256:ed6aabc114bdd8ae5e56374c863f9e0f97aa15c3a98951bf96d3b6f86d51ad1b", size = 171507, upload-time = "2026-03-12T12:59:19.391Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4c/86/ad0719fd3f343461a57c995e1c8d5142bd2f4d5c3fa8b69e1ef1c0b69344/cloudbeds_pms-2.14.0.tar.gz", hash = "sha256:3ffa94496322a4c2085a6f9e6b16ade1d0f1522609877ea48a9b0016667c8dbd", size = 346275, upload-time = "2026-10-19T14:21:50.199Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/cb/8f/7ca0c4ca86328998cbd9f6d53dc80c0da43c53266d99754cdde4c32eaa91/cloudbeds_pms-2.13.0-py3-none-any.whl", hash = "sha256:ce4cd6d19b5c5728c2eeea3ef6584abd629d6ff3be60572a0cc4d366be27fc70", size = 909315, upload-time = "2026-03-12T12:59:17.202Z" },
+    { url = "https://files.pythonhosted.org/packages/20/ee/ddc428fe257e23299dfc6ac4e0a9ce38b72dcd56351d64a9309de59d26f1/cloudbeds_pms-2.14.0-py3-none-any.whl", hash = "sha256:ceb4bc0eafe902740fddc7a0933638a6e18fc7aaf4a40915084751d59bdaa59f", size = 1844244, upload-time = "2026-10-19T14:21:48.39Z" },
 ]
 
 [[package]]
