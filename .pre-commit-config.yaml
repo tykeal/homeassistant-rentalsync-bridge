@@ -114,6 +114,8 @@ repos:
     rev: a6268877efd41a21197445cc04cbf28f9c6facba # frozen: 1.7.0
     hooks:
       - id: interrogate
+        # Parses the source; must understand Python 3.14 syntax.
+        language_version: python3.14
         files: ^rentalsync-bridge/(scripts|tests|src)/.+\.py$
         args:
           - -vv
@@ -128,6 +130,8 @@ repos:
     rev: ad26ebfa797fcb9b8f83275937c1c1d6e126719c  # frozen: v2.4.1
     hooks:
       - id: mypy
+        # Parses the source; must understand Python 3.14 syntax.
+        language_version: python3.14
         files: ^rentalsync-bridge/src/.+\.py$
         args: [--config-file=.mypy.ini]
         additional_dependencies:
