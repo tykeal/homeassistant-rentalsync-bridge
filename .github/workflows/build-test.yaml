@@ -312,9 +312,9 @@ jobs:
           include_dev: "false"
           sbom_format: "both"
           path_prefix: 'rentalsync-bridge/'
-          # Temporary workaround: action default 3.12 fails requires-python
-          # (>=3.13) and uv then picks 3.15, which cannot build watchfiles.
-          # Remove the pin once upstream handles this; see issue #101.
+          # The action defaults to 3.12 and binds uv to that interpreter
+          # (no downloads), so it must match requires-python (3.14 only).
+          # Remove once the action derives it from the project; see #101.
           python_version: "3.14"
 
       - name: "Upload SBOM artifacts"

@@ -5,5 +5,7 @@ upgrade:
     `base-python:3.14-alpine3.24` base image, replacing Python 3.13 on
     Alpine 3.21, which reaches end of support in November 2026. The
     standalone Docker/Podman image moves to `python:3.14-slim`. No
-    configuration changes are needed. If you install the Python package
-    directly, Python 3.13 remains supported.
+    configuration changes are needed. The project now targets Python 3.14
+    only (`requires-python = ">=3.14,<3.15"`); if you install the Python
+    package directly, you need Python 3.14, as Python 3.13 is no longer
+    supported.
