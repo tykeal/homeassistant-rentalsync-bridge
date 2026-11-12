@@ -503,7 +503,7 @@ Follow constitution Principle V:
 - [ ] T067 [US7] Add the `guesty_reservations_api: v3` option and the `list(v3|legacy)?` schema to config.yaml. Create translations/en.yaml with names and descriptions for `log_level` and `guesty_reservations_api`, with an SPDX header or a `REUSE.toml` entry (contracts/addon-toggle.md).
 - [ ] T068 [US7] Export `GUESTY_RESERVATIONS_API` (default `v3`; the same PR flips the `Settings` default from `legacy` to `v3`, see the Phase 2 deviation note) and log the selected value in rootfs/etc/s6-overlay/s6-rc.d/rentalsync/run.
 - [x] T069 [US7] Implement the legacy 404/410 message in src/providers/guesty/legacy_reservations.py. This makes T065 pass.
-- [ ] T070 [US7] Add the FR-043 DEBUG diagnostics (research R15) in src/providers/guesty/reservations_v3.py and src/services/sync_service.py. Use reservation and listing IDs, counts and enum values only. This makes T066 pass.
+- [x] T070 [US7] Add the FR-043 DEBUG diagnostics (research R15) in src/providers/guesty/reservations_v3.py and src/services/sync_service.py. Use reservation and listing IDs, counts and enum values only. This makes T066 pass.
 - [ ] T071 [US7] Make T064 pass. Expected to need no code beyond T012 and T042; fix any gap found.
 - [ ] T072 [P] [US7] Document the option, pre-release validation (quickstart §4) and rollback (quickstart §5) in docs/homeassistant-addon-setup.md. Include the multi-segment rollback limitation and the legacy removal after 2027-03-01.
 
