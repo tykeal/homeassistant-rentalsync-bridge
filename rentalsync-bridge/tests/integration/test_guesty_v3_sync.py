@@ -1766,3 +1766,85 @@ class TestEnrichmentReuse:
         for key in BOOKKEEPING:
             assert key not in feed
         assert row.enrichment_data["_change_key"] not in feed
+
+
+class TestGuestLookupFailure:
+    """A failed guest lookup outside a hold (T050, FR-031, FR-032)."""
+
+    @staticmethod
+    async def _stored(v3: _Fixture, *, reassigned: bool, **extra: Any) -> None:
+        """Store last-good contact and fail the next lookup.
+
+        The contact belongs to the stay's guest, or to another guest when
+        ``reassigned``.
+        """
+        await v3.setup()
+        p = v3.transport.payloads
+        contact = {
+            "guest_phone": "+15555550100",
+            "guest_phone_last4": "0100",
+            "_guest_source_id": p.new_id("gst") if reassigned else v3.item["guestId"],
+            **extra,
+        }
+        await v3.store(
+            custom_data={"guest_phone_last4": "0100"},
+            enrichment_data=contact,
+            guest_phone_last4="0100",
+        )
+        v3.transport.fail("guests_crud", 503)
+
+    async def test_reassignment_publishes_no_previous_contact(
+        self, v3: _Fixture
+    ) -> None:
+        """The previous guest's last-4 and name are never published."""
+        await self._stored(v3, reassigned=True, _guest_name="Stored Name")
+
+        await v3.sync()
+
+        row = (await v3.bookings())[v3.booking_id]
+        assert row.status == "confirmed"
+        assert row.guest_phone_last4 is None
+        assert row.guest_name is None
+        assert "0100" not in str(row.custom_data)
+        assert "0100" not in str(row.enrichment_data)
+        assert "Stored Name" not in str(row.enrichment_data)
+
+    async def test_same_guest_keeps_contact_and_recorded_name(
+        self, v3: _Fixture
+    ) -> None:
+        """Last-good contact and ``_guest_name`` survive (US5-4)."""
+        await self._stored(v3, reassigned=False, _guest_name="Stored Name")
+        guest_id = v3.item["guestId"]
+
+        await v3.sync()
+
+        row = (await v3.bookings())[v3.booking_id]
+        assert row.guest_phone_last4 == "0100"
+        assert row.guest_name == "Stored Name"
+        assert row.enrichment_data["_guest_name"] == "Stored Name"
+        assert row.enrichment_data["_guest_source_id"] == guest_id
+        assert "_change_key" not in row.enrichment_data
+
+    async def test_previous_release_row_keeps_its_guest_name(
+        self, v3: _Fixture
+    ) -> None:
+        """Without ``_guest_name`` a matching source keeps the stored name."""
+        await self._stored(v3, reassigned=False)
+
+        await v3.sync()
+
+        row = (await v3.bookings())[v3.booking_id]
+        assert row.guest_name == "Synthetic Guest"
+        assert row.guest_phone_last4 == "0100"
+
+    async def test_previous_release_row_without_source_uses_placeholder(
+        self, v3: _Fixture
+    ) -> None:
+        """No matching source: the stored name is not trusted (US5-5)."""
+        await self._stored(v3, reassigned=True)
+
+        await v3.sync()
+
+        row = (await v3.bookings())[v3.booking_id]
+        assert row.guest_name is None
+        assert row.guest_phone_last4 is None
