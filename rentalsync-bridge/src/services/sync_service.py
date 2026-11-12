@@ -1528,6 +1528,12 @@ class SyncService:
         # Every custom-data key this listing's payloads currently supply.
         # Used only to keep bootstrap recovery off reservation-owned keys.
         payload_keys = {k for r in reservations for k in r.custom_data}
+        # Retired fields are never re-sourced (FR-036): treating them as
+        # payload-supplied keeps bootstrap recovery from republishing a
+        # pre-upgrade row's stale values.
+        retired = provider.retired_description_fields
+        if isinstance(retired, Mapping):
+            payload_keys |= set(retired)
 
         guests, failed_guest_ids = await self._resolve_guests(
             provider,
