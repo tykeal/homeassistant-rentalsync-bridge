@@ -1,7 +1,9 @@
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for the Guesty Reservations V3 source (spec 004, US1-US2)."""
+"""Unit tests for the Guesty Reservations V3 source (spec 004, US1-US3)."""
 
+import itertools
+import logging
 from datetime import UTC, date, datetime
 from typing import Any
 
@@ -566,6 +568,316 @@ class TestRejectedSearch:
         with pytest.raises(PMSProviderError, match="status"):
             await provider.get_reservations(b)
         assert guesty_transport.counts["v3_search"] == 1
+
+
+def _ids(rid: str, reservation: Any) -> list[str]:
+    """Return a reservation's interval booking IDs."""
+    return [f"{rid}::{i.booking_suffix}" for i in reservation.intervals]
+
+
+def _spans(reservation: Any) -> list[tuple[datetime | None, datetime | None]]:
+    """Return a reservation's interval ``(check_in, check_out)`` instants."""
+    return [(i.check_in, i.check_out) for i in reservation.intervals]
+
+
+class TestAttribution:
+    """Segment-level ownership and interval identities (T039, R6)."""
+
+    @pytest.fixture
+    def property_(self, guesty_transport: GuestyFakeTransport) -> dict[str, str]:
+        """A tracked multi-unit parent with sub-units A and B."""
+        p = guesty_transport.payloads
+        parent, unit_a, unit_b = p.new_id("lst"), p.new_id("lst"), p.new_id("lst")
+        guesty_transport.add_listing(parent, children=[unit_a, unit_b])
+        return {"parent": parent, "a": unit_a, "b": unit_b}
+
+    async def test_assigned_single_unit(
+        self, guesty_transport: GuestyFakeTransport, property_: dict[str, str]
+    ) -> None:
+        """A stay assigned to one sub-unit is ``{rid}::{unit}`` (US3-1)."""
+        p = guesty_transport.payloads
+        item = p.search_item(property_["b"], parent_listing_id=property_["parent"])
+        guesty_transport.v3_items = [item]
+
+        reservation = await _fetch_one(guesty_transport, property_["parent"])
+
+        rid = item["reservationId"]
+        assert _ids(rid, reservation) == [f"{rid}::{property_['b']}"]
+        assert reservation.room_ids == (property_["b"],)
+
+    async def test_unassigned_parent_is_listing_only(
+        self, guesty_transport: GuestyFakeTransport, property_: dict[str, str]
+    ) -> None:
+        """An unassigned stay stays on the parent, as today (US3-2, FR-019)."""
+        p = guesty_transport.payloads
+        item = p.unassigned_parent(property_["parent"])
+        guesty_transport.v3_items = [item]
+
+        reservation = await _fetch_one(guesty_transport, property_["parent"])
+
+        rid = item["reservationId"]
+        assert _ids(rid, reservation) == [f"{rid}::{property_['parent']}"]
+
+    async def test_new_sub_unit_is_owned_through_its_parent(
+        self, guesty_transport: GuestyFakeTransport, property_: dict[str, str]
+    ) -> None:
+        """A sub-unit the listing document does not list yet still belongs."""
+        p = guesty_transport.payloads
+        unknown = p.new_id("lst")
+        item = p.search_item(unknown, parent_listing_id=property_["parent"])
+        guesty_transport.v3_items = [item]
+
+        reservation = await _fetch_one(guesty_transport, property_["parent"])
+
+        assert reservation.room_ids == (unknown,)
+
+    async def test_move_from_another_tracked_listing(
+        self, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """Each tracked listing claims only its own segment's dates (US3-3)."""
+        p = guesty_transport.payloads
+        first, second = p.new_id("lst"), p.new_id("lst")
+        guesty_transport.add_listing(first)
+        guesty_transport.add_listing(second)
+        item = p.tracked_listing_move(first, second)
+        guesty_transport.v3_items = [item]
+        provider = guesty_transport.provider(reservations_api="v3")
+        provider.begin_cycle([first, second])
+
+        (later,) = await provider.get_reservations(second)
+        (earlier,) = await provider.get_reservations(first)
+
+        rid = item["reservationId"]
+        segment_x, segment_y = item["stay"]
+        assert _ids(rid, later) == [f"{rid}::{second}"]
+        assert (later.check_in, later.check_out) == (
+            datetime.fromisoformat(segment_y["checkIn"]),
+            datetime.fromisoformat(segment_y["checkOut"]),
+        )
+        assert _spans(later) == [(later.check_in, later.check_out)]
+        assert later.intervals[0].local_dates == (
+            date.fromisoformat(segment_y["checkInDateLocalized"]),
+            date.fromisoformat(segment_y["checkOutDateLocalized"]),
+        )
+        assert _ids(rid, earlier) == [f"{rid}::{first}"]
+        assert (earlier.check_in, earlier.check_out) == (
+            datetime.fromisoformat(segment_x["checkIn"]),
+            datetime.fromisoformat(segment_x["checkOut"]),
+        )
+        assert guesty_transport.counts["v3_search"] == 1
+
+    async def test_untracked_start_is_the_residual_gap(
+        self,
+        guesty_transport: GuestyFakeTransport,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Not found while its first segment is untracked; claimed once it is."""
+        p = guesty_transport.payloads
+        untracked, tracked = p.new_id("lst"), p.new_id("lst")
+        guesty_transport.add_listing(untracked)
+        guesty_transport.add_listing(tracked)
+        item = p.never_stored_untracked_start(untracked, tracked)
+        rid = item["reservationId"]
+        guesty_transport.v3_items = [item]
+        provider = guesty_transport.provider(reservations_api="v3")
+
+        with caplog.at_level(logging.DEBUG):
+            provider.begin_cycle([tracked])
+            assert await provider.get_reservations(tracked) == []
+        assert _filter_ids(guesty_transport) == [{tracked}]
+        assert not [r for r in caplog.records if rid in r.getMessage()]
+
+        provider.begin_cycle([tracked, untracked])
+        (reservation,) = await provider.get_reservations(tracked)
+
+        assert _ids(rid, reservation) == [f"{rid}::{tracked}"]
+        assert reservation.check_in == datetime.fromisoformat(
+            item["stay"][1]["checkIn"]
+        )
+
+    async def test_same_property_move(
+        self, guesty_transport: GuestyFakeTransport, property_: dict[str, str]
+    ) -> None:
+        """A → B within one property is two intervals (US3-4)."""
+        p = guesty_transport.payloads
+        item = p.same_property_move(property_["parent"], property_["a"], property_["b"])
+        guesty_transport.v3_items = [item]
+
+        reservation = await _fetch_one(guesty_transport, property_["parent"])
+
+        rid = item["reservationId"]
+        assert _ids(rid, reservation) == [
+            f"{rid}::{property_['a']}",
+            f"{rid}::{property_['b']}",
+        ]
+        assert _spans(reservation) == [
+            (
+                datetime.fromisoformat(s["checkIn"]),
+                datetime.fromisoformat(s["checkOut"]),
+            )
+            for s in item["stay"]
+        ]
+
+    async def test_round_trip(
+        self, guesty_transport: GuestyFakeTransport, property_: dict[str, str]
+    ) -> None:
+        """A → B → A is ``A``, ``B`` and ``A#2`` (FR-018)."""
+        p = guesty_transport.payloads
+        item = p.round_trip_move(property_["parent"], property_["a"], property_["b"])
+        guesty_transport.v3_items = [item]
+
+        reservation = await _fetch_one(guesty_transport, property_["parent"])
+
+        rid = item["reservationId"]
+        assert _ids(rid, reservation) == [
+            f"{rid}::{property_['a']}",
+            f"{rid}::{property_['b']}",
+            f"{rid}::{property_['a']}#2",
+        ]
+        assert reservation.room_ids == (property_["a"], property_["b"])
+
+    async def test_adjacent_same_room_segments_merge(
+        self, guesty_transport: GuestyFakeTransport, property_: dict[str, str]
+    ) -> None:
+        """Adjacent same-room segments are one interval with the max guests."""
+        p = guesty_transport.payloads
+        unit, parent = property_["a"], property_["parent"]
+        item = p.search_item(
+            stay=[
+                p.stay_segment(
+                    unit,
+                    p.check_in_at(3),
+                    p.check_in_at(5),
+                    parent_listing_id=parent,
+                    guests_count=2,
+                ),
+                p.stay_segment(
+                    unit,
+                    p.check_in_at(5),
+                    p.check_out_at(8),
+                    parent_listing_id=parent,
+                    guests_count=4,
+                ),
+            ]
+        )
+        guesty_transport.v3_items = [item]
+
+        reservation = await _fetch_one(guesty_transport, parent)
+
+        rid = item["reservationId"]
+        assert reservation.intervals == (
+            PMSOccupancyInterval(
+                room_id=unit,
+                ordinal=1,
+                check_in=p.check_in_at(3),
+                check_out=p.check_out_at(8),
+                local_dates=(
+                    date.fromisoformat(item["stay"][0]["checkInDateLocalized"]),
+                    date.fromisoformat(item["stay"][1]["checkOutDateLocalized"]),
+                ),
+                guests_count=4,
+            ),
+        )
+        assert _ids(rid, reservation) == [f"{rid}::{unit}"]
+
+    async def test_chain_of_adjacent_segments_merges(
+        self, guesty_transport: GuestyFakeTransport, property_: dict[str, str]
+    ) -> None:
+        """Every back-to-back segment joins the same interval, not ``#2``."""
+        p = guesty_transport.payloads
+        unit, parent = property_["a"], property_["parent"]
+        bounds = [p.check_in_at(3), p.check_in_at(5), p.check_in_at(7)]
+        item = p.search_item(
+            stay=[
+                p.stay_segment(unit, start, end, parent_listing_id=parent)
+                for start, end in itertools.pairwise([*bounds, p.check_out_at(9)])
+            ]
+        )
+        guesty_transport.v3_items = [item]
+
+        reservation = await _fetch_one(guesty_transport, parent)
+
+        rid = item["reservationId"]
+        assert _ids(rid, reservation) == [f"{rid}::{unit}"]
+        assert _spans(reservation) == [(p.check_in_at(3), p.check_out_at(9))]
+
+    async def test_same_room_gap_is_a_second_interval(
+        self, guesty_transport: GuestyFakeTransport, property_: dict[str, str]
+    ) -> None:
+        """Same-room segments separated by a gap stay apart."""
+        p = guesty_transport.payloads
+        unit, parent = property_["a"], property_["parent"]
+        item = p.search_item(
+            stay=[
+                p.stay_segment(
+                    unit, p.check_in_at(3), p.check_out_at(5), parent_listing_id=parent
+                ),
+                p.stay_segment(
+                    unit, p.check_in_at(6), p.check_out_at(8), parent_listing_id=parent
+                ),
+            ]
+        )
+        guesty_transport.v3_items = [item]
+
+        reservation = await _fetch_one(guesty_transport, parent)
+
+        rid = item["reservationId"]
+        assert _ids(rid, reservation) == [f"{rid}::{unit}", f"{rid}::{unit}#2"]
+
+    async def test_sibling_only_is_not_attributed(
+        self, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """A tracked child never claims its sibling's stay (US3-5, FR-020)."""
+        p = guesty_transport.payloads
+        parent, child, sibling = p.new_id("lst"), p.new_id("lst"), p.new_id("lst")
+        guesty_transport.add_listing(parent, children=[child, sibling])
+        guesty_transport.add_listing(child, parent_id=parent)
+        guesty_transport.v3_items = [
+            p.search_item(sibling, parent_listing_id=parent),
+            p.unassigned_parent(parent),
+        ]
+        provider = guesty_transport.provider(reservations_api="v3")
+        provider.begin_cycle([child])
+
+        assert await provider.get_reservations(child) == []
+        assert guesty_transport.counts["v3_search"] == 1
+
+    @pytest.mark.parametrize(
+        "bad",
+        [{"checkIn": "2026-01-01T15:00:00.000Z"}, {"listingId": ""}, "6640a"],
+        ids=["no_listing_id", "empty_listing_id", "not_object"],
+    )
+    async def test_later_segment_without_listing_aborts(
+        self, guesty_transport: GuestyFakeTransport, bad: Any
+    ) -> None:
+        """Any segment without a usable ``listingId`` aborts the fetch."""
+        p = guesty_transport.payloads
+        listing = p.new_id("lst")
+        guesty_transport.add_listing(listing)
+        item = p.search_item(listing)
+        item["stay"].append(bad)
+        guesty_transport.v3_items = [p.search_item(listing), item]
+        provider = guesty_transport.provider(reservations_api="v3")
+        provider.begin_cycle([listing])
+
+        with pytest.raises(PMSProviderError, match="stay listing reference"):
+            await provider.get_reservations(listing)
+
+    @pytest.mark.parametrize("stay", [None, [], "6640a"])
+    def test_missing_stay_aborts(
+        self, guesty_v3_payloads: GuestyV3Payloads, stay: Any
+    ) -> None:
+        """A missing, empty or non-list ``stay`` is never guessed."""
+        p = guesty_v3_payloads
+        listing = p.new_id("lst")
+        item = p.search_item(listing)
+        if stay is None:
+            del item["stay"]
+        else:
+            item["stay"] = stay
+
+        with pytest.raises(PMSProviderError, match="stay listing reference"):
+            map_search_item(item, listing, frozenset({listing}))
 
 
 def _shape(p: GuestyV3Payloads, kind: str) -> tuple[dict[str, Any], str, set[str]]:

@@ -319,7 +319,7 @@ Follow constitution Principle V:
 
 ### Tests for User Story 3 (write first, confirm they fail)
 
-- [ ] T039 [P] [US3] Write unit tests in tests/unit/test_guesty_v3_source.py for attribution and intervals (research R6):
+- [x] T039 [P] [US3] Write unit tests in tests/unit/test_guesty_v3_source.py for attribution and intervals (research R6):
   - assigned single unit → `{rid}::{unit}` (US3-1)
   - unassigned parent → listing-only (US3-2, FR-019)
   - move from another tracked listing (first segment in tracked listing X, later segment in tracked listing Y) → captured for Y, with only Y's dates (US3-3)
@@ -329,7 +329,7 @@ Follow constitution Principle V:
   - adjacent same-room segments merge, with `guests_count` = max
   - sibling-only → not attributed (US3-5, FR-020)
   - missing `stay` or segment `listingId` → abort
-- [ ] T040 [P] [US3] Write integration tests in tests/integration/test_guesty_v3_sync.py:
+- [x] T040 [P] [US3] Write integration tests in tests/integration/test_guesty_v3_sync.py:
   - each interval becomes its own booking with the correct `room_id` and room-feed membership
   - the DTO span equals the owned span
   - a room change that removes a `#n` interval retires that row through the room-change prune path
@@ -337,7 +337,7 @@ Follow constitution Principle V:
 
 ### Implementation for User Story 3
 
-- [ ] T041 [US3] Implement multi-segment attribution in src/providers/guesty/reservations_v3.py:
+- [x] T041 [US3] Implement multi-segment attribution in src/providers/guesty/reservations_v3.py:
   - ownership-scope and parent-ID matching across every `stay[]` segment
   - adjacent same-room merging
   - ordinals and `#n`
@@ -346,7 +346,7 @@ Follow constitution Principle V:
   - `room_ids` = distinct interval rooms
 
   Replace the US1 first-segment partitioning. This makes T039 pass.
-- [ ] T042 [US3] Complete interval handling in src/services/sync_service.py:
+- [x] T042 [US3] Complete interval handling in src/services/sync_service.py:
   - room resolution per interval
   - unassigned parent → listing-level booking with no room, as today
   - prune of disappearing interval IDs

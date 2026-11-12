@@ -17,7 +17,12 @@ from src.providers.base import (
 )
 from src.providers.guesty.legacy_reservations import _EXCLUDED_STATUSES
 from src.providers.guesty.sources import GuestyHTTPError
-from src.providers.guesty.v3_mapping import _intervals, _local_date, _status
+from src.providers.guesty.v3_mapping import (
+    _intervals,
+    _local_date,
+    _status,
+    segment_owned,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -228,7 +233,7 @@ class AbsenceContext:
     def _by_placement(self, item: dict[str, Any]) -> AbsenceResult | None:
         """Settle a live candidate by its rooms, dates and first segment."""
         stay = item["stay"]
-        if not any(s["listingId"] in self.scope_ids for s in stay):
+        if not any(segment_owned(s, self.scope_ids) for s in stay):
             return _verdict(AbsenceVerdict.CONFIRMED_ABSENT, "moved out of scope")
         dates = _stay_dates(item)
         if dates is None:
@@ -249,7 +254,10 @@ class AbsenceContext:
     def _reattribute(self, item: dict[str, Any]) -> AbsenceResult:
         """Rebuild a live candidate the search cannot see from its segments."""
         rid = item["reservationId"]
-        ambiguous = ambiguous_rooms(item) & self.scope_ids
+        owned = {
+            s["listingId"] for s in item["stay"] if segment_owned(s, self.scope_ids)
+        }
+        ambiguous = ambiguous_rooms(item) & owned
         if ambiguous:
             logger.warning(
                 "Guesty V3: reservation %s has same-room segments meeting on "
