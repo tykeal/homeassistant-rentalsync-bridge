@@ -83,6 +83,12 @@ GUEST_NAME_KEY = "_guest_name"
 CHANGE_KEY_KEY = "_change_key"
 BOOKKEEPING_KEYS = frozenset({GUEST_SOURCE_ID_KEY, GUEST_NAME_KEY, CHANGE_KEY_KEY})
 
+# Description keys derived from the stay itself (research R10): they
+# describe whichever dates and room a row publishes.
+GUESTS_COUNT_KEY = "guestsCount"
+NIGHTS_COUNT_KEY = "nightsCount"
+_STAY_DERIVED_KEYS = (NIGHTS_COUNT_KEY, GUESTS_COUNT_KEY)
+
 # Enrichment keys owned by the guest lookup rather than the custom-fields
 # endpoint.  Provenance matters: a failed fetch may only fall back to the
 # values that same source produced last time.
@@ -815,7 +821,9 @@ class SyncService:
                 continue
             booking.guest_name = self._held_guest_name(booking, reservation)
             booking.guest_phone_last4 = custom_data.get("guest_phone_last4")
-            booking.custom_data = custom_data or None
+            booking.custom_data = (
+                self._held_custom_data(booking.custom_data, custom_data) or None
+            )
             booking.pms_updated_at = reservation.updated_at
             booking.enrichment_data = enrichment_data
             booking.last_fetched_at = datetime.now(UTC)
@@ -831,6 +839,32 @@ class SyncService:
             refreshed,
         )
         return refreshed
+
+    @staticmethod
+    def _held_custom_data(stored: dict | None, incoming: dict) -> dict:
+        """Keep a held row's stay-derived description values as stored.
+
+        Nights and guests describe the stay a row publishes, and a held
+        row keeps publishing its stored dates and room (FR-023), so the
+        in-flight values are never taken; everything else refreshes.
+
+        Args:
+            stored: The row's stored custom data.
+            incoming: The held reservation's fresh custom data.
+
+        Returns:
+            The custom data to store on the held row.
+        """
+        stored = stored or {}
+        held = {
+            key: stored[key] if key in _STAY_DERIVED_KEYS else value
+            for key, value in incoming.items()
+            if key not in _STAY_DERIVED_KEYS or key in stored
+        }
+        for key in _STAY_DERIVED_KEYS:
+            if key in stored and key not in held:
+                held[key] = stored[key]
+        return held
 
     @staticmethod
     def _held_guest_name(booking: Booking, reservation: PMSReservation) -> str | None:
@@ -987,7 +1021,7 @@ class SyncService:
         else:
             # One booking per interval, or per room in the reservation.
             # The "::" delimiter avoids ambiguity with IDs.
-            units: list[tuple[str, str, dict]] = [
+            units: list[tuple[str, str, dict, dict]] = [
                 (
                     f"{pms_booking_id}::{interval.booking_suffix}",
                     interval.room_id,
@@ -997,13 +1031,14 @@ class SyncService:
                         "check_out_date": interval.check_out
                         or base_booking["check_out_date"],
                     },
+                    self._interval_custom_data(base_custom_data, interval),
                 )
                 for interval in intervals
             ] or [
-                (f"{pms_booking_id}::{pms_room_id}", pms_room_id, {})
+                (f"{pms_booking_id}::{pms_room_id}", pms_room_id, {}, base_custom_data)
                 for pms_room_id in room_ids
             ]
-            for booking_id, pms_room_id, dates in units:
+            for booking_id, pms_room_id, dates, custom_data in units:
                 booking_ids.add(booking_id)
 
                 room = await self._room_repo.get_by_pms_id(listing.id, pms_room_id)
@@ -1014,7 +1049,7 @@ class SyncService:
                 final_booking_data = {
                     **base_booking,
                     **dates,
-                    "custom_data": (base_custom_data if base_custom_data else None),
+                    "custom_data": custom_data or None,
                 }
 
                 was_created = await self._upsert_single_booking(
@@ -1026,6 +1061,32 @@ class SyncService:
                     updated += 1
 
         return inserted, updated, booking_ids
+
+    @staticmethod
+    def _interval_custom_data(
+        base_custom_data: dict, interval: PMSOccupancyInterval
+    ) -> dict:
+        """Narrow a reservation's ``guestsCount`` to one interval's own.
+
+        The reservation carries the largest interval count; each interval
+        booking describes only its room's guests, and omits the key when
+        its segments gave none (research R10).  Key order is kept.
+
+        Args:
+            base_custom_data: The reservation's storable custom data.
+            interval: The interval the booking stores.
+
+        Returns:
+            The custom data to store on that interval's booking.
+        """
+        if GUESTS_COUNT_KEY not in base_custom_data:
+            return base_custom_data
+        count = interval.guests_count
+        return {
+            key: str(count) if key == GUESTS_COUNT_KEY else value
+            for key, value in base_custom_data.items()
+            if key != GUESTS_COUNT_KEY or count is not None
+        }
 
     async def _log_missing_room(
         self,
