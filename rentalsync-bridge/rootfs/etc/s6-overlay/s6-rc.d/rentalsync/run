@@ -18,6 +18,15 @@ else
 fi
 bashio::log.info "Log level: ${LOG_LEVEL}"
 
+# Select the Guesty reservations API (ignored for Cloudbeds)
+if bashio::config.has_value 'guesty_reservations_api'; then
+    GUESTY_RESERVATIONS_API=$(bashio::config 'guesty_reservations_api')
+    export GUESTY_RESERVATIONS_API
+else
+    export GUESTY_RESERVATIONS_API="legacy"
+fi
+bashio::log.info "Guesty reservations API: ${GUESTY_RESERVATIONS_API}"
+
 # Set database path for Home Assistant data persistence
 export DATABASE_URL="${DATABASE_URL:-sqlite:////data/rentalsync.db}"
 
