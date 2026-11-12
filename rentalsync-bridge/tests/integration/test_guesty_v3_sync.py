@@ -13,7 +13,7 @@ from src.models.booking import Booking
 from src.models.listing import Listing
 from src.repositories.booking_repository import BookingRepository
 from src.services.calendar_service import CalendarCache
-from src.services.sync_service import SyncService
+from src.services.sync_service import SyncService, SyncServiceError
 
 from tests.conftest import (
     GuestyFakeTransport,
@@ -259,3 +259,52 @@ class TestInlineCustomFieldEnrichment:
             for record in caplog.records
         )
         assert v3.listing.last_sync_error is None
+
+
+class TestIdentityVerification:
+    """A re-keyed reservation stops the sync (T021, R14, FR-006)."""
+
+    async def test_rekeyed_reservation_aborts(
+        self, v3: _Fixture, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """Same confirmation code, new ID, old ID gone: nothing changes."""
+        await v3.setup()
+        old_id = guesty_transport.payloads.new_id("res")
+        stored = await v3.store(
+            pms_booking_id=f"{old_id}::{v3.listing.pms_id}",
+            custom_data={"confirmationCode": v3.item["confirmationCode"]},
+        )
+
+        with pytest.raises(SyncServiceError) as excinfo:
+            await v3.sync()
+
+        message = str(excinfo.value)
+        assert old_id in message
+        assert v3.item["reservationId"] in message
+        assert "guesty_reservations_api" in message
+        bookings = await v3.bookings()
+        assert list(bookings) == [stored.pms_booking_id]
+        assert bookings[stored.pms_booking_id].status == "confirmed"
+        await v3.session.refresh(v3.listing)
+        assert v3.listing.last_sync_error
+
+    async def test_matching_ids_log_matched_count(
+        self,
+        v3: _Fixture,
+        guesty_transport: GuestyFakeTransport,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Stored IDs found under their codes are counted at INFO."""
+        await v3.setup()
+        await v3.store(custom_data={"confirmationCode": v3.item["confirmationCode"]})
+
+        with caplog.at_level(logging.INFO):
+            await v3.sync()
+
+        assert any(
+            record.levelno == logging.INFO
+            and "Identity check" in record.getMessage()
+            and "1 stored reservation" in record.getMessage()
+            for record in caplog.records
+        )
+        assert (await v3.bookings())[v3.booking_id].status == "confirmed"
