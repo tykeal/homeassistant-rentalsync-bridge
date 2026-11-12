@@ -381,7 +381,7 @@ Follow constitution Principle V:
   - leaving `alteration` applies the new dates
   - first-seen `alteration` is not stored, is logged at DEBUG, is not in the withheld panel, and is never retired
   - by-IDs `alteration` for a candidate gives `UNCONFIRMED`
-- [ ] T045 [US4] Write an integration test in tests/integration/test_guesty_v3_sync.py for an unknown status: it appears in the withheld-bookings panel API (US4-3), and the over-50% unclassified case aborts with last-good (US4-4).
+- [x] T045 [US4] Write an integration test in tests/integration/test_guesty_v3_sync.py for an unknown status: it appears in the withheld-bookings panel API (US4-3), and the over-50% unclassified case aborts with last-good (US4-4).
 
 ### Implementation for User Story 4
 
