@@ -1083,6 +1083,73 @@ class TestUpgradeContinuity:
         ]
         assert upgraded[-1] == f"Booking ID: {v3.item['reservationId']}"
 
+    async def test_custom_field_labels_are_unchanged(self, v3: _Fixture) -> None:
+        """Account-defined labels resolve identically in V3 (T058, FR-035).
+
+        Discovered labels come from the same account definitions, and a
+        label the owner configured is never rewritten by the switch.
+        """
+        from sqlalchemy import delete, select
+        from src.models.available_field import AvailableField
+        from src.models.custom_field import CustomField
+        from src.providers.guesty.service import clear_custom_field_definitions_cache
+
+        p = v3.transport.payloads
+        defined, undefined = p.new_id("cf"), p.new_id("cf")
+        await v3.setup(
+            custom_fields=p.custom_fields({defined: "4242", undefined: "Synthetic"})
+        )
+        v3.transport.legacy_reservations = [p.as_legacy(v3.item)]
+        v3.transport.custom_field_definitions = [
+            {"object": "reservation", "fieldId": defined, "key": "Door lock code"}
+        ]
+        v3.session.add(
+            CustomField(
+                listing_id=v3.listing.id,
+                field_name=defined,
+                display_label="Owner's label",
+                enabled=True,
+                sort_order=0,
+            )
+        )
+        await v3.session.commit()
+
+        async def labels() -> dict[str, Any]:
+            """Return discovered and configured labels for both fields."""
+            rows = await v3.session.execute(
+                select(AvailableField.field_key, AvailableField.display_name).where(
+                    AvailableField.listing_id == v3.listing.id,
+                    AvailableField.field_key.in_((defined, undefined)),
+                )
+            )
+            configured = await v3.session.execute(
+                select(CustomField.field_name, CustomField.display_label).where(
+                    CustomField.listing_id == v3.listing.id
+                )
+            )
+            return {
+                "discovered": dict(rows.all()),
+                "configured": dict(configured.all()),
+            }
+
+        clear_custom_field_definitions_cache()
+        await v3.sync_with(v3.transport.provider(reservations_api="legacy"), v3.listing)
+        legacy = await labels()
+        await v3.session.execute(
+            delete(AvailableField).where(AvailableField.listing_id == v3.listing.id)
+        )
+        await v3.session.commit()
+        clear_custom_field_definitions_cache()
+        await v3.sync()
+        upgraded = await labels()
+        clear_custom_field_definitions_cache()
+
+        assert legacy == {
+            "discovered": {defined: "Door lock code", undefined: undefined},
+            "configured": {defined: "Owner's label"},
+        }
+        assert upgraded == legacy
+
 
 def _segment_span(segment: dict[str, Any]) -> tuple[datetime, datetime]:
     """Return a search segment's UTC ``(checkIn, checkOut)`` instants."""

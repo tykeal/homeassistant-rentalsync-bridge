@@ -874,6 +874,7 @@ class GuestyFakeTransport:
         v3_items: Search-shape V3 items (the by-IDs view is derived).
         by_ids_overrides: Explicit by-IDs items keyed by ``_id``.
         custom_fields: Explicit custom-field lists keyed by reservation.
+        custom_field_definitions: The account's custom-field definitions.
         guests: Guest bodies keyed by guest ID (both guest endpoints).
         ignore_reservation_ids: By-IDs ignores ``reservationIds`` and
             returns up to ``ignored_ids_limit`` account items instead.
@@ -887,6 +888,7 @@ class GuestyFakeTransport:
         self.v3_items: list[dict[str, Any]] = []
         self.by_ids_overrides: dict[str, dict[str, Any]] = {}
         self.custom_fields: dict[str, list[dict[str, Any]]] = {}
+        self.custom_field_definitions: list[dict[str, Any]] = []
         self.guests: dict[str, dict[str, Any]] = {}
         self.ignore_reservation_ids = False
         self.ignored_ids_limit = 10
@@ -1216,8 +1218,8 @@ class GuestyFakeTransport:
     def _serve_custom_field_definitions(
         self, _path: str, _params: httpx.QueryParams
     ) -> httpx.Response:
-        """Serve the (empty) custom-field definitions list."""
-        return httpx.Response(200, json=[])
+        """Serve the account's custom-field definitions (default: none)."""
+        return httpx.Response(200, json=self.custom_field_definitions)
 
 
 @pytest.fixture
