@@ -161,7 +161,7 @@ Follow constitution Principle V:
   - the path `/v1/guests-crud/{id}` and `fields=fullName phone email`
   - 404 → `None`, 5xx → `PMSProviderError`, 401 → `PMSAuthenticationError`
   - legacy mode still calls `/v1/guests/{id}`
-- [ ] T017 [P] [US1] Write unit tests in tests/unit/test_guesty_v3_source.py (new) for single-segment mapping:
+- [x] T017 [P] [US1] Write unit tests in tests/unit/test_guesty_v3_source.py (new) for single-segment mapping:
   - `pms_booking_id`, UTC `check_in`/`check_out`, one interval with `ordinal=1` whose `room_id` equals the legacy `_resolve_room_id` for the same stay
   - `guest_id`, with `guest_name=None` and `updated_at=None`
   - `custom_data` keys `source` and `confirmationCode`
