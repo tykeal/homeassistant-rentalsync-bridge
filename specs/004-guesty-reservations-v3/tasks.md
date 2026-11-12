@@ -464,7 +464,7 @@ Follow constitution Principle V:
   - the flags are false in legacy mode and for Cloudbeds
   - PUT round-trips a retired field, and its configuration is never deleted
 - [x] T057 [P] [US6] Write a unit test in tests/unit/test_sync_service.py for the one-time WARNING per enabled retired field. It names the listings, is logged once per process, and is not logged in legacy mode (FR-037).
-- [ ] T058 [P] [US6] Write a test in tests/integration/test_guesty_v3_sync.py for custom-field label continuity: labels resolved from the account definitions are unchanged in V3 mode (US6-3, FR-035).
+- [x] T058 [P] [US6] Write a test in tests/integration/test_guesty_v3_sync.py for custom-field label continuity: labels resolved from the account definitions are unchanged in V3 mode (US6-3, FR-035).
 
 ### Implementation for User Story 6
 
