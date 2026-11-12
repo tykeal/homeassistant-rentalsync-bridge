@@ -4164,8 +4164,15 @@ class TestOccupancyIntervalBookings:
         assert dict(rows) == {"RES::U1": rooms["U1"], "RES::U2": rooms["U2"]}
 
     @pytest.mark.asyncio
-    async def test_intervals_create_one_booking_each(self, sync_session, mock_provider):
-        """Intervals win over room_ids; ordinal >= 2 adds ``#n``."""
+    @pytest.mark.parametrize("enriched", [False, True])
+    async def test_intervals_create_one_booking_each(
+        self, sync_session, mock_provider, enriched
+    ):
+        """Intervals win over room_ids; ordinal >= 2 adds ``#n``.
+
+        Enrichment rebuilds the reservation, so it must carry the
+        intervals through (an enriched A->B->A stay keeps its ``#2``).
+        """
         from dataclasses import replace
 
         from src.providers.base import PMSOccupancyInterval
@@ -4190,6 +4197,7 @@ class TestOccupancyIntervalBookings:
                 check_in=_test_date(10),
                 check_out=_test_date(19),
                 room_ids=("IGNORED",),
+                guest_id="G1" if enriched else None,
             ),
             intervals=(
                 interval("U1", 1, 10, 13),
@@ -4198,10 +4206,19 @@ class TestOccupancyIntervalBookings:
             ),
         )
         mock_provider.get_reservations = AsyncMock(return_value=[reservation])
+        mock_provider.get_guest = AsyncMock(
+            return_value=PMSGuest(guest_id="G1", full_name="Synthetic Enriched")
+        )
 
         result = await SyncService(sync_session).sync_listing(listing, mock_provider)
 
         assert result["inserted"] == 3
+        names = (
+            await sync_session.execute(
+                select(Booking.guest_name).where(Booking.listing_id == listing.id)
+            )
+        ).scalars()
+        assert set(names) == {"Synthetic Enriched" if enriched else "John Smith"}
         rows = (
             await sync_session.execute(
                 select(
@@ -4225,3 +4242,35 @@ class TestOccupancyIntervalBookings:
             "RES::U2": (rooms["U2"], _test_date(13).date(), _test_date(16).date()),
             "RES::U1#2": (rooms["U1"], _test_date(16).date(), _test_date(19).date()),
         }
+
+    def test_with_enrichment_keeps_spec_004_fields(self):
+        """Rebuilding an enriched reservation keeps every spec 004 field."""
+        from dataclasses import replace
+
+        from src.providers.base import InlineCustomFields, PMSOccupancyInterval
+
+        reservation = replace(
+            _make_reservation(),
+            intervals=(
+                PMSOccupancyInterval(
+                    room_id="U1",
+                    ordinal=1,
+                    check_in=None,
+                    check_out=None,
+                    local_dates=None,
+                    guests_count=None,
+                ),
+            ),
+            change_key="ck",
+            inline_custom_fields=InlineCustomFields(state="absent"),
+        )
+
+        enriched = SyncService._with_enrichment(
+            reservation, {"extra": "1"}, _test_date(1), guest_name="Synthetic"
+        )
+
+        assert enriched is not reservation
+        assert enriched.custom_data["extra"] == "1"
+        assert enriched.intervals == reservation.intervals
+        assert enriched.change_key == "ck"
+        assert enriched.inline_custom_fields == reservation.inline_custom_fields
