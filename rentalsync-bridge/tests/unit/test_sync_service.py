@@ -4005,22 +4005,16 @@ class TestAbsenceConfirmationSeam:
         mock_provider.confirm_absent.assert_not_awaited()
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("verdict", ["UNCONFIRMED", "REATTRIBUTED"])
-    async def test_only_confirmed_absent_retires(
-        self, sync_session, test_listing, mock_provider, verdict
+    async def test_unconfirmed_keeps_the_row(
+        self, sync_session, test_listing, mock_provider
     ):
-        """UNCONFIRMED and (until US2) REATTRIBUTED keep the stored row."""
+        """An UNCONFIRMED absence keeps the stored row."""
         from src.providers.base import AbsenceVerdict
 
         await _seed(sync_session, test_listing, ("MAYBE", 30))
         mock_provider.get_reservations = AsyncMock(return_value=[])
-        reservation = (
-            _make_reservation(pms_booking_id="MAYBE")
-            if verdict == "REATTRIBUTED"
-            else None
-        )
         mock_provider.confirm_absent = AsyncMock(
-            side_effect=_verdicts(AbsenceVerdict[verdict], reservation=reservation)
+            side_effect=_verdicts(AbsenceVerdict.UNCONFIRMED)
         )
 
         result = await SyncService(sync_session).sync_listing(
