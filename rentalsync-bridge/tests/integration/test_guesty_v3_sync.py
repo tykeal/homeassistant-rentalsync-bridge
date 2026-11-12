@@ -1348,6 +1348,27 @@ class TestAlterationHold:
         assert "0100" not in str(row.enrichment_data)
         assert row.custom_data[DOOR_CODE] == "1111"
 
+    async def test_failed_same_guest_lookup_keeps_the_name(
+        self, v3: _Fixture, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """A transient lookup failure does not blank the published name."""
+        p = guesty_transport.payloads
+        await v3.setup(custom_fields=p.custom_fields({DOOR_CODE: "1111"}))
+        await v3.sync()
+        assert (await v3.bookings())[v3.booking_id].guest_name == "Synthetic Guest"
+        guesty_transport.fail("guests_crud", 503, times=5)
+
+        _reissue(
+            v3,
+            status="alteration",
+            custom_fields=p.custom_fields({DOOR_CODE: "1111"}),
+        )
+        await v3.sync()
+
+        row = (await v3.bookings())[v3.booking_id]
+        assert row.guest_name == "Synthetic Guest"
+        assert row.guest_phone_last4 == "0100"
+
     async def test_every_interval_row_is_held(self, v3: _Fixture) -> None:
         """A → B → A under alteration (now B only) keeps all three rows."""
         p = v3.transport.payloads
