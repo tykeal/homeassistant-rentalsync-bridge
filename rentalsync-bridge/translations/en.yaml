@@ -8,7 +8,8 @@ configuration:
   guesty_reservations_api:
     name: Guesty reservations API
     description: >-
-      Which Guesty API is used to read reservations. "v3" is required
-      after Guesty retires its legacy reservations API on 2027-03-01.
-      "legacy" restores the previous behaviour for rollback only and will
-      be removed in a release after that date. Ignored for Cloudbeds.
+      Which Guesty API is used to read reservations. "v3" (default) is
+      required after Guesty retires its legacy reservations API on
+      2027-03-01. "legacy" restores the previous behaviour for rollback
+      only and will be removed in a release after that date. Ignored for
+      Cloudbeds.

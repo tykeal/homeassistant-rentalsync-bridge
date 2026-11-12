@@ -140,7 +140,7 @@ class GuestyProvider(PMSProvider):
         client_secret: str | None = None,
         token_manager: GuestyTokenManager | None = None,
         http_client: httpx.AsyncClient | None = None,
-        reservations_api: str = "legacy",
+        reservations_api: str = "v3",
         **_kwargs: Any,
     ) -> None:
         """Initialize GuestyProvider.
@@ -152,9 +152,9 @@ class GuestyProvider(PMSProvider):
             client_secret: Guesty OAuth2 client secret.
             token_manager: Optional pre-configured token manager.
             http_client: Optional httpx client for API calls.
-            reservations_api: Reservation source: ``"legacy"`` (default
-                until spec 004 completes) or ``"v3"`` (one combined
-                Reservations V3 search per sync cycle; see ``begin_cycle``).
+            reservations_api: Reservation source: ``"v3"`` (default; one
+                combined Reservations V3 search per sync cycle, see
+                ``begin_cycle``) or ``"legacy"`` (rollback only).
             **_kwargs: Ignored — accepted for registry compatibility.
         """
         self._http_client = http_client

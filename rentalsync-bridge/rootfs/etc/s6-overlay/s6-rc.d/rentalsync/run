@@ -23,7 +23,7 @@ if bashio::config.has_value 'guesty_reservations_api'; then
     GUESTY_RESERVATIONS_API=$(bashio::config 'guesty_reservations_api')
     export GUESTY_RESERVATIONS_API
 else
-    export GUESTY_RESERVATIONS_API="legacy"
+    export GUESTY_RESERVATIONS_API="v3"
 fi
 bashio::log.info "Guesty reservations API: ${GUESTY_RESERVATIONS_API}"
 

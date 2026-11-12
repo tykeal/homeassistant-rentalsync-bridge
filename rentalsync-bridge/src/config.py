@@ -98,10 +98,10 @@ class Settings(BaseSettings):
         description="Logging level",
     )
 
-    # Guesty reservation retrieval (spec 004).  Stays "legacy" until the V3
-    # source is complete; the final spec 004 change flips it to "v3".
+    # Guesty reservation retrieval (spec 004).  "legacy" is a rollback choice
+    # until Guesty retires /v1/reservations on 2027-03-01.
     guesty_reservations_api: GuestyReservationsApi = Field(
-        default="legacy",
+        default="v3",
         description=(
             "Guesty reservations API: 'v3' or 'legacy' (rollback only). "
             "Ignored for Cloudbeds."

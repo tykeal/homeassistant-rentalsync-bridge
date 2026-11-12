@@ -25,7 +25,7 @@ map:
   - config:rw
 options:
   log_level: info
-  guesty_reservations_api: legacy
+  guesty_reservations_api: v3
 schema:
   log_level: list(debug|info|warning|error|critical)?
   guesty_reservations_api: list(v3|legacy)?
