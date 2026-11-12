@@ -13,7 +13,9 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from src.providers.base import HOLD_STATUSES
+from src.providers.base import HOLD_STATUSES, RECOGNISED_NON_EXPORT_STATUSES
+from src.providers.guesty.legacy_reservations import _EXCLUDED_STATUSES
+from src.providers.guesty.v3_mapping import V3_STATUS_MAP
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -22,6 +24,21 @@ if TYPE_CHECKING:
     from src.providers.base import PMSReservation
 
 logger = logging.getLogger(__name__)
+
+# Status values safe to log; anything else could be free text.
+_KNOWN_STATUSES = (
+    frozenset(V3_STATUS_MAP)
+    | _EXCLUDED_STATUSES
+    | HOLD_STATUSES
+    | RECOGNISED_NON_EXPORT_STATUSES
+)
+
+
+def _status(item: dict[str, Any]) -> str:
+    """Return an item's lower-cased status if known, else ``unknown``."""
+    raw = item.get("status")
+    status = raw.lower() if isinstance(raw, str) else ""
+    return status if status in _KNOWN_STATUSES else "unknown"
 
 
 def _histogram(values: Sequence[Any]) -> dict[Any, int]:
@@ -65,7 +82,7 @@ def log_search_result(items: list[dict[str, Any]], duplicates: int) -> None:
         "Guesty V3 search result: items=%d duplicates=%d statuses=%s segments=%s",
         len(items),
         duplicates,
-        _histogram([str(item.get("status")) for item in items]),
+        _histogram([_status(item) for item in items]),
         _histogram([len(item.get("stay") or ()) for item in items]),
     )
     for item in items:
@@ -73,7 +90,7 @@ def log_search_result(items: list[dict[str, Any]], duplicates: int) -> None:
         logger.debug(
             "Guesty V3 reservation %s: status=%s segments=%d listings=%s",
             item.get("reservationId"),
-            item.get("status"),
+            _status(item),
             len(stay),
             ",".join(str(segment.get("listingId")) for segment in stay),
         )
