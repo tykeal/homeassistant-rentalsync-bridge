@@ -712,6 +712,33 @@ class GuestyV3Payloads:
             guest_id=search_item.get("guestId"),
         )
 
+    # -- legacy shape --------------------------------------------------------
+
+    @staticmethod
+    def as_legacy(search_item: dict[str, Any]) -> dict[str, Any]:
+        """Describe the same reservation in the legacy ``/v1/reservations`` shape.
+
+        The legacy top-level ``listingId`` is the first segment's listing,
+        matching how Guesty computes it (``unitId ?? unitTypeId``).
+        """
+        first = search_item["stay"][0]
+        item: dict[str, Any] = {
+            "_id": search_item["reservationId"],
+            "listingId": first["listingId"],
+            "checkIn": search_item["checkIn"],
+            "checkOut": search_item["checkOut"],
+            "checkInDateLocalized": search_item["checkInDateLocalized"],
+            "checkOutDateLocalized": search_item["checkOutDateLocalized"],
+            "confirmationCode": search_item.get("confirmationCode"),
+            "source": search_item.get("source"),
+            "guest": {"_id": search_item.get("guestId"), "fullName": "Synthetic Guest"},
+        }
+        if "status" in search_item:
+            item["status"] = search_item["status"]
+        if first.get("parentListingId"):
+            item["unitTypeId"] = first["parentListingId"]
+        return item
+
     # -- guests-crud ---------------------------------------------------------
 
     @staticmethod
@@ -1110,3 +1137,125 @@ class GuestyFakeTransport:
 def guesty_transport(guesty_v3_payloads: GuestyV3Payloads) -> GuestyFakeTransport:
     """A counting fake Guesty API sharing the payload builders (spec 004)."""
     return GuestyFakeTransport(guesty_v3_payloads)
+
+
+# ---------------------------------------------------------------------------
+# Reference account (spec 004, T003; SC-006 and SC-007)
+# ---------------------------------------------------------------------------
+
+# Freshness window (FR-030): in progress, checked out within 7 days, or
+# starting within 30 days.
+FRESHNESS_LOOKBACK_DAYS = 7
+FRESHNESS_LOOKAHEAD_DAYS = 30
+
+
+@dataclass
+class GuestyReferenceAccount:
+    """A synthetic Guesty account described once and served in both shapes.
+
+    ``transport`` serves the same reservations through legacy
+    ``/v1/reservations`` and the V3 search/by-IDs endpoints.
+
+    Attributes:
+        transport: The fake API holding the account.
+        tracked_listing_ids: Listings the installation tracks.
+        multi_unit_parent: The tracked multi-unit parent.
+        sub_units: Its sub-units.
+        untracked_listing_id: A listing the installation does not track.
+        in_window_ids: Tracked reservations inside the sync window.
+        freshness_ids: Tracked reservations inside the freshness window.
+        history_ids: Tracked reservations before the sync window.
+        untracked_ids: Reservations of the untracked listing.
+    """
+
+    transport: GuestyFakeTransport
+    tracked_listing_ids: tuple[str, ...]
+    multi_unit_parent: str
+    sub_units: tuple[str, ...]
+    untracked_listing_id: str
+    in_window_ids: list[str]
+    freshness_ids: list[str]
+    history_ids: list[str]
+    untracked_ids: list[str]
+
+
+def build_guesty_reference_account(
+    transport: GuestyFakeTransport,
+) -> GuestyReferenceAccount:
+    """Populate *transport* with the reference account.
+
+    * 3 tracked listings (two single-unit, one multi-unit parent with three
+      sub-units) and 1 untracked listing;
+    * 110 tracked in-window reservations, 12 of them in the freshness
+      window, including two multi-segment moves;
+    * 150 tracked reservations spread over three years before the window
+      (multi-page history for the unfiltered legacy fetch);
+    * 40 untracked-listing reservations inside the window.
+    """
+    p = transport.payloads
+    single_a, single_b = p.new_id("lst"), p.new_id("lst")
+    parent = p.new_id("lst")
+    units = (p.new_id("lst"), p.new_id("lst"), p.new_id("lst"))
+    untracked = p.new_id("lst")
+    transport.add_listing(single_a, title="Synthetic Cottage")
+    transport.add_listing(single_b, title="Synthetic Cabin")
+    transport.add_listing(parent, title="Synthetic Lodge", children=list(units))
+    transport.add_listing(untracked, title="Synthetic Untracked")
+    rooms: list[tuple[str, str | None]] = [
+        (single_a, None),
+        (single_b, None),
+        *((unit, parent) for unit in units),
+    ]
+
+    def stay(index: int, start: int, nights: int) -> dict[str, Any]:
+        listing_id, parent_id = rooms[index % len(rooms)]
+        return p.search_item(
+            listing_id,
+            check_in=start,
+            check_out=start + nights,
+            parent_listing_id=parent_id,
+        )
+
+    fresh = [stay(i, start, 2) for i, start in enumerate(range(-5, 31, 3))]
+    fresh[-1] = p.same_property_move(parent, units[0], units[1], start=28)
+    # Outside the freshness window: checked out before day -7 or starting
+    # after day +30, but still inside the sync window (-91 d / +365 d).
+    past = [stay(i, start, 3) for i, start in enumerate(range(-88, -10, 4))]
+    future = [stay(i, start, 3) for i, start in enumerate(range(33, 360, 4))]
+    future[0] = p.tracked_listing_move(single_a, single_b, start=33)
+    in_window = fresh + past + future
+    history = [stay(i, -1200 + i * 7, 3) for i in range(150)]
+    foreign = [
+        p.search_item(untracked, check_in=start, check_out=start + 2)
+        for start in range(-80, 320, 10)
+    ]
+
+    items = in_window + history + foreign
+    transport.v3_items = list(items)
+    transport.legacy_reservations = [p.as_legacy(item) for item in items]
+    for item in items:
+        guest_id = item["guestId"]
+        transport.guests[guest_id] = p.guests_crud_body(guest_id)
+
+    def ids(group: list[dict[str, Any]]) -> list[str]:
+        return [str(item["reservationId"]) for item in group]
+
+    return GuestyReferenceAccount(
+        transport=transport,
+        tracked_listing_ids=(single_a, single_b, parent),
+        multi_unit_parent=parent,
+        sub_units=units,
+        untracked_listing_id=untracked,
+        in_window_ids=ids(in_window),
+        freshness_ids=ids(fresh),
+        history_ids=ids(history),
+        untracked_ids=ids(foreign),
+    )
+
+
+@pytest.fixture
+def guesty_reference_account(
+    guesty_transport: GuestyFakeTransport,
+) -> GuestyReferenceAccount:
+    """The SC-006/SC-007 reference account in legacy and V3 shapes."""
+    return build_guesty_reference_account(guesty_transport)
