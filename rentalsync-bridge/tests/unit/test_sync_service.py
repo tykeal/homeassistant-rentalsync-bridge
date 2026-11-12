@@ -4378,3 +4378,100 @@ class TestOccupancyIntervalBookings:
         assert enriched.intervals == reservation.intervals
         assert enriched.change_key == "ck"
         assert enriched.inline_custom_fields == reservation.inline_custom_fields
+
+
+class TestRetiredFieldWarning:
+    """Enabled retired fields are reported once per process (T057, FR-037)."""
+
+    REASON = "Guesty Reservations V3 no longer includes payment totals"
+
+    @pytest.fixture(autouse=True)
+    def fresh_process(self, monkeypatch):
+        """Start each test as if the process had not warned yet."""
+        import src.services.sync_service as sync_module
+
+        monkeypatch.setattr(sync_module, "_retired_fields_warned", False, raising=False)
+
+    @staticmethod
+    async def _listings(session) -> list[Listing]:
+        """Persist listings with retired fields enabled, disabled or absent."""
+        configured = {
+            "SYN-B": {"money_totalPaid": True, "money_currency": False},
+            "SYN-A": {"money_totalPaid": True, "source": True},
+            "SYN-C": {"money_currency": False},
+        }
+        listings = []
+        for pms_id, fields in configured.items():
+            listing = Listing(
+                pms_id=pms_id,
+                name=pms_id,
+                ical_url_slug=pms_id.lower(),
+                enabled=True,
+                sync_enabled=True,
+            )
+            session.add(listing)
+            await session.commit()
+            await session.refresh(listing)
+            for n, (name, enabled) in enumerate(fields.items()):
+                session.add(
+                    CustomField(
+                        listing_id=listing.id,
+                        field_name=name,
+                        display_label=name,
+                        enabled=enabled,
+                        sort_order=n,
+                    )
+                )
+            await session.commit()
+            listings.append(listing)
+        return listings
+
+    @staticmethod
+    def _warnings(caplog) -> list[str]:
+        """Return the retired-field WARNING messages logged so far."""
+        return [
+            record.getMessage()
+            for record in caplog.records
+            if record.levelno == logging.WARNING
+            and "is no longer supplied" in record.getMessage()
+        ]
+
+    @pytest.mark.asyncio
+    async def test_warns_once_per_enabled_field(
+        self, sync_session, mock_provider, caplog
+    ):
+        """One WARNING per enabled retired field, naming its listings."""
+        mock_provider.retired_description_fields = {
+            "money_totalPaid": self.REASON,
+            "money_currency": self.REASON,
+            "money_balanceDue": self.REASON,
+        }
+        listings = await self._listings(sync_session)
+        service = SyncService(sync_session)
+
+        with caplog.at_level(logging.WARNING, logger="src.services.sync_service"):
+            for listing in listings:
+                await service.sync_listing(listing, mock_provider)
+            await SyncService(sync_session).sync_listing(listings[0], mock_provider)
+
+        assert self._warnings(caplog) == [
+            "Description field 'money_totalPaid' is no longer supplied by "
+            "Guesty Reservations V3 and will render empty; enabled on "
+            "listings: SYN-A, SYN-B. Remove or disable it in the admin UI."
+        ]
+
+    @pytest.mark.asyncio
+    async def test_silent_without_retired_fields(
+        self, sync_session, mock_provider, caplog
+    ):
+        """Legacy mode (no retired set) never warns, nor uses up the notice."""
+        import src.services.sync_service as sync_module
+
+        mock_provider.retired_description_fields = {}
+        listings = await self._listings(sync_session)
+
+        with caplog.at_level(logging.WARNING, logger="src.services.sync_service"):
+            await SyncService(sync_session).sync_listing(listings[0], mock_provider)
+
+        assert self._warnings(caplog) == []
+        assert sync_module._retired_fields_warned is False
