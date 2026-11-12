@@ -784,7 +784,7 @@ class SyncService:
             seen_booking_ids.add(booking.pms_booking_id)
             if booking.status == "cancelled":
                 continue
-            booking.guest_name = reservation.guest_name
+            booking.guest_name = self._held_guest_name(booking, reservation)
             booking.guest_phone_last4 = custom_data.get("guest_phone_last4")
             booking.custom_data = custom_data or None
             booking.pms_updated_at = reservation.updated_at
@@ -802,6 +802,29 @@ class SyncService:
             refreshed,
         )
         return refreshed
+
+    @staticmethod
+    def _held_guest_name(booking: Booking, reservation: PMSReservation) -> str | None:
+        """Return the guest name to keep on a held booking.
+
+        A failed lookup of the same guest leaves the incoming name empty;
+        the stored name is kept then, as it demonstrably belongs to this
+        guest.  After a reassignment the stored name is the previous
+        guest's and is never kept (FR-032).
+
+        Args:
+            booking: Stored booking being held.
+            reservation: The enriched held reservation.
+
+        Returns:
+            The guest name to store.
+        """
+        if reservation.guest_name is not None or reservation.guest_id is None:
+            return reservation.guest_name
+        stored = booking.enrichment_data or {}
+        if stored.get(GUEST_SOURCE_ID_KEY) == reservation.guest_id:
+            return booking.guest_name
+        return None
 
     async def _apply_reattributions(
         self,
