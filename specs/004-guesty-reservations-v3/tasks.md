@@ -166,7 +166,7 @@ Follow constitution Principle V:
   - `guest_id`, with `guest_name=None` and `updated_at=None`
   - `custom_data` keys `source` and `confirmationCode`
   - `InlineCustomFields` PRESENT, ABSENT and MALFORMED parsing (research R8)
-- [ ] T018 [US1] Write unit tests in tests/unit/test_guesty_v3_source.py for the combined search (research R2), with call-count assertions:
+- [x] T018 [US1] Write unit tests in tests/unit/test_guesty_v3_source.py for the combined search (research R2), with call-count assertions:
   - after `begin_cycle` with three listings, `get_reservations` for each issues the search pages exactly once per cycle
   - a `get_reservations` for a listing outside the declared set adds it and starts a fresh combined search
   - the filter ID set is the union of fetch scopes: a tracked multi-unit parent contributes its sub-unit IDs, and an imported child contributes its parent unit type
