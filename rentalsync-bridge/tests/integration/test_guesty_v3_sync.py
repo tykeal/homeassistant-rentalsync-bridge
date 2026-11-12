@@ -1429,6 +1429,38 @@ class TestAlterationHold:
             v3.room_id,
         )
 
+    async def test_stay_derived_description_is_frozen(self, v3: _Fixture) -> None:
+        """Nights and guests describe the published stay, not the altered one.
+
+        Both derive from the in-flight stay, so they stay as stored for
+        as long as the dates and room do (FR-023); notes keep refreshing.
+        """
+        await v3.setup(check_in=2, check_out=5, guests_count=2)
+        await v3.sync()
+        before = (await v3.bookings())[v3.booking_id].custom_data
+        assert (before["nightsCount"], before["guestsCount"]) == ("3", "2")
+
+        _reissue(
+            v3,
+            status="alteration",
+            check_in=2,
+            check_out=9,
+            guests_count=6,
+            notes={"other": "Synthetic altered note"},
+        )
+        await v3.sync()
+
+        held = (await v3.bookings())[v3.booking_id].custom_data
+        assert list(held) == list(before)
+        assert (held["nightsCount"], held["guestsCount"]) == ("3", "2")
+        assert held["notes"] == "Synthetic altered note"
+
+        _reissue(v3, status="confirmed", check_in=2, check_out=9, guests_count=6)
+        await v3.sync()
+
+        released = (await v3.bookings())[v3.booking_id].custom_data
+        assert (released["nightsCount"], released["guestsCount"]) == ("7", "6")
+
     async def test_enrichment_refreshes_during_the_hold(
         self, v3: _Fixture, guesty_transport: GuestyFakeTransport
     ) -> None:
