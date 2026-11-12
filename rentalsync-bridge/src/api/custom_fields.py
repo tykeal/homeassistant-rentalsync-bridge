@@ -3,6 +3,7 @@
 """Custom fields API endpoints."""
 
 import logging
+from collections.abc import Mapping, Sequence
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -10,8 +11,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config import get_settings
 from src.database import get_db
 from src.models.custom_field import CustomField
+from src.models.oauth_credential import OAuthCredential
+from src.providers.guesty.description_fields import retired_fields_for
 from src.repositories.available_field_repository import (
     AvailableFieldRepository,
     format_allowed_fields_message,
@@ -33,6 +37,12 @@ class CustomFieldResponse(BaseModel):
     display_label: str = Field(description="Display label in iCal")
     enabled: bool = Field(description="Whether field is enabled")
     sort_order: int = Field(description="Display order")
+    retired: bool = Field(
+        default=False, description="Whether the PMS no longer supplies the field"
+    )
+    retired_reason: str | None = Field(
+        default=None, description="Why the field is retired, when it is"
+    )
 
 
 class CustomFieldsResponse(BaseModel):
@@ -54,6 +64,50 @@ class CustomFieldUpdateRequest(BaseModel):
             ]
         ],
     )
+
+
+async def _retired_fields(db: AsyncSession) -> Mapping[str, str]:
+    """Return the description fields the configured PMS no longer supplies.
+
+    Uses the same credential the sync does; with none configured, nothing
+    is retired (contracts/admin-custom-fields.md).
+
+    Args:
+        db: Database session.
+
+    Returns:
+        Mapping of retired field key to its reason.
+    """
+    result = await db.execute(select(OAuthCredential.pms_type).limit(1))
+    pms_type = result.scalar_one_or_none()
+    if pms_type is None:
+        return {}
+    return retired_fields_for(pms_type, get_settings().guesty_reservations_api)
+
+
+def _retired_flags(
+    field_name: str | None, retired: Mapping[str, str]
+) -> dict[str, Any]:
+    """Return a field's ``retired`` and ``retired_reason`` response values."""
+    reason = retired.get(field_name) if field_name else None
+    return {"retired": reason is not None, "retired_reason": reason}
+
+
+def _field_entries(
+    fields: Sequence[CustomField], retired: Mapping[str, str]
+) -> list[dict[str, Any]]:
+    """Serialise configured fields, flagging the retired ones."""
+    return [
+        {
+            "id": field.id,
+            "field_name": field.field_name,
+            "display_label": field.display_label,
+            "enabled": field.enabled,
+            "sort_order": field.sort_order,
+            **_retired_flags(field.field_name, retired),
+        }
+        for field in fields
+    ]
 
 
 @router.get("/{listing_id}/custom-fields", response_model=CustomFieldsResponse)
@@ -90,16 +144,7 @@ async def get_custom_fields(
     fields = result.scalars().all()
 
     return {
-        "fields": [
-            {
-                "id": field.id,
-                "field_name": field.field_name,
-                "display_label": field.display_label,
-                "enabled": field.enabled,
-                "sort_order": field.sort_order,
-            }
-            for field in fields
-        ],
+        "fields": _field_entries(fields, await _retired_fields(db)),
         "listing_id": listing_id,
     }
 
@@ -242,16 +287,7 @@ async def update_custom_fields(
     fields = result.scalars().all()
 
     return {
-        "fields": [
-            {
-                "id": field.id,
-                "field_name": field.field_name,
-                "display_label": field.display_label,
-                "enabled": field.enabled,
-                "sort_order": field.sort_order,
-            }
-            for field in fields
-        ],
+        "fields": _field_entries(fields, await _retired_fields(db)),
         "listing_id": listing_id,
     }
 
@@ -264,6 +300,12 @@ class AvailableFieldResponse(BaseModel):
     sample_value: str | None = Field(description="Sample value from last sync")
     source: Literal["default", "discovered", "builtin"] = Field(
         description="Field source: 'default', 'discovered', or 'builtin'"
+    )
+    retired: bool = Field(
+        default=False, description="Whether the PMS no longer supplies the field"
+    )
+    retired_reason: str | None = Field(
+        default=None, description="Why the field is retired, when it is"
     )
 
 
@@ -311,8 +353,12 @@ async def get_available_custom_fields(
     # Use centralized field composition from AvailableFieldRepository
     available_repo = AvailableFieldRepository(db)
     available = await available_repo.get_enriched_available_fields(listing_id)
+    retired = await _retired_fields(db)
 
     return {
-        "available_fields": available,
+        "available_fields": [
+            {**entry, **_retired_flags(entry["field_key"], retired)}
+            for entry in available
+        ],
         "listing_id": listing_id,
     }
