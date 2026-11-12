@@ -15,7 +15,6 @@ from src.providers.base import (
     PMSReservation,
 )
 from src.providers.guesty.legacy_reservations import (
-    _CLASSIFIED_STATUSES,
     DEFAULT_LOOKAHEAD_DAYS,
     _guard_unclassified,
     _overlaps_window,
@@ -25,7 +24,12 @@ from src.providers.guesty.v3_by_ids import (
     AbsenceContext,
     confirm_batch,
 )
-from src.providers.guesty.v3_mapping import map_search_item, owned_by, reservation_id
+from src.providers.guesty.v3_mapping import (
+    V3_CLASSIFIED_STATUSES,
+    map_search_item,
+    owned_by,
+    reservation_id,
+)
 from src.providers.guesty.v3_search import combined_search, pack_chunks
 from src.utils.datetime_utils import ensure_utc
 
@@ -239,7 +243,7 @@ class V3ReservationSource:
             mapped = map_search_item(item, listing_pms_id, scope_ids)
             if mapped is None or not _overlaps_window(mapped, start, end):
                 continue
-            if mapped.status not in _CLASSIFIED_STATUSES:
+            if mapped.status not in V3_CLASSIFIED_STATUSES:
                 unclassified += 1
             reservations.append(mapped)
         _guard_unclassified(unclassified, len(reservations), listing_pms_id)

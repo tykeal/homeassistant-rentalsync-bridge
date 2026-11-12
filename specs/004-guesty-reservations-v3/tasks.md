@@ -366,7 +366,7 @@ Follow constitution Principle V:
 
 ### Tests for User Story 4 (write first, confirm they fail)
 
-- [ ] T043 [P] [US4] Write unit tests in tests/unit/test_guesty_v3_source.py for status mapping (research R7):
+- [x] T043 [P] [US4] Write unit tests in tests/unit/test_guesty_v3_source.py for status mapping (research R7):
   - `completed`→`checked_out`
   - `canceled`/`cancelled`→`cancelled`, case-insensitive (FR-024)
   - `inquiry`/`reserved` excluded
@@ -374,19 +374,19 @@ Follow constitution Principle V:
   - an unknown status is stored verbatim with a WARNING
   - `alteration` is passed through as a hold status
   - the health guard counts `alteration` as classified, with thresholds unchanged (FR-025)
-- [ ] T044 [P] [US4] Write integration tests in tests/integration/test_guesty_v3_sync.py for the alteration lifecycle (FR-023, SC-008):
+- [x] T044 [P] [US4] Write integration tests in tests/integration/test_guesty_v3_sync.py for the alteration lifecycle (FR-023, SC-008):
   - for a stored live stay, status, dates and room are frozen while V3 reports new dates
   - enrichment (custom fields and guest contact) refreshes during the hold
   - the stay is never retired or withheld
   - leaving `alteration` applies the new dates
   - first-seen `alteration` is not stored, is logged at DEBUG, is not in the withheld panel, and is never retired
   - by-IDs `alteration` for a candidate gives `UNCONFIRMED`
-- [ ] T045 [US4] Write an integration test in tests/integration/test_guesty_v3_sync.py for an unknown status: it appears in the withheld-bookings panel API (US4-3), and the over-50% unclassified case aborts with last-good (US4-4).
+- [x] T045 [US4] Write an integration test in tests/integration/test_guesty_v3_sync.py for an unknown status: it appears in the withheld-bookings panel API (US4-3), and the over-50% unclassified case aborts with last-good (US4-4).
 
 ### Implementation for User Story 4
 
-- [ ] T046 [US4] Complete `_STATUS_MAP`, the excluded set and the health-guard classification in src/providers/guesty/reservations_v3.py, reusing the base `RECOGNISED_NON_EXPORT_STATUSES` and `HOLD_STATUSES`. This makes T043 pass.
-- [ ] T047 [US4] Implement hold-status handling in src/services/sync_service.py:
+- [x] T046 [US4] Complete `_STATUS_MAP`, the excluded set and the health-guard classification in src/providers/guesty/reservations_v3.py, reusing the base `RECOGNISED_NON_EXPORT_STATUSES` and `HOLD_STATUSES`. This makes T043 pass.
+- [x] T047 [US4] Implement hold-status handling in src/services/sync_service.py:
   - a stored base ID → mark all rows seen, skip the upsert, run an enrichment-only refresh that writes `custom_data` and enrichment without touching status, dates or room
   - no stored row → skip with a DEBUG log
 

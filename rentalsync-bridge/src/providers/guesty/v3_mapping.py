@@ -13,6 +13,7 @@ from datetime import date
 from typing import Any
 
 from src.providers.base import (
+    HOLD_STATUSES,
     RECOGNISED_NON_EXPORT_STATUSES,
     InlineCustomFields,
     PMSOccupancyInterval,
@@ -20,6 +21,7 @@ from src.providers.base import (
     PMSReservation,
 )
 from src.providers.guesty.legacy_reservations import (
+    _CLASSIFIED_STATUSES,
     _EXCLUDED_STATUSES,
     _STATUS_MAP,
     _parse_date,
@@ -29,6 +31,14 @@ logger = logging.getLogger(__name__)
 
 # Reservation-level keys carried into ``custom_data`` unchanged (FR-034).
 _CUSTOM_KEYS = ("source", "confirmationCode")
+
+# The legacy status map plus V3's ``completed``, which is a finished stay
+# exported and aged out like ``checked_out`` (research R7, FR-023).
+V3_STATUS_MAP: dict[str, str] = {**_STATUS_MAP, "completed": "checked_out"}
+
+# Statuses the health guard counts as understood (FR-025).  A hold status
+# is transient, not evidence of a broken mapping.
+V3_CLASSIFIED_STATUSES = _CLASSIFIED_STATUSES | HOLD_STATUSES
 
 # Stay-segment keys that feed the change key (research R9).
 _SEGMENT_KEYS = ("listingId", "parentListingId", "checkIn", "checkOut", "guestsCount")
@@ -198,8 +208,9 @@ def _status(item: dict[str, Any], rid: str) -> str | None:
         rid: Its reservation ID, for messages.
 
     Returns:
-        The normalised status, the raw status for an unrecognised one
-        (withheld from export), or None for an excluded status.
+        The normalised status, the raw status for a hold status (see
+        ``HOLD_STATUSES``) or an unrecognised one (withheld from export),
+        or None for an excluded status.
 
     Raises:
         PMSProviderError: If the item carries no ``status`` key.
@@ -214,10 +225,17 @@ def _status(item: dict[str, Any], rid: str) -> str | None:
     raw = str(item.get("status") or "").lower()
     if raw in _EXCLUDED_STATUSES:
         return None
-    status = _STATUS_MAP.get(raw)
+    status = V3_STATUS_MAP.get(raw)
     if status is not None:
         return status
-    if raw in RECOGNISED_NON_EXPORT_STATUSES:
+    if raw in HOLD_STATUSES:
+        logger.debug(
+            "Guesty reservation %s reports status %r, a transient edit "
+            "state; its stored booking is held as last synced",
+            rid,
+            raw,
+        )
+    elif raw in RECOGNISED_NON_EXPORT_STATUSES:
         logger.debug(
             "Guesty reservation %s reports status %r, a known non-stay "
             "state; booking withheld from calendar export as expected",
