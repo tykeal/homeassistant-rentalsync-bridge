@@ -843,6 +843,14 @@ class RecordedRequest:
     query: dict[str, list[str]]
 
 
+# Legacy resources a V3-mode provider must never request (FR-001, FR-040).
+V3_FORBIDDEN_RESOURCES = frozenset({"reservations", "guests"})
+
+# Every such request a V3-mode provider built by ``GuestyFakeTransport``
+# sent during the session; the V3 contract tests assert it stays empty.
+V3_FORBIDDEN_REQUESTS: list[RecordedRequest] = []
+
+
 @dataclass
 class _StatusFault:
     """A queued HTTP error for one resource."""
@@ -970,24 +978,43 @@ class GuestyFakeTransport:
 
     # -- httpx wiring --------------------------------------------------------
 
-    def client(self) -> httpx.AsyncClient:
+    def client(self, handler: Any = None) -> httpx.AsyncClient:
         """Return an ``httpx.AsyncClient`` routed to this fake."""
         from src.providers.guesty.service import GUESTY_BASE_URL
 
         return httpx.AsyncClient(
-            transport=httpx.MockTransport(self.handle),
+            transport=httpx.MockTransport(handler or self.handle),
             base_url=GUESTY_BASE_URL,
         )
 
     def provider(self, **kwargs: Any) -> Any:
-        """Return a ``GuestyProvider`` wired to this fake."""
+        """Return a ``GuestyProvider`` wired to this fake.
+
+        Requests to a legacy resource from a V3-mode provider are also
+        recorded in ``V3_FORBIDDEN_REQUESTS``.
+        """
         from src.providers.guesty.service import GuestyProvider
+
+        built: list[Any] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            response = self.handle(request)
+            recorded = self.requests[-1]
+            if (
+                built
+                and built[0]._reservations_api == "v3"
+                and recorded.resource in V3_FORBIDDEN_RESOURCES
+            ):
+                V3_FORBIDDEN_REQUESTS.append(recorded)
+            return response
 
         token_manager = AsyncMock()
         token_manager.get_token = AsyncMock(return_value="synthetic-token")
-        return GuestyProvider(
-            token_manager=token_manager, http_client=self.client(), **kwargs
+        provider = GuestyProvider(
+            token_manager=token_manager, http_client=self.client(handle), **kwargs
         )
+        built.append(provider)
+        return provider
 
     @staticmethod
     def _resource(path: str) -> str:
