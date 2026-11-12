@@ -329,7 +329,7 @@ Follow constitution Principle V:
   - adjacent same-room segments merge, with `guests_count` = max
   - sibling-only → not attributed (US3-5, FR-020)
   - missing `stay` or segment `listingId` → abort
-- [ ] T040 [P] [US3] Write integration tests in tests/integration/test_guesty_v3_sync.py:
+- [x] T040 [P] [US3] Write integration tests in tests/integration/test_guesty_v3_sync.py:
   - each interval becomes its own booking with the correct `room_id` and room-feed membership
   - the DTO span equals the owned span
   - a room change that removes a `#n` interval retires that row through the room-change prune path
