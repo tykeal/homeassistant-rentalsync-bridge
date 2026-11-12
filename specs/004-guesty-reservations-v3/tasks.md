@@ -185,7 +185,7 @@ Follow constitution Principle V:
 - [x] T021 [US1] Write integration tests in tests/integration/test_guesty_v3_sync.py for identity verification (research R14, FR-006):
   - the same `confirmationCode` under a new ID, with the old ID absent → `SyncServiceError`; nothing created or retired; the message names the setting `guesty_reservations_api`
   - matching IDs → the INFO line reports the matched count
-- [ ] T022 [US1] Write the upgrade-continuity integration test in tests/integration/test_guesty_v3_sync.py (SC-002):
+- [x] T022 [US1] Write the upgrade-continuity integration test in tests/integration/test_guesty_v3_sync.py (SC-002):
   - sync the reference account in legacy mode, render the feeds, switch the provider to V3, sync, and render again
   - assert every single-segment event's UID, dates, `SUMMARY` and `Booking ID:` line are byte-identical
   - assert that no retiring resource was requested
