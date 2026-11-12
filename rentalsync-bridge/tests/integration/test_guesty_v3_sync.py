@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
-"""Integration tests for syncing through the Guesty V3 source (spec 004 US1-US3)."""
+"""Integration tests for syncing through the Guesty V3 source (spec 004 US1-US4)."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from src.models.booking import Booking
 from src.models.listing import Listing
+from src.providers.base import AbsenceVerdict
 from src.providers.guesty import reservations_v3, v3_search
 from src.repositories.booking_repository import BookingRepository
 from src.services.calendar_service import CalendarCache
@@ -1231,3 +1232,243 @@ class TestMultiSegmentIntervals:
     def test_base_reservation_id(self, booking_id: str, expected: str) -> None:
         """``#n`` interval IDs map back to the reservation."""
         assert SyncService._extract_base_reservation_id(booking_id) == expected
+
+
+def _reissue(v3: _Fixture, **changes: Any) -> dict[str, Any]:
+    """Serve the first listing's stay again, re-built with *changes*."""
+    item = v3.item
+    changes.setdefault("guest_id", item["guestId"])
+    changes.setdefault("check_in", 2)
+    changes.setdefault("check_out", 5)
+    reissued = v3.transport.payloads.search_item(
+        None if "stay" in changes else v3.listing.pms_id,
+        reservation_id=item["reservationId"],
+        confirmation_code=item["confirmationCode"],
+        **changes,
+    )
+    v3.transport.v3_items = [reissued]
+    return reissued
+
+
+def _shape(row: Booking) -> tuple[Any, ...]:
+    """Return a stored row's export shape: status, dates and room."""
+    return (
+        row.status,
+        _as_utc(row.check_in_date),
+        _as_utc(row.check_out_date),
+        row.room_id,
+    )
+
+
+class TestAlterationHold:
+    """``alteration`` freezes the export shape (T044, FR-023, SC-008)."""
+
+    async def test_live_stay_is_frozen_until_it_leaves_alteration(
+        self, v3: _Fixture
+    ) -> None:
+        """confirmed → alteration (new dates) → confirmed."""
+        p = v3.transport.payloads
+        await v3.setup()
+        await v3.sync()
+        before = _shape((await v3.bookings())[v3.booking_id])
+        feed_before = await v3.feed()
+
+        _reissue(v3, status="alteration", check_in=3, check_out=9)
+        counts = await v3.sync()
+
+        rows = await v3.bookings()
+        assert set(rows) == {v3.booking_id}
+        assert _shape(rows[v3.booking_id]) == before
+        assert counts["cancelled"] == 0
+        assert await v3.feed() == feed_before
+
+        _reissue(v3, status="confirmed", check_in=3, check_out=9)
+        await v3.sync()
+
+        row = (await v3.bookings())[v3.booking_id]
+        assert _shape(row) == (
+            "confirmed",
+            p.check_in_at(3),
+            p.check_out_at(9),
+            v3.room_id,
+        )
+
+    async def test_enrichment_refreshes_during_the_hold(
+        self, v3: _Fixture, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """Door code and guest contact stay current; the shape does not."""
+        p = guesty_transport.payloads
+        await v3.setup(custom_fields=p.custom_fields({DOOR_CODE: "1111"}))
+        await v3.sync()
+        before = _shape((await v3.bookings())[v3.booking_id])
+        guest_id = v3.item["guestId"]
+        guesty_transport.guests[guest_id] = p.guests_crud_body(
+            guest_id, phone="+15555550199"
+        )
+
+        _reissue(
+            v3,
+            status="alteration",
+            check_in=4,
+            check_out=8,
+            custom_fields=p.custom_fields({DOOR_CODE: "2222"}),
+        )
+        await v3.sync()
+
+        row = (await v3.bookings())[v3.booking_id]
+        assert _shape(row) == before
+        assert row.custom_data[DOOR_CODE] == "2222"
+        assert row.enrichment_data[DOOR_CODE] == "2222"
+        assert row.guest_phone_last4 == "0199"
+        assert row.enrichment_data["guest_phone_last4"] == "0199"
+        assert row.guest_name == "Synthetic Guest"
+
+    async def test_reassigned_guest_never_leaks_during_the_hold(
+        self, v3: _Fixture, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """A failed new-guest lookup publishes no previous-guest contact."""
+        p = guesty_transport.payloads
+        await v3.setup(custom_fields=p.custom_fields({DOOR_CODE: "1111"}))
+        await v3.sync()
+        assert (await v3.bookings())[v3.booking_id].guest_phone_last4 == "0100"
+        guesty_transport.fail("guests_crud", 503, times=5)
+
+        _reissue(
+            v3,
+            status="alteration",
+            guest_id=p.new_id("gst"),
+            custom_fields=p.custom_fields({DOOR_CODE: "1111"}),
+        )
+        await v3.sync()
+
+        row = (await v3.bookings())[v3.booking_id]
+        assert row.status == "confirmed"
+        assert row.guest_phone_last4 is None
+        assert "0100" not in str(row.custom_data)
+        assert "0100" not in str(row.enrichment_data)
+        assert row.custom_data[DOOR_CODE] == "1111"
+
+    async def test_every_interval_row_is_held(self, v3: _Fixture) -> None:
+        """A → B → A under alteration (now B only) keeps all three rows."""
+        p = v3.transport.payloads
+        unit_a, unit_b = p.new_id("lst"), p.new_id("lst")
+        listing = await v3.add_tracked(children=[unit_a, unit_b])
+        item = p.round_trip_move(listing.pms_id, unit_a, unit_b)
+        v3.transport.v3_items = [item]
+        await v3.sync(listing)
+        before = {k: _shape(r) for k, r in (await v3.bookings(listing)).items()}
+        assert len(before) == 3
+
+        item["status"] = "alteration"
+        item["stay"] = [
+            p.stay_segment(
+                unit_b,
+                p.check_in_at(20),
+                p.check_out_at(25),
+                parent_listing_id=listing.pms_id,
+            )
+        ]
+        for key in ("checkIn", "checkInDateLocalized"):
+            item[key] = item["stay"][0][key]
+        for key in ("checkOut", "checkOutDateLocalized"):
+            item[key] = item["stay"][-1][key]
+        counts = await v3.sync(listing)
+
+        after = {k: _shape(r) for k, r in (await v3.bookings(listing)).items()}
+        assert after == before
+        assert counts["cancelled"] == 0
+        assert counts["inserted"] == 0
+        assert v3.transport.counts["v3_by_ids"] == 0
+
+    async def test_in_flight_move_out_of_listing_is_held(
+        self, moved: _Moved, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """By-IDs ``alteration`` for a candidate is UNCONFIRMED: kept."""
+        stored = await moved.store()
+        room = moved.v3.listing.pms_id
+        moved.by_ids_only(
+            [
+                moved.p.by_ids_segment(
+                    moved.untracked,
+                    moved.local(2),
+                    moved.local(5),
+                    unit_id=moved.untracked,
+                )
+            ],
+            status="alteration",
+        )
+        provider = guesty_transport.provider(reservations_api="v3")
+        provider.begin_cycle([room])
+        await provider.get_reservations(room)
+
+        (result,) = (await provider.confirm_absent(room, [moved.rid])).values()
+        await moved.v3.sync_with(provider, moved.v3.listing)
+
+        assert result.verdict is AbsenceVerdict.UNCONFIRMED
+        row = (await moved.v3.bookings())[moved.booking_id]
+        assert _shape(row) == _shape(stored)
+
+    async def test_first_seen_alteration_is_withheld_quietly(
+        self,
+        v3: _Fixture,
+        guesty_transport: GuestyFakeTransport,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Not stored, DEBUG only, not in the panel; stored once confirmed."""
+        await v3.setup(status="alteration")
+        rid = v3.item["reservationId"]
+
+        with caplog.at_level(logging.DEBUG, logger="src.services.sync_service"):
+            counts = await v3.sync()
+
+        assert await v3.bookings() == {}
+        assert counts == {"inserted": 0, "updated": 0, "cancelled": 0}
+        records = [r for r in caplog.records if rid in r.getMessage()]
+        assert records
+        assert {r.levelno for r in records} == {logging.DEBUG}
+        assert await _withheld(v3) == []
+        # Nothing is stored, so nothing is enriched.
+        assert guesty_transport.counts["guests_crud"] == 0
+        assert guesty_transport.counts["custom_fields"] == 0
+
+        _reissue(v3, status="confirmed")
+        await v3.sync()
+
+        assert (await v3.bookings())[v3.booking_id].status == "confirmed"
+
+    async def test_cancelled_rows_stay_untouched(self, v3: _Fixture) -> None:
+        """A held reservation never revives or re-dates a retired row."""
+        await v3.setup()
+        await v3.sync()
+        _reissue(v3, status="canceled")
+        await v3.sync()
+        retired = (await v3.bookings())[v3.booking_id]
+        stamp = retired.updated_at
+
+        _reissue(v3, status="alteration", check_in=4, check_out=9)
+        await v3.sync()
+
+        row = (await v3.bookings())[v3.booking_id]
+        assert row.status == "cancelled"
+        assert row.updated_at == stamp
+
+
+async def _withheld(v3: _Fixture) -> list[dict[str, Any]]:
+    """Return the admin withheld-bookings panel's rows."""
+    from httpx import ASGITransport, AsyncClient
+    from src.database import get_db
+    from src.main import create_app
+
+    app = create_app()
+
+    async def override_get_db() -> Any:
+        async with v3.factory() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override_get_db
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get("/api/bookings/withheld")
+    assert response.status_code == 200
+    return response.json()["bookings"]
