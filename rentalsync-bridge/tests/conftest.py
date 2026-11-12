@@ -325,3 +325,403 @@ def make_mock_provider(
     mock.get_guest = AsyncMock(return_value=guest)
     mock.get_custom_fields = AsyncMock(return_value={})
     return mock
+
+
+# ---------------------------------------------------------------------------
+# Guesty Reservations V3 synthetic payloads (spec 004, T001)
+# ---------------------------------------------------------------------------
+#
+# Built from contracts/guesty-v3-search.md, contracts/guesty-v3-by-ids.md and
+# contracts/guesty-guests-crud.md.  Every value is synthetic: the
+# ``check-fixture-pii`` hook scans this file.
+
+# The documented 12-value V3 status enum (research R7).
+GUESTY_V3_STATUSES: tuple[str, ...] = (
+    "confirmed",
+    "reserved",
+    "awaiting_payment",
+    "inquiry",
+    "canceled",
+    "closed",
+    "declined",
+    "expired",
+    "alteration",
+    "completed",
+    "checked_in",
+    "checked_out",
+)
+
+# Synthetic stay instants: 15:00 / 11:00 UTC, so a UTC-timezone listing's
+# localized dates equal the UTC dates.
+_V3_CHECK_IN_HOUR = 15
+_V3_CHECK_OUT_HOUR = 11
+
+
+def _v3_iso(value: datetime) -> str:
+    """Render an aware datetime the way Guesty V3 does (UTC, ``Z``)."""
+    return (
+        value.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    )
+
+
+class GuestyV3Payloads:
+    """Factory for synthetic Guesty Reservations V3 payloads.
+
+    IDs are 24-character lowercase hex strings (Mongo ObjectId shaped) that
+    increase with creation order, so items built later sort after earlier
+    ones under ``sort=_id``.
+    """
+
+    def __init__(self, now: datetime | None = None) -> None:
+        """Anchor relative dates to *now* (default: the current UTC day)."""
+        reference = now or datetime.now(UTC)
+        self.today = reference.astimezone(UTC).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        self._counter = 0
+
+    # -- identifiers and dates ----------------------------------------------
+
+    def new_id(self, kind: str = "res") -> str:
+        """Return a fresh, ascending, ObjectId-shaped identifier."""
+        self._counter += 1
+        prefix = {"res": "6650", "lst": "6640", "gst": "6630", "cf": "6620"}
+        return f"{prefix.get(kind, '6600')}{self._counter:020x}"
+
+    def day(self, offset: int, hour: int = 0) -> datetime:
+        """Return the UTC instant *offset* days from today at *hour*."""
+        return self.today + timedelta(days=offset, hours=hour)
+
+    def check_in_at(self, offset: int) -> datetime:
+        """Return a synthetic check-in instant *offset* days from today."""
+        return self.day(offset, _V3_CHECK_IN_HOUR)
+
+    def check_out_at(self, offset: int) -> datetime:
+        """Return a synthetic check-out instant *offset* days from today."""
+        return self.day(offset, _V3_CHECK_OUT_HOUR)
+
+    # -- search shape --------------------------------------------------------
+
+    @staticmethod
+    def stay_segment(
+        listing_id: str,
+        check_in: datetime,
+        check_out: datetime,
+        *,
+        parent_listing_id: str | None = None,
+        guests_count: int | None = 2,
+        timezone: str = "UTC",
+    ) -> dict[str, Any]:
+        """Build one search-shape ``stay[]`` segment.
+
+        Args:
+            listing_id: Segment ``listingId`` (``unitId ?? unitTypeId``).
+            check_in: Segment start instant.
+            check_out: Segment end instant.
+            parent_listing_id: Multi-unit parent; omitted when None.
+            guests_count: Segment ``guestsCount``; omitted when None.
+            timezone: Listing timezone used for the localized dates.
+        """
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo(timezone)
+        segment: dict[str, Any] = {
+            "listingId": listing_id,
+            "checkIn": _v3_iso(check_in),
+            "checkOut": _v3_iso(check_out),
+            "checkInDateLocalized": check_in.astimezone(tz).date().isoformat(),
+            "checkOutDateLocalized": check_out.astimezone(tz).date().isoformat(),
+        }
+        if parent_listing_id is not None:
+            segment["parentListingId"] = parent_listing_id
+        if guests_count is not None:
+            segment["guestsCount"] = guests_count
+        return segment
+
+    def search_item(
+        self,
+        listing_id: str | None = None,
+        *,
+        reservation_id: str | None = None,
+        status: str | None = "confirmed",
+        check_in: int | datetime = 7,
+        check_out: int | datetime = 10,
+        parent_listing_id: str | None = None,
+        stay: list[dict[str, Any]] | None = None,
+        guest_id: str | None = None,
+        confirmation_code: str | None = None,
+        source: str = "direct",
+        notes: dict[str, str] | None = None,
+        custom_fields: Any = None,
+        guests_count: int | None = 2,
+        timezone: str = "UTC",
+    ) -> dict[str, Any]:
+        """Build one search-shape reservation item.
+
+        Args:
+            listing_id: Listing of the single segment (ignored with *stay*).
+            reservation_id: ``reservationId``; generated when None.
+            status: V3 status; ``None`` omits the key entirely.
+            check_in: Day offset or instant for a single-segment stay.
+            check_out: Day offset or instant for a single-segment stay.
+            parent_listing_id: Multi-unit parent of the single segment.
+            stay: Explicit ``stay[]`` segments (multi-segment shapes).
+            guest_id: ``guestId``; generated when None.
+            confirmation_code: ``confirmationCode``; generated when None.
+            source: Booking channel.
+            notes: ``notes`` object; a synthetic default when None.
+            custom_fields: ``customFields`` value; omitted when None.
+            guests_count: Single-segment ``guestsCount``.
+            timezone: Listing timezone for the localized dates.
+        """
+        rid = reservation_id or self.new_id("res")
+        if stay is None:
+            if listing_id is None:
+                msg = "search_item needs listing_id or stay"
+                raise ValueError(msg)
+            start = (
+                check_in
+                if isinstance(check_in, datetime)
+                else self.check_in_at(check_in)
+            )
+            end = (
+                check_out
+                if isinstance(check_out, datetime)
+                else self.check_out_at(check_out)
+            )
+            stay = [
+                self.stay_segment(
+                    listing_id,
+                    start,
+                    end,
+                    parent_listing_id=parent_listing_id,
+                    guests_count=guests_count,
+                    timezone=timezone,
+                )
+            ]
+        item: dict[str, Any] = {
+            "reservationId": rid,
+            "guestId": guest_id or self.new_id("gst"),
+            "confirmationCode": confirmation_code or f"SYN-{rid[-6:].upper()}",
+            "source": source,
+            "checkIn": stay[0]["checkIn"],
+            "checkOut": stay[-1]["checkOut"],
+            "checkInDateLocalized": stay[0]["checkInDateLocalized"],
+            "checkOutDateLocalized": stay[-1]["checkOutDateLocalized"],
+            "notes": notes
+            if notes is not None
+            else {
+                "other": "Synthetic other note",
+                "guest": "Synthetic guest note",
+                "specialRequests": "",
+                "cleaning": "Synthetic cleaning note",
+                "keyCode": "0000",
+            },
+            "stay": stay,
+        }
+        if status is not None:
+            item["status"] = status
+        if custom_fields is not None:
+            item["customFields"] = custom_fields
+        return item
+
+    def custom_fields(self, values: dict[str, Any]) -> list[dict[str, Any]]:
+        """Build an inline ``customFields`` list from ``{fieldId: value}``."""
+        return [
+            {"_id": self.new_id("cf"), "fieldId": field_id, "value": value}
+            for field_id, value in values.items()
+        ]
+
+    @staticmethod
+    def search_page(
+        results: list[dict[str, Any]],
+        skip: int = 0,
+        limit: int = 100,
+        has_more: bool = False,
+    ) -> dict[str, Any]:
+        """Wrap *results* in a search response page."""
+        return {
+            "results": results,
+            "pagination": {"skip": skip, "limit": limit, "hasMore": has_more},
+        }
+
+    def items_for_every_status(
+        self, listing_id: str, **kwargs: Any
+    ) -> list[dict[str, Any]]:
+        """Build one single-segment search item per documented V3 status."""
+        return [
+            self.search_item(listing_id, status=status, **kwargs)
+            for status in GUESTY_V3_STATUSES
+        ]
+
+    # -- multi-segment shapes (research R6) ----------------------------------
+
+    def _segments(
+        self,
+        rooms: list[tuple[str, str | None]],
+        start: int,
+        nights: list[int],
+        gaps: list[int] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Build consecutive segments; a gap of 0 days makes them adjacent.
+
+        Adjacent segments share one instant (``prev.checkOut ==
+        next.checkIn``); a positive gap moves the next check-in to the
+        check-in hour *gap* days after the previous check-out day.
+        """
+        gaps = gaps or [0] * (len(rooms) - 1)
+        segments: list[dict[str, Any]] = []
+        cursor = self.check_in_at(start)
+        for index, ((listing_id, parent), length) in enumerate(
+            zip(rooms, nights, strict=True)
+        ):
+            end = cursor + timedelta(days=length)
+            segments.append(
+                self.stay_segment(listing_id, cursor, end, parent_listing_id=parent)
+            )
+            if index < len(gaps):
+                cursor = end + timedelta(days=gaps[index]) if gaps[index] else end
+        return segments
+
+    def same_property_move(
+        self, parent_id: str, unit_a: str, unit_b: str, *, start: int = 5, **kwargs: Any
+    ) -> dict[str, Any]:
+        """A multi-unit stay moved between two sub-units of one property."""
+        stay = self._segments([(unit_a, parent_id), (unit_b, parent_id)], start, [2, 2])
+        return self.search_item(stay=stay, **kwargs)
+
+    def tracked_listing_move(
+        self, listing_a: str, listing_b: str, *, start: int = 5, **kwargs: Any
+    ) -> dict[str, Any]:
+        """A stay starting in tracked listing A and moving to listing B."""
+        stay = self._segments([(listing_a, None), (listing_b, None)], start, [2, 2])
+        return self.search_item(stay=stay, **kwargs)
+
+    def round_trip_move(
+        self, parent_id: str, unit_a: str, unit_b: str, *, start: int = 5, **kwargs: Any
+    ) -> dict[str, Any]:
+        """A → B → A, all adjacent: intervals A, B and A#2."""
+        stay = self._segments(
+            [(unit_a, parent_id), (unit_b, parent_id), (unit_a, parent_id)],
+            start,
+            [2, 2, 2],
+        )
+        return self.search_item(stay=stay, **kwargs)
+
+    def unassigned_parent(
+        self, parent_id: str, *, check_in: int = 7, check_out: int = 10, **kwargs: Any
+    ) -> dict[str, Any]:
+        """A multi-unit stay not yet assigned to a sub-unit (FR-019)."""
+        return self.search_item(
+            parent_id, check_in=check_in, check_out=check_out, **kwargs
+        )
+
+    def rearranged_into_untracked(
+        self, untracked_id: str, tracked_id: str, *, start: int = 5, **kwargs: Any
+    ) -> dict[str, Any]:
+        """A stored stay re-arranged to start in an untracked property.
+
+        The first segment is untracked, so a listing-filtered search no
+        longer returns it; the later tracked segment keeps its room
+        (FR-011a re-attribution).  Pass the stored ``reservation_id``.
+        """
+        stay = self._segments([(untracked_id, None), (tracked_id, None)], start, [2, 3])
+        return self.search_item(stay=stay, **kwargs)
+
+    def never_stored_untracked_start(
+        self, untracked_id: str, tracked_id: str, *, start: int = 5, **kwargs: Any
+    ) -> dict[str, Any]:
+        """A never-stored stay starting in an untracked property (FR-016 gap)."""
+        stay = self._segments([(untracked_id, None), (tracked_id, None)], start, [3, 2])
+        return self.search_item(stay=stay, **kwargs)
+
+    # -- by-IDs shape --------------------------------------------------------
+
+    def by_ids_item(
+        self,
+        reservation_id: str,
+        stay: list[dict[str, Any]],
+        *,
+        status: str = "confirmed",
+        guest_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Build one by-IDs item (``_id``, ``unitId``/``unitTypeId``)."""
+        item: dict[str, Any] = {"_id": reservation_id, "status": status, "stay": stay}
+        if guest_id is not None:
+            item["guestId"] = guest_id
+        return item
+
+    @staticmethod
+    def by_ids_segment(
+        unit_type_id: str,
+        check_in_local: str,
+        check_out_local: str,
+        *,
+        unit_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Build one by-IDs ``stay[]`` segment (localized dates only)."""
+        segment: dict[str, Any] = {
+            "unitTypeId": unit_type_id,
+            "checkInDateLocalized": check_in_local,
+            "checkOutDateLocalized": check_out_local,
+        }
+        if unit_id is not None:
+            segment["unitId"] = unit_id
+        return segment
+
+    def as_by_ids(
+        self,
+        search_item: dict[str, Any],
+        *,
+        unassigned: frozenset[str] | set[str] = frozenset(),
+    ) -> dict[str, Any]:
+        """Describe the same reservation in the by-IDs shape.
+
+        A sub-unit segment becomes ``unitTypeId`` = parent, ``unitId`` =
+        unit; a single-unit segment carries the listing in both.  Segments
+        whose ``listingId`` is in *unassigned* (multi-unit parents with no
+        sub-unit yet) carry no ``unitId``.
+        """
+        stay: list[dict[str, Any]] = []
+        for segment in search_item["stay"]:
+            listing_id = segment["listingId"]
+            parent = segment.get("parentListingId")
+            if parent and parent != listing_id:
+                unit_type_id, unit_id = parent, listing_id
+            elif listing_id in unassigned:
+                unit_type_id, unit_id = listing_id, None
+            else:
+                unit_type_id, unit_id = listing_id, listing_id
+            stay.append(
+                self.by_ids_segment(
+                    unit_type_id,
+                    segment["checkInDateLocalized"],
+                    segment["checkOutDateLocalized"],
+                    unit_id=unit_id,
+                )
+            )
+        return self.by_ids_item(
+            search_item["reservationId"],
+            stay,
+            status=search_item.get("status", "confirmed"),
+            guest_id=search_item.get("guestId"),
+        )
+
+    # -- guests-crud ---------------------------------------------------------
+
+    @staticmethod
+    def guests_crud_body(
+        guest_id: str,
+        *,
+        full_name: str = "Synthetic Guest",
+        phone: str | None = "+15555550100",
+        email: str | None = "guest@example.com",
+    ) -> dict[str, Any]:
+        """Build a ``GET /v1/guests-crud/{id}`` response body."""
+        return {"_id": guest_id, "fullName": full_name, "phone": phone, "email": email}
+
+
+@pytest.fixture
+def guesty_v3_payloads() -> GuestyV3Payloads:
+    """Synthetic Guesty Reservations V3 payload builders (spec 004)."""
+    return GuestyV3Payloads()
