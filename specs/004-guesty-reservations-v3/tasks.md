@@ -494,7 +494,7 @@ Follow constitution Principle V:
   - single-segment UIDs and `Booking ID:` lines are unchanged
   - multi-segment `#n` rows retire in legacy mode while the first interval keeps `{rid}::{room}`
 - [x] T065 [P] [US7] Write a unit test in tests/unit/test_guesty_service.py: in legacy mode, a 404 or 410 from `/v1/reservations` raises `PMSProviderError` with an actionable message to switch `guesty_reservations_api` to `v3`, and last-good is kept.
-- [ ] T066 [P] [US7] Extend tests/integration/test_logging_privacy.py to V3 mode at DEBUG:
+- [x] T066 [P] [US7] Extend tests/integration/test_logging_privacy.py to V3 mode at DEBUG:
   - no guest name, phone, email, door code or `keyCode` appears in any record
   - the research R15 diagnostic lines are present: status histogram, segment-shape lines with **every segment's listing ID** per reservation (FR-043), filter IDs and chunk count, per-chunk pagination signals, window-narrowing counts, matched-ID count, FR-011a verdict counts with the INFO re-attribution lines, per-cycle request counts
 
