@@ -231,7 +231,9 @@ class TestInlineCustomFieldEnrichment:
         assert guesty_transport.counts["custom_fields"] == 1
 
     @pytest.mark.parametrize(
-        "malformed", ["not-a-list", [{"value": "0000"}]], ids=["string", "element"]
+        "malformed",
+        ["not-a-list", [{"value": "0000"}], [{"fieldId": DOOR_CODE}]],
+        ids=["string", "element", "no-value"],
     )
     @pytest.mark.parametrize("enrichment", [{DOOR_CODE: "1234"}, None])
     async def test_malformed_keeps_last_good(

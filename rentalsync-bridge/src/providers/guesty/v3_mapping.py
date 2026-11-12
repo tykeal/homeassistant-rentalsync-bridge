@@ -162,10 +162,11 @@ def inline_custom_fields(item: dict[str, Any]) -> InlineCustomFields:
         return InlineCustomFields("absent")
     fields = item["customFields"]
     if not isinstance(fields, list) or not all(
-        isinstance(f, dict) and isinstance(f.get("fieldId"), str) for f in fields
+        isinstance(f, dict) and isinstance(f.get("fieldId"), str) and "value" in f
+        for f in fields
     ):
         return InlineCustomFields("malformed")
-    return InlineCustomFields("present", {f["fieldId"]: f.get("value") for f in fields})
+    return InlineCustomFields("present", {f["fieldId"]: f["value"] for f in fields})
 
 
 def _status(item: dict[str, Any], rid: str) -> str | None:

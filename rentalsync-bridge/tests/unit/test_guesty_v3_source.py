@@ -167,6 +167,7 @@ class TestInlineCustomFields:
             "not-a-list",
             {"fieldId": "6620door", "value": "4321"},
             [{"value": "4321"}],
+            [{"fieldId": "6620door"}],
             [{"fieldId": 5, "value": "4321"}],
             ["6620door"],
         ],
