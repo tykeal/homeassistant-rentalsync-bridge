@@ -31,6 +31,8 @@ from src.providers.registry import provider
 from src.utils.field_labels import humanize_label
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from src.models.oauth_credential import OAuthCredential
     from src.providers.guesty.sources import ReservationSource
     from src.repositories.credential_repository import CredentialRepository
@@ -134,7 +136,8 @@ class GuestyProvider(PMSProvider):
             token_manager: Optional pre-configured token manager.
             http_client: Optional httpx client for API calls.
             reservations_api: Reservation source: ``"legacy"`` (default
-                until spec 004 completes) or ``"v3"``.
+                until spec 004 completes) or ``"v3"`` (one combined
+                Reservations V3 search per sync cycle; see ``begin_cycle``).
             **_kwargs: Ignored — accepted for registry compatibility.
         """
         self._http_client = http_client
@@ -165,6 +168,7 @@ class GuestyProvider(PMSProvider):
             "legacy": LegacyReservationSource,
             "v3": V3ReservationSource,
         }
+        self._reservations_api = reservations_api
         source_cls = sources.get(reservations_api)
         if source_cls is None:
             msg = (
@@ -366,6 +370,19 @@ class GuestyProvider(PMSProvider):
             skip += DEFAULT_PAGE_LIMIT
 
         return listings
+
+    def begin_cycle(self, listing_pms_ids: Sequence[str]) -> None:
+        """Declare the listings a sync cycle is about to sync (research R2).
+
+        The V3 source searches every declared listing's reservations in
+        one combined search; the legacy source fetches per listing and
+        ignores the declaration.
+
+        Args:
+            listing_pms_ids: PMS IDs of every enabled, sync-enabled listing.
+        """
+        if isinstance(self._reservations, V3ReservationSource):
+            self._reservations.begin_cycle(listing_pms_ids)
 
     async def get_reservations(
         self,
