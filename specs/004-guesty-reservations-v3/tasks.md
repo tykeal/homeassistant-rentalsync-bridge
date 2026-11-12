@@ -471,7 +471,7 @@ Follow constitution Principle V:
 - [x] T059 [US6] Add `guestsCount`, `notes` and `nightsCount` mapping to src/providers/guesty/reservations_v3.py. This makes T055 pass.
 - [x] T060 [US6] Create src/providers/guesty/description_fields.py with `RETIRED_DESCRIPTION_FIELDS`. Expose it through `GuestyProvider.retired_description_fields` in V3 mode only, and add a static `retired_fields_for(pms_type, reservations_api)` helper.
 - [x] T061 [US6] Add `retired` and `retired_reason` to `CustomFieldResponse` and `AvailableFieldResponse` and populate them on GET and PUT in src/api/custom_fields.py. This depends on T060 and makes T056 pass.
-- [ ] T062 [US6] Emit the one-time retired-field WARNING at the first V3 sync in src/services/sync_service.py. This depends on T060 and makes T057 pass.
+- [x] T062 [US6] Emit the one-time retired-field WARNING at the first V3 sync in src/services/sync_service.py. This depends on T060 and makes T057 pass.
 - [ ] T063 [P] [US6] Show a "Retired" badge, with `retired_reason` as its title, for retired fields in src/static/js/admin.js. Add any badge style in src/templates/admin.html. The field stays editable.
 
 **Checkpoint**: SC-009 is met.
