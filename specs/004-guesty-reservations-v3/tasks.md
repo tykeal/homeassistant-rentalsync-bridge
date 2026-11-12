@@ -125,7 +125,7 @@ Follow constitution Principle V:
   - an empty `intervals` keeps today's `room_ids` behaviour
 
   These are regression guards for the T012 seams. This depends on T010.
-- [ ] T012 Add provider-agnostic seams in src/services/sync_service.py:
+- [x] T012 Add provider-agnostic seams in src/services/sync_service.py:
   - The prune loop collects candidates after the in-progress guard and before retiring. It calls `provider.confirm_absent(listing.pms_id, base_ids)` and retires only `CONFIRMED_ABSENT`. `INCONSISTENT` raises `SyncServiceError` for this listing before commit. `REATTRIBUTED` keeps the rows for now; US2 completes it.
   - `_create_bookings_for_reservation` branches on `reservation.intervals`: one booking per interval, with ID `{rid}::{room}` or `{rid}::{room}#{n}`, and `room_id` resolved from `interval.room_id` through `RoomRepository.get_by_pms_id`.
 
