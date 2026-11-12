@@ -635,8 +635,17 @@ class TestReattribution:
     async def test_reassigned_guest_publishes_only_the_new_guest(
         self, moved: _Moved, guesty_transport: GuestyFakeTransport
     ) -> None:
-        """No previous-guest contact or last-4; one lookup (FR-031)."""
-        await moved.store()
+        """No previous-guest contact, last-4 or name; one lookup (FR-031)."""
+        await moved.store(
+            enrichment_data={
+                DOOR_CODE: "4321",
+                "guest_phone": "+15555550100",
+                "guest_phone_last4": "0100",
+                "_guest_source_id": moved.guest_id,
+                "_guest_name": "Synthetic Guest",
+                "_change_key": "stale",
+            }
+        )
         new_guest = moved.p.new_id("gst")
         guesty_transport.guests[new_guest] = moved.p.guests_crud_body(
             new_guest, full_name="Synthetic Other", phone="+15555550199"
@@ -652,6 +661,8 @@ class TestReattribution:
         assert "0100" not in str(booking.custom_data)
         assert "0100" not in str(booking.enrichment_data)
         assert booking.enrichment_data["_guest_source_id"] == new_guest
+        assert booking.enrichment_data["_guest_name"] == "Synthetic Other"
+        assert "_change_key" not in booking.enrichment_data
         assert _calls(guesty_transport, new_guest) == 1
 
     async def test_reassigned_guest_lookup_failure_publishes_nothing(

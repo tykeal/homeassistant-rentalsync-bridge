@@ -74,12 +74,26 @@ _MAX_STATUS_LENGTH = 50
 ENRICHMENT_FRESH_LOOKBACK_DAYS = 7
 ENRICHMENT_FRESH_LOOKAHEAD_DAYS = 30
 
+# Bookkeeping stored in ``enrichment_data`` but never exported (research
+# R9): which guest the contact details came from, that guest's name (the
+# V3 search carries none), and the change key of the last fully successful
+# enrichment.
+GUEST_SOURCE_ID_KEY = "_guest_source_id"
+GUEST_NAME_KEY = "_guest_name"
+CHANGE_KEY_KEY = "_change_key"
+BOOKKEEPING_KEYS = frozenset({GUEST_SOURCE_ID_KEY, GUEST_NAME_KEY, CHANGE_KEY_KEY})
+
 # Enrichment keys owned by the guest lookup rather than the custom-fields
 # endpoint.  Provenance matters: a failed fetch may only fall back to the
 # values that same source produced last time.
-GUEST_SOURCE_ID_KEY = "_guest_source_id"
 GUEST_ENRICHMENT_KEYS = frozenset(
-    {"guest_phone", "guest_email", "guest_phone_last4", GUEST_SOURCE_ID_KEY}
+    {
+        "guest_phone",
+        "guest_email",
+        "guest_phone_last4",
+        GUEST_SOURCE_ID_KEY,
+        GUEST_NAME_KEY,
+    }
 )
 
 
@@ -101,11 +115,22 @@ class _StoredEnrichment:
     rows written before the enrichment column existed.  It exists purely
     so the first post-upgrade sync can survive a failed fetch without
     wiping already-published values; see ``_bootstrap_custom_fields``.
+
+    ``guest_name`` is the stored booking's guest name, kept only so a
+    failed first V3 lookup of the same guest can keep a name the previous
+    release stored without ``_guest_name`` (research R9).
+
+    ``stored_dates`` holds the check-in and check-out of every live
+    stored row of the reservation.  During an alteration hold those
+    frozen dates are what is published, so they decide the freshness
+    window as much as the in-flight dates do.
     """
 
     updated_at: datetime | None
     data: dict | None
     legacy: dict | None = None
+    guest_name: str | None = None
+    stored_dates: tuple[tuple[datetime, datetime], ...] = ()
 
 
 def _as_utc(value: datetime | None) -> datetime | None:
@@ -125,12 +150,16 @@ def _guest_owned(data: dict) -> dict:
 
 def _enrichment_owned(data: dict) -> dict:
     """Return only the custom-fields-endpoint-owned enrichment values."""
-    return {k: v for k, v in data.items() if k not in GUEST_ENRICHMENT_KEYS}
+    return {
+        k: v
+        for k, v in data.items()
+        if k not in GUEST_ENRICHMENT_KEYS and k != CHANGE_KEY_KEY
+    }
 
 
 def _exportable(data: dict) -> dict:
     """Drop bookkeeping keys that must not reach a booking's custom data."""
-    return {k: v for k, v in data.items() if k != GUEST_SOURCE_ID_KEY}
+    return {k: v for k, v in data.items() if k not in BOOKKEEPING_KEYS}
 
 
 class SyncServiceError(Exception):
@@ -823,7 +852,7 @@ class SyncService:
             return reservation.guest_name
         stored = booking.enrichment_data or {}
         if stored.get(GUEST_SOURCE_ID_KEY) == reservation.guest_id:
-            return booking.guest_name
+            return stored.get(GUEST_NAME_KEY) or booking.guest_name
         return None
 
     async def _apply_reattributions(
@@ -1348,9 +1377,11 @@ class SyncService:
         * Anything inside the window defined by ``_requires_fresh_enrichment``
           is ALWAYS re-fetched, because both the custom fields and the guest
           phone last-4 feed physical door lock codes.
-        * Everything else is re-fetched only when the provider's own "last
-          modified" timestamp differs from the one stored on the last sync,
-          or when either timestamp is unknown.
+        * Everything else is re-fetched only when the reservation changed:
+          its change key (V3, research R9) differs from the one stored by
+          the last fully successful enrichment, or, without a change key,
+          the provider's own "last modified" timestamp differs from the
+          stored one or either timestamp is unknown.
 
         Args:
             provider: Active PMS provider instance.
@@ -1391,7 +1422,14 @@ class SyncService:
             if r.pms_booking_id in reusable:
                 data = dict(cached.data) if cached and cached.data else {}
                 payloads[r.pms_booking_id] = data
-                enriched.append(self._with_enrichment(r, data, r.updated_at))
+                enriched.append(
+                    self._with_enrichment(
+                        r,
+                        data,
+                        r.updated_at,
+                        guest_name=r.guest_name or data.get(GUEST_NAME_KEY),
+                    )
+                )
                 continue
 
             guest_data, guest_name, guest_failed = self._guest_enrichment(
@@ -1402,11 +1440,15 @@ class SyncService:
             )
 
             data = {**custom_data, **guest_data}
+            # A failed fetch must not persist a comparison timestamp or
+            # change key: doing so would let the next sync treat the
+            # fallback values as a successful read of the current state
+            # and skip the retry.
+            failed = guest_failed or custom_failed
+            if not failed and r.change_key is not None:
+                data[CHANGE_KEY_KEY] = r.change_key
             payloads[r.pms_booking_id] = data
-            # A failed fetch must not persist a comparison timestamp: doing
-            # so would let the next sync treat the fallback values as a
-            # successful read of the current state and skip the retry.
-            updated_at = None if (guest_failed or custom_failed) else r.updated_at
+            updated_at = None if failed else r.updated_at
             enriched.append(
                 self._with_enrichment(r, data, updated_at, guest_name=guest_name)
             )
@@ -1484,22 +1526,32 @@ class SyncService:
             return {}, reservation.guest_name, False
 
         if guest_id in failed_guest_ids:
-            # Keep the last-good contact details rather than blanking a
-            # door code on a transient provider error -- but only when they
-            # demonstrably belong to this same guest.  After a guest
-            # reassignment the stored phone last-4 is the PREVIOUS guest's
-            # lock code, and publishing it would leave them working access
-            # under the new guest's name.
+            # Keep the last-good contact details and name rather than
+            # blanking a door code on a transient provider error -- but only
+            # when they demonstrably belong to this same guest.  After a
+            # guest reassignment the stored phone last-4 is the PREVIOUS
+            # guest's lock code, and publishing it would leave them working
+            # access under the new guest's name.
             stored = cached.data if cached and cached.data else {}
             if stored.get(GUEST_SOURCE_ID_KEY) != guest_id:
                 return {}, reservation.guest_name, True
-            return _guest_owned(stored), reservation.guest_name, True
+            # A row the previous release wrote has no ``_guest_name``; its
+            # stored name came with the same guest's contact, so keep it.
+            name = (
+                reservation.guest_name
+                or stored.get(GUEST_NAME_KEY)
+                or (cached.guest_name if cached else None)
+            )
+            return _guest_owned(stored), name, True
 
         guest = guests.get(guest_id)
         if guest is None:
             return {}, reservation.guest_name, False
 
+        name = reservation.guest_name or guest.full_name
         data: dict = {GUEST_SOURCE_ID_KEY: guest_id}
+        if name:
+            data[GUEST_NAME_KEY] = name
         phone_last4 = self.extract_phone_last4(guest.phone)
         if phone_last4:
             data["guest_phone_last4"] = phone_last4
@@ -1507,7 +1559,7 @@ class SyncService:
             data["guest_phone"] = guest.phone
         if guest.email:
             data["guest_email"] = guest.email
-        return data, reservation.guest_name or guest.full_name, False
+        return data, name, False
 
     async def _custom_field_enrichment(
         self,
@@ -1714,10 +1766,15 @@ class SyncService:
         """
         state: dict[str, _StoredEnrichment] = {}
         ranks: dict[str, tuple[datetime, datetime, int]] = {}
+        dates: dict[str, list[tuple[datetime, datetime]]] = {}
         for booking in await self._booking_repo.get_for_listing(listing.id):
             reservation_id = self._extract_base_reservation_id(
                 booking.pms_booking_id,
             )
+            if booking.status != "cancelled":
+                dates.setdefault(reservation_id, []).append(
+                    (booking.check_in_date, booking.check_out_date)
+                )
             updated_at = _as_utc(booking.pms_updated_at)
             # Rank on last_fetched_at first: it is non-nullable and bumped
             # on every upsert, so a retired row — which the sync no longer
@@ -1737,8 +1794,12 @@ class SyncService:
                 updated_at,
                 None if data is None else dict(data),
                 dict(booking.custom_data or {}) if data is None else None,
+                booking.guest_name,
             )
-        return state
+        return {
+            rid: replace(cached, stored_dates=tuple(dates.get(rid, ())))
+            for rid, cached in state.items()
+        }
 
     @classmethod
     def _can_reuse_enrichment(
@@ -1761,6 +1822,56 @@ class SyncService:
             # Never synced, or synced before enrichment output was stored.
             # An empty dict is fine: that is a successful, empty read.
             return False
+        if reservation.change_key is not None:
+            unchanged = cls._change_key_unchanged(reservation, cached.data)
+        else:
+            unchanged = cls._timestamp_unchanged(reservation, cached)
+        if not unchanged or cls._requires_fresh_enrichment(reservation, listing):
+            return False
+        # During an alteration hold the stored rows keep their frozen
+        # dates, and those are what a lock acts on (research R9).
+        return not any(
+            cls._dates_require_fresh(check_in, check_out)
+            for check_in, check_out in cached.stored_dates
+        )
+
+    @staticmethod
+    def _change_key_unchanged(reservation: PMSReservation, data: dict) -> bool:
+        """Return whether a V3 reservation matches its last full enrichment.
+
+        Args:
+            reservation: Reservation carrying a change key.
+            data: Stored enrichment values.
+
+        Returns:
+            True when the stored change key matches and, for a reservation
+            with a guest, the stored contact and name belong to that guest.
+        """
+        if data.get(CHANGE_KEY_KEY) != reservation.change_key:
+            return False
+        if reservation.guest_id is None:
+            return True
+        # The search carries no guest name: only a stored ``_guest_name``
+        # recorded with this guest's contact can stand in for a lookup.
+        return data.get(GUEST_SOURCE_ID_KEY) == reservation.guest_id and bool(
+            data.get(GUEST_NAME_KEY)
+        )
+
+    @staticmethod
+    def _timestamp_unchanged(
+        reservation: PMSReservation, cached: _StoredEnrichment
+    ) -> bool:
+        """Return whether a reservation's "last modified" timestamp matches.
+
+        Args:
+            reservation: Reservation without a change key.
+            cached: Enrichment state stored by the previous sync.
+
+        Returns:
+            True when both timestamps are known and equal and the stored
+            contact belongs to the reservation's guest.
+        """
+        data = cached.data or {}
         if reservation.updated_at is None or cached.updated_at is None:
             # No change-detection signal, or the last sync's fetch failed:
             # behave exactly as before #128 and fetch.
@@ -1770,14 +1881,12 @@ class SyncService:
         if reservation.guest_id is not None and reservation.guest_name is None:
             # Only a guest lookup can supply the missing name.
             return False
-        if (
-            reservation.guest_id is not None
-            and cached.data.get(GUEST_SOURCE_ID_KEY) != reservation.guest_id
-        ):
-            # The stored contact details came from a different guest (or
-            # from no guest at all), so they cannot stand in for a lookup.
-            return False
-        return not cls._requires_fresh_enrichment(reservation, listing)
+        # The stored contact details must come from this same guest (not a
+        # different one, or none at all) to stand in for a lookup.
+        return (
+            reservation.guest_id is None
+            or data.get(GUEST_SOURCE_ID_KEY) == reservation.guest_id
+        )
 
     @staticmethod
     def _requires_fresh_enrichment(
@@ -1814,12 +1923,29 @@ class SyncService:
             True when enrichment must be fetched fresh.
         """
         del listing
+        return SyncService._dates_require_fresh(
+            reservation.check_in, reservation.check_out, now
+        )
+
+    @staticmethod
+    def _dates_require_fresh(
+        check_in: datetime, check_out: datetime, now: datetime | None = None
+    ) -> bool:
+        """Return whether a stay's dates fall in the freshness window.
+
+        Args:
+            check_in: Stay start (naive values are UTC).
+            check_out: Stay end (naive values are UTC).
+            now: Optional reference time (defaults to now in UTC).
+
+        Returns:
+            True when the stay is in progress, checked out within
+            ``ENRICHMENT_FRESH_LOOKBACK_DAYS`` or starts within
+            ``ENRICHMENT_FRESH_LOOKAHEAD_DAYS``.
+        """
         reference = now or datetime.now(UTC)
         if reference.tzinfo is None:
             reference = reference.replace(tzinfo=UTC)
-
-        check_in = reservation.check_in
-        check_out = reservation.check_out
         if check_in.tzinfo is None:
             check_in = check_in.replace(tzinfo=UTC)
         if check_out.tzinfo is None:
