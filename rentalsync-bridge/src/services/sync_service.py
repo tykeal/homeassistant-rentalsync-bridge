@@ -31,6 +31,10 @@ from src.repositories.booking_repository import BookingRepository
 from src.repositories.custom_field_repository import CustomFieldRepository
 from src.repositories.room_repository import RoomRepository
 from src.services.calendar_service import CalendarCache
+from src.services.identity_check import (
+    CONFIRMATION_CODE_KEY,
+    verify_reservation_identity,
+)
 from src.utils.stay_time import get_timezone, is_stay_in_progress
 
 logger = logging.getLogger(__name__)
@@ -201,6 +205,7 @@ class SyncService:
                 len(reservations),
             )
             self._log_reservation_snapshot(listing, reservations)
+            await self._verify_identity(listing, reservations)
 
             # Ask the provider about stored reservations missing from the
             # snapshot before anything is written, so an inconsistent
@@ -342,6 +347,40 @@ class SyncService:
         # rather than left to publish noise (issue #127).
         await self._custom_field_repo.repair_derived_labels(
             listing.id, field_labels or {}
+        )
+
+    async def _verify_identity(
+        self,
+        listing: Listing,
+        reservations: list[PMSReservation],
+    ) -> None:
+        """Abort before any write if V3 re-keyed a stored reservation.
+
+        Only snapshots from a change-keyed source (Guesty V3) are checked;
+        other sources are what the stored IDs came from.
+
+        Args:
+            listing: Listing being synced.
+            reservations: Retention-filtered snapshot.
+
+        Raises:
+            PMSProviderError: If a stored reservation was re-keyed.
+        """
+        if not any(r.change_key is not None for r in reservations):
+            return
+        stored = [
+            (
+                self._extract_base_reservation_id(booking.pms_booking_id),
+                (booking.custom_data or {}).get(CONFIRMATION_CODE_KEY),
+            )
+            for booking in await self._booking_repo.get_for_listing(listing.id)
+            if booking.status != "cancelled" and not self._is_beyond_retention(booking)
+        ]
+        matched = verify_reservation_identity(listing.pms_id, stored, reservations)
+        logger.info(
+            "Identity check for listing %s: %d stored reservation(s) matched by ID",
+            listing.pms_id,
+            matched,
         )
 
     async def _confirm_absences(
