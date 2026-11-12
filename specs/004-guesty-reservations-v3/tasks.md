@@ -213,7 +213,7 @@ Follow constitution Principle V:
 
   This makes T017 pass.
 - [x] T025 [US1] Implement V3 `get_guest` via `/v1/guests-crud/{id}?fields=fullName phone email` in src/providers/guesty/service.py. It branches on `reservations_api`, keeps the legacy `/v1/guests/{id}` path unchanged, and makes T016 pass.
-- [ ] T026 [US1] Implement inline custom-field enrichment in `SyncService._custom_field_enrichment` in src/services/sync_service.py, per research R8:
+- [x] T026 [US1] Implement inline custom-field enrichment in `SyncService._custom_field_enrichment` in src/services/sync_service.py, per research R8:
   - PRESENT → values, with no call
   - ABSENT → no call if `enrichment_data` is non-NULL with no custom values; otherwise one confirmation call, with last-good or bootstrap on failure
   - MALFORMED → last-good, with a WARNING
