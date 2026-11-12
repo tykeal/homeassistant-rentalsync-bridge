@@ -3,11 +3,14 @@
 """Application configuration using Pydantic settings."""
 
 from functools import lru_cache
+from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 KNOWN_PMS_TYPES: frozenset[str] = frozenset({"cloudbeds", "guesty"})
+
+GuestyReservationsApi = Literal["v3", "legacy"]
 
 
 class Settings(BaseSettings):
@@ -94,6 +97,31 @@ class Settings(BaseSettings):
         default="INFO",
         description="Logging level",
     )
+
+    # Guesty reservation retrieval (spec 004).  Stays "legacy" until the V3
+    # source is complete; the final spec 004 change flips it to "v3".
+    guesty_reservations_api: GuestyReservationsApi = Field(
+        default="legacy",
+        description=(
+            "Guesty reservations API: 'v3' or 'legacy' (rollback only). "
+            "Ignored for Cloudbeds."
+        ),
+    )
+
+    @field_validator("guesty_reservations_api", mode="before")
+    @classmethod
+    def _normalise_reservations_api(cls, value: object) -> object:
+        """Strip and lower-case the toggle before Literal validation.
+
+        Args:
+            value: Raw value from the environment or constructor.
+
+        Returns:
+            The normalised string, or *value* unchanged if not a string.
+        """
+        if isinstance(value, str):
+            return value.strip().lower()
+        return value
 
     @model_validator(mode="after")
     def _detect_pms_type(self) -> Settings:

@@ -22,16 +22,19 @@ from src.providers.base import (
     PMSReservation,
     PMSRoom,
 )
-from src.providers.guesty import service
+from src.providers.guesty import legacy_reservations, service
 from src.providers.guesty.auth import GuestyTokenManager
-from src.providers.guesty.service import (
+from src.providers.guesty.legacy_reservations import (
     DEFAULT_LOOKBACK_DAYS,
-    GUESTY_BASE_URL,
     RESERVATION_FIELDS,
-    GuestyProvider,
+    LegacyReservationSource,
     _extract_custom_data,
-    _format_address,
     _parse_date,
+)
+from src.providers.guesty.service import (
+    GUESTY_BASE_URL,
+    GuestyProvider,
+    _format_address,
     _parse_retry_after,
     clear_custom_field_definitions_cache,
 )
@@ -185,6 +188,7 @@ def mock_http_client():
 def guesty_provider(mock_token_manager, mock_http_client):
     """Create a GuestyProvider with mocked dependencies."""
     return GuestyProvider(
+        reservations_api="legacy",
         token_manager=mock_token_manager,
         http_client=mock_http_client,
     )
@@ -370,7 +374,7 @@ class TestGetReservations:
 
     def test_cancelled_two_l_spelling_mapped(self):
         """Test the two-"l" cancelled spelling maps to cancelled."""
-        result = GuestyProvider._map_reservation(
+        result = LegacyReservationSource._map_reservation(
             {
                 "_id": "R9",
                 "status": "cancelled",
@@ -385,8 +389,10 @@ class TestGetReservations:
 
     def test_unrecognised_status_kept_and_warned(self, caplog):
         """Test an unknown status is carried through with a warning."""
-        with caplog.at_level(logging.WARNING, logger="src.providers.guesty.service"):
-            result = GuestyProvider._map_reservation(
+        with caplog.at_level(
+            logging.WARNING, logger="src.providers.guesty.legacy_reservations"
+        ):
+            result = LegacyReservationSource._map_reservation(
                 {
                     "_id": "R9",
                     "status": "Canceled_By_Channel",
@@ -659,7 +665,9 @@ def _scoped_provider(listing_json, reservations_json):
         transport=httpx.MockTransport(handler),
         base_url=GUESTY_BASE_URL,
     )
-    return GuestyProvider(token_manager=token_manager, http_client=client), seen
+    return GuestyProvider(
+        reservations_api="legacy", token_manager=token_manager, http_client=client
+    ), seen
 
 
 class TestReservationListingScope:
@@ -823,6 +831,7 @@ class TestReservationListingScope:
         token_manager = AsyncMock()
         token_manager.get_token = AsyncMock(return_value="tok")
         provider = GuestyProvider(
+            reservations_api="legacy",
             token_manager=token_manager,
             http_client=httpx.AsyncClient(
                 transport=httpx.MockTransport(handler),
@@ -861,6 +870,7 @@ class TestReservationListingScope:
         token_manager = AsyncMock()
         token_manager.get_token = AsyncMock(return_value="tok")
         provider = GuestyProvider(
+            reservations_api="legacy",
             token_manager=token_manager,
             http_client=httpx.AsyncClient(
                 transport=httpx.MockTransport(handler),
@@ -899,6 +909,7 @@ class TestReservationListingScope:
         token_manager = AsyncMock()
         token_manager.get_token = AsyncMock(return_value="tok")
         provider = GuestyProvider(
+            reservations_api="legacy",
             token_manager=token_manager,
             http_client=httpx.AsyncClient(
                 transport=httpx.MockTransport(handler),
@@ -968,7 +979,9 @@ def _mock_provider(handler):
         transport=httpx.MockTransport(dispatch),
         base_url=GUESTY_BASE_URL,
     )
-    return GuestyProvider(token_manager=token_manager, http_client=client)
+    return GuestyProvider(
+        reservations_api="legacy", token_manager=token_manager, http_client=client
+    )
 
 
 class TestReservationPagination:
@@ -1270,7 +1283,7 @@ class TestReservationPagination:
     @pytest.mark.asyncio
     async def test_page_cap_raises(self, monkeypatch):
         """Test exceeding the page cap raises instead of truncating."""
-        import src.providers.guesty.service as guesty_service
+        import src.providers.guesty.legacy_reservations as guesty_service
 
         monkeypatch.setattr(guesty_service, "MAX_RESERVATION_PAGES", 3)
 
@@ -1399,7 +1412,7 @@ class TestReservationUpdatedAt:
 
     def test_last_updated_at_mapped(self):
         """Test lastUpdatedAt is surfaced as PMSReservation.updated_at."""
-        result = GuestyProvider._map_reservation(
+        result = LegacyReservationSource._map_reservation(
             {
                 "_id": "R_TS",
                 "status": "confirmed",
@@ -1416,7 +1429,7 @@ class TestReservationUpdatedAt:
     @pytest.mark.parametrize("value", [None, "", "not-a-date"])
     def test_unusable_last_updated_at_is_none(self, value):
         """Test an absent or malformed timestamp never aborts mapping."""
-        result = GuestyProvider._map_reservation(
+        result = LegacyReservationSource._map_reservation(
             {
                 "_id": "R_TS",
                 "status": "confirmed",
@@ -1705,7 +1718,7 @@ class TestRefreshToken:
     @pytest.mark.asyncio
     async def test_refresh_without_manager_raises(self, mock_http_client):
         """Test that refresh without manager and missing creds raises."""
-        prov = GuestyProvider(http_client=mock_http_client)
+        prov = GuestyProvider(reservations_api="legacy", http_client=mock_http_client)
         mock_credential = MagicMock()
         mock_credential.client_id = None
         mock_credential.client_secret = None
@@ -1716,7 +1729,7 @@ class TestRefreshToken:
     @pytest.mark.asyncio
     async def test_refresh_direct_http_success(self, mock_http_client):
         """Test direct HTTP refresh returns TokenResult on 200."""
-        prov = GuestyProvider(http_client=mock_http_client)
+        prov = GuestyProvider(reservations_api="legacy", http_client=mock_http_client)
         mock_credential = MagicMock()
         mock_credential.client_id = "cid"
         mock_credential.client_secret = "csecret"
@@ -1741,7 +1754,7 @@ class TestRefreshToken:
     @pytest.mark.asyncio
     async def test_refresh_direct_http_non_200(self, mock_http_client):
         """Test direct HTTP refresh raises on non-200 response."""
-        prov = GuestyProvider(http_client=mock_http_client)
+        prov = GuestyProvider(reservations_api="legacy", http_client=mock_http_client)
         mock_credential = MagicMock()
         mock_credential.client_id = "cid"
         mock_credential.client_secret = "csecret"
@@ -1763,7 +1776,7 @@ class TestRefreshToken:
     @pytest.mark.asyncio
     async def test_refresh_direct_http_missing_access_token(self, mock_http_client):
         """Test direct HTTP refresh raises when access_token missing."""
-        prov = GuestyProvider(http_client=mock_http_client)
+        prov = GuestyProvider(reservations_api="legacy", http_client=mock_http_client)
         mock_credential = MagicMock()
         mock_credential.client_id = "cid"
         mock_credential.client_secret = "csecret"
@@ -1785,7 +1798,7 @@ class TestRefreshToken:
     @pytest.mark.asyncio
     async def test_refresh_direct_http_network_error(self, mock_http_client):
         """Test direct HTTP refresh raises on network error."""
-        prov = GuestyProvider(http_client=mock_http_client)
+        prov = GuestyProvider(reservations_api="legacy", http_client=mock_http_client)
         mock_credential = MagicMock()
         mock_credential.client_id = "cid"
         mock_credential.client_secret = "csecret"
@@ -2084,14 +2097,14 @@ class TestReservationFieldProjection:
         outage hid itself.  This fails if a new top-level ``raw.get()`` or
         a new key tuple is added without updating the constant.
         """
-        source = Path(service.__file__).read_text(encoding="utf-8")
+        source = Path(legacy_reservations.__file__).read_text(encoding="utf-8")
         reservation_section = source.split("# -- module-level helpers")[0]
         consumed = set(re.findall(r'raw\.get\(\s*"([A-Za-z_]+)"', reservation_section))
-        consumed |= set(service._LISTING_REF_KEYS)
-        consumed |= set(service._CUSTOM_KEYS)
+        consumed |= set(legacy_reservations._LISTING_REF_KEYS)
+        consumed |= set(legacy_reservations._CUSTOM_KEYS)
         consumed |= {"money", "notes", "stay", "mtl", "guest", "status"}
 
-        missing = consumed - set(service._RESERVATION_FIELD_PATHS)
+        missing = consumed - set(legacy_reservations._RESERVATION_FIELD_PATHS)
         assert not missing, (
             f"fields projection is missing consumed path(s): {sorted(missing)}"
         )
@@ -2103,7 +2116,7 @@ class TestReservationFieldProjection:
         specified, so ``guest.fullName`` and the room-assignment paths must
         appear in their own right.
         """
-        paths = set(service._RESERVATION_FIELD_PATHS)
+        paths = set(legacy_reservations._RESERVATION_FIELD_PATHS)
         for required in (
             "guest.fullName",
             "guest._id",
@@ -2123,7 +2136,7 @@ class TestMissingStatusKey:
     def test_absent_status_raises(self):
         """Test an absent ``status`` key raises instead of defaulting."""
         with pytest.raises(PMSProviderError, match="no 'status' field"):
-            GuestyProvider._map_reservation(
+            LegacyReservationSource._map_reservation(
                 SAMPLE_DEFAULT_PROJECTION_RESERVATION,
                 "L1",
             )
@@ -2131,7 +2144,7 @@ class TestMissingStatusKey:
     def test_absent_status_names_the_reservation(self):
         """Test the error names the offending reservation ID."""
         with pytest.raises(PMSProviderError, match="R-DEFAULT"):
-            GuestyProvider._map_reservation(
+            LegacyReservationSource._map_reservation(
                 SAMPLE_DEFAULT_PROJECTION_RESERVATION,
                 "L1",
             )
@@ -2143,7 +2156,7 @@ class TestMissingStatusKey:
         door code.  A raised error is fail-closed.
         """
         try:
-            result = GuestyProvider._map_reservation(
+            result = LegacyReservationSource._map_reservation(
                 SAMPLE_DEFAULT_PROJECTION_RESERVATION,
                 "L1",
             )
@@ -2183,7 +2196,7 @@ class TestMissingStatusKey:
 
     def test_present_but_unrecognised_is_withheld_not_raised(self):
         """Test an unrecognised value keeps the v0.5.2 withhold behaviour."""
-        result = GuestyProvider._map_reservation(
+        result = LegacyReservationSource._map_reservation(
             _status_reservation("R-ODD", "awaiting_payment"),
             "L1",
         )
@@ -2193,7 +2206,7 @@ class TestMissingStatusKey:
 
     def test_null_status_value_is_withheld_not_raised(self):
         """Test ``status: null`` is a present-but-unusable value."""
-        result = GuestyProvider._map_reservation(
+        result = LegacyReservationSource._map_reservation(
             _status_reservation("R-NULL", None),
             "L1",
         )
@@ -2356,7 +2369,7 @@ class TestRecognisedNonExportStatuses:
         Args:
             status: Raw Guesty status value.
         """
-        result = GuestyProvider._map_reservation(
+        result = LegacyReservationSource._map_reservation(
             _status_reservation(f"R-{status}", status),
             "L1",
         )
@@ -2367,7 +2380,7 @@ class TestRecognisedNonExportStatuses:
     def test_non_stay_state_does_not_warn(self, caplog):
         """Test an expected non-stay state logs at DEBUG, not WARNING."""
         with caplog.at_level(logging.DEBUG):
-            GuestyProvider._map_reservation(
+            LegacyReservationSource._map_reservation(
                 _status_reservation("R-DECLINED", "declined"),
                 "L1",
             )
@@ -2378,7 +2391,7 @@ class TestRecognisedNonExportStatuses:
     def test_genuinely_unknown_status_still_warns(self, caplog):
         """Test real drift keeps its WARNING signal."""
         with caplog.at_level(logging.DEBUG):
-            GuestyProvider._map_reservation(
+            LegacyReservationSource._map_reservation(
                 _status_reservation("R-ODD", "zzz_unknown"),
                 "L1",
             )
@@ -2498,7 +2511,9 @@ def _definitions_provider(
         transport=httpx.MockTransport(_route),
         base_url=GUESTY_BASE_URL,
     )
-    return GuestyProvider(token_manager=token_manager, http_client=client)
+    return GuestyProvider(
+        reservations_api="legacy", token_manager=token_manager, http_client=client
+    )
 
 
 # Guesty populates ``key`` with the label the account owner typed and

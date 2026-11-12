@@ -118,6 +118,56 @@ class TestSettings:
             assert settings.guesty_client_secret == "gsec"
 
 
+class TestGuestyReservationsApi:
+    """Tests for the guesty_reservations_api toggle (spec 004, FR-041)."""
+
+    def test_default_is_legacy(self, monkeypatch):
+        """The default stays legacy until the final spec 004 PR flips it."""
+        from src.config import Settings
+
+        monkeypatch.delenv("GUESTY_RESERVATIONS_API", raising=False)
+        assert Settings().guesty_reservations_api == "legacy"
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [(" Legacy ", "legacy"), ("V3", "v3"), ("\tv3\n", "v3")],
+    )
+    def test_value_is_normalised(self, raw, expected):
+        """Values are stripped and lower-cased."""
+        from src.config import Settings
+
+        assert Settings(guesty_reservations_api=raw).guesty_reservations_api == (
+            expected
+        )
+
+    @pytest.mark.parametrize("raw", ["v2", "", "legacyy", "auto"])
+    def test_invalid_value_raises(self, raw):
+        """An unknown value fails at construction."""
+        from pydantic import ValidationError
+        from src.config import Settings
+
+        with pytest.raises(ValidationError, match="guesty_reservations_api"):
+            Settings(guesty_reservations_api=raw)
+
+    def test_env_var_is_read(self, monkeypatch):
+        """GUESTY_RESERVATIONS_API selects the value."""
+        from src.config import Settings
+
+        monkeypatch.setenv("GUESTY_RESERVATIONS_API", " V3 ")
+        assert Settings().guesty_reservations_api == "v3"
+        monkeypatch.setenv("GUESTY_RESERVATIONS_API", "legacy")
+        assert Settings().guesty_reservations_api == "legacy"
+
+    def test_invalid_env_var_raises(self, monkeypatch):
+        """An unknown env value fails at startup, like pms_type."""
+        from pydantic import ValidationError
+        from src.config import Settings
+
+        monkeypatch.setenv("GUESTY_RESERVATIONS_API", "v4")
+        with pytest.raises(ValidationError):
+            Settings()
+
+
 class TestGetSettings:
     """Tests for get_settings function."""
 

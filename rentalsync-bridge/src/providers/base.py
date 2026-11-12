@@ -3,9 +3,12 @@
 """PMS Provider abstraction layer — base classes, DTOs, and exceptions."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from datetime import date, datetime
+from enum import StrEnum
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 if TYPE_CHECKING:
     from src.models.oauth_credential import OAuthCredential
@@ -31,6 +34,12 @@ RECOGNISED_NON_EXPORT_STATUSES = frozenset(
     {"expired", "closed", "declined", "awaiting_payment"}
 )
 
+# Transient provider statuses that hold a reservation's stored state (spec
+# 004, research R7).  A reservation in one of these is never stored when
+# first seen and never retires a stored booking; its stored status, dates
+# and room stay as they were until it leaves the state.
+HOLD_STATUSES = frozenset({"alteration"})
+
 
 # ---------------------------------------------------------------------------
 # Data Transfer Objects
@@ -55,6 +64,69 @@ class PMSRoom:
     pms_room_id: str
     name: str
     room_type: str | None = None
+
+
+@dataclass(frozen=True)
+class PMSOccupancyInterval:
+    """One room's continuous occupancy within a reservation (research R6).
+
+    The sync stores one booking per interval, keyed
+    ``{rid}::{booking_suffix}``.
+    """
+
+    room_id: str
+    # 1 for the first interval in this room within the reservation, 2 for
+    # the next, and so on.
+    ordinal: int
+    # UTC instants; None only for a by-IDs re-attribution (dates re-anchored
+    # by the sync from ``local_dates``).
+    check_in: datetime | None
+    check_out: datetime | None
+    # Listing-localized (check-in, check-out) dates.
+    local_dates: tuple[date, date] | None
+    guests_count: int | None
+
+    def __post_init__(self) -> None:
+        """Validate the ordinal.
+
+        Raises:
+            ValueError: If ``ordinal`` is below 1.
+        """
+        if self.ordinal < 1:
+            msg = f"ordinal must be >= 1, got {self.ordinal}"
+            raise ValueError(msg)
+
+    @property
+    def booking_suffix(self) -> str:
+        """Return the booking-ID suffix: ``room`` or ``room#n`` for n >= 2."""
+        if self.ordinal == 1:
+            return self.room_id
+        return f"{self.room_id}#{self.ordinal}"
+
+
+InlineCustomFieldsState = Literal["present", "absent", "malformed"]
+
+
+@dataclass(frozen=True)
+class InlineCustomFields:
+    """Custom-field values delivered with a reservation (research R8).
+
+    ``values`` is ``{fieldId: value}`` when ``state`` is ``present`` and
+    empty otherwise.
+    """
+
+    state: InlineCustomFieldsState
+    values: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
+
+    def __post_init__(self) -> None:
+        """Validate the state.
+
+        Raises:
+            ValueError: If ``state`` is not one of the R8 states.
+        """
+        if self.state not in get_args(InlineCustomFieldsState):
+            msg = f"unknown inline custom-field state {self.state!r}"
+            raise ValueError(msg)
 
 
 @dataclass(frozen=True)
@@ -86,6 +158,51 @@ class PMSReservation:
     # without such a field leave this None, which disables the optimisation
     # for them (never skip) rather than guessing that nothing changed.
     updated_at: datetime | None = None
+    # Spec 004.  Per-room occupancy intervals: when non-empty the sync stores
+    # one booking per interval and ignores ``room_ids``; empty keeps the
+    # ``room_ids`` behaviour (Cloudbeds, legacy Guesty).
+    intervals: tuple[PMSOccupancyInterval, ...] = ()
+    # Content hash for enrichment reuse when ``updated_at`` is unavailable.
+    change_key: str | None = None
+    # Custom fields delivered inline; None when the provider does not.
+    inline_custom_fields: InlineCustomFields | None = None
+
+
+class AbsenceVerdict(StrEnum):
+    """Outcome of confirming a stored reservation's absence (research R5)."""
+
+    CONFIRMED_ABSENT = "confirmed_absent"
+    UNCONFIRMED = "unconfirmed"
+    REATTRIBUTED = "reattributed"
+    INCONSISTENT = "inconsistent"
+
+
+@dataclass(frozen=True)
+class AbsenceResult:
+    """Per-candidate result of ``PMSProvider.confirm_absent``.
+
+    ``reservation`` is set exactly when the verdict is ``REATTRIBUTED``.
+    ``detail`` is a non-PII reason for logs.
+    """
+
+    verdict: AbsenceVerdict
+    reservation: PMSReservation | None = None
+    detail: str = ""
+
+    def __post_init__(self) -> None:
+        """Validate that only REATTRIBUTED carries a reservation.
+
+        Raises:
+            ValueError: If the reservation is missing for REATTRIBUTED or
+                present for any other verdict.
+        """
+        reattributed = self.verdict is AbsenceVerdict.REATTRIBUTED
+        if reattributed != (self.reservation is not None):
+            msg = (
+                f"AbsenceResult reservation must be set only for "
+                f"REATTRIBUTED (verdict {self.verdict.name})"
+            )
+            raise ValueError(msg)
 
 
 @dataclass(frozen=True)
@@ -309,6 +426,52 @@ class PMSProvider(ABC):
             Provider type (e.g., "cloudbeds", "guesty").
         """
         ...
+
+    def begin_cycle(self, listing_pms_ids: Sequence[str]) -> None:
+        """Declare the listings a sync cycle is about to sync (research R2).
+
+        Called once per cycle, before the first listing is synced.  The
+        base implementation does nothing.
+
+        Args:
+            listing_pms_ids: PMS IDs of every enabled, sync-enabled listing.
+        """
+        del listing_pms_ids
+
+    async def confirm_absent(
+        self,
+        listing_pms_id: str,
+        reservation_ids: Sequence[str],
+    ) -> dict[str, AbsenceResult]:
+        """Confirm that stored reservations missing from a snapshot are gone.
+
+        The sync calls this before retiring bookings whose reservation is
+        absent from the listing's snapshot, and retires only those
+        confirmed absent.  The base implementation confirms every ID,
+        which reproduces the pre-spec-004 pruning exactly.
+
+        Args:
+            listing_pms_id: Listing being synced.
+            reservation_ids: Base reservation IDs absent from the snapshot.
+
+        Returns:
+            One result per requested ID.
+        """
+        del listing_pms_id
+        return {
+            rid: AbsenceResult(AbsenceVerdict.CONFIRMED_ABSENT)
+            for rid in reservation_ids
+        }
+
+    @property
+    def retired_description_fields(self) -> dict[str, str]:
+        """Description fields the provider no longer supplies.
+
+        Returns:
+            Mapping of retired field key to a user-facing explanation;
+            empty by default.
+        """
+        return {}
 
     @property
     def has_separate_custom_fields(self) -> bool:

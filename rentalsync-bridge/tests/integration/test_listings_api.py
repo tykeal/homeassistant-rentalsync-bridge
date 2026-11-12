@@ -632,6 +632,70 @@ class TestManualSync:
         assert response.status_code == 503
         assert "credentials" in response.json()["detail"].lower()
 
+    @pytest.mark.asyncio
+    async def test_manual_sync_declares_cycle_listings(
+        self, listings_app, listings_session
+    ):
+        """The manual sync declares the scheduled set before it syncs."""
+        from datetime import UTC, datetime, timedelta
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from src.models.oauth_credential import OAuthCredential
+
+        from tests.conftest import make_mock_provider
+
+        credential = OAuthCredential(client_id="client", pms_type="guesty")
+        credential.client_secret = "secret"
+        credential.access_token = "token"
+        credential.token_expires_at = datetime.now(UTC) + timedelta(hours=1)
+        listings = [
+            Listing(
+                pms_id=pms_id,
+                name=pms_id,
+                ical_url_slug=pms_id.lower(),
+                enabled=enabled,
+                sync_enabled=sync_enabled,
+            )
+            for pms_id, enabled, sync_enabled in [
+                ("TARGET", True, True),
+                ("OTHER", True, True),
+                ("OFF", False, True),
+                ("NOSYNC", True, False),
+            ]
+        ]
+        listings_session.add_all([credential, *listings])
+        await listings_session.commit()
+        target = listings[0]
+        await listings_session.refresh(target)
+
+        events = []
+        provider = make_mock_provider()
+        provider.begin_cycle = MagicMock(
+            side_effect=lambda ids: events.append(("begin", sorted(ids)))
+        )
+
+        async def fetch(pms_id, *args, **kwargs):
+            """Record the fetch and return no reservations."""
+            events.append(("fetch", pms_id))
+            return []
+
+        provider.get_reservations = AsyncMock(side_effect=fetch)
+
+        with patch(
+            "src.api.listings.create_provider_for_credential",
+            return_value=provider,
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=listings_app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    f"/api/listings/{target.id}/sync",
+                    headers={"Authorization": "Bearer test"},
+                )
+
+        assert response.status_code == 200
+        assert events == [("begin", ["OTHER", "TARGET"]), ("fetch", "TARGET")]
+
 
 class TestGetListingBookings:
     """Tests for GET /api/listings/{id}/bookings endpoint."""

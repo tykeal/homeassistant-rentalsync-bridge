@@ -726,6 +726,10 @@ async def sync_listing(
     try:
         provider = create_provider_for_credential(credential, db)
         try:
+            # Declare the same listing set a scheduled cycle would.
+            provider.begin_cycle(
+                [enabled.pms_id for enabled in await repo.get_sync_enabled()]
+            )
             sync_service = SyncService(db, get_calendar_cache())
             counts = await sync_service.sync_listing(listing, provider)
         finally:

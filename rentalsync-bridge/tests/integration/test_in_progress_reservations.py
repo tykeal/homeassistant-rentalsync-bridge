@@ -16,6 +16,7 @@ import httpx
 import pytest
 from icalendar import Calendar
 from src.providers.cloudbeds.provider import CloudbedsProvider
+from src.providers.guesty.legacy_reservations import LegacyReservationSource
 from src.providers.guesty.service import GUESTY_BASE_URL, GuestyProvider
 from src.repositories.booking_repository import BookingRepository
 from src.services.calendar_service import CalendarCache, CalendarService
@@ -132,7 +133,7 @@ def _map_all(provider_name, raw_items):
         List of PMSReservation DTOs.
     """
     mapper = (
-        GuestyProvider._map_reservation
+        LegacyReservationSource._map_reservation
         if provider_name == "guesty"
         else CloudbedsProvider._map_reservation
     )
@@ -339,7 +340,9 @@ async def test_guesty_http_pipeline(async_session, async_session_factory):
     )
     token_manager = AsyncMock()
     token_manager.get_token = AsyncMock(return_value="tok")
-    provider = GuestyProvider(token_manager=token_manager, http_client=client)
+    provider = GuestyProvider(
+        reservations_api="legacy", token_manager=token_manager, http_client=client
+    )
     provider.get_custom_fields = AsyncMock(return_value={})  # type: ignore[method-assign]
 
     await _sync(async_session, async_session_factory, listing, provider)

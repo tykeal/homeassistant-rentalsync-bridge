@@ -332,6 +332,7 @@ class TestScheduledSyncStatusPersistence:
             return (reservations_by_listing or {}).get(pms_id, [])
 
         provider.get_reservations = AsyncMock(side_effect=get_reservations)
+        provider.begin_cycle = MagicMock()
         return provider
 
     @staticmethod
@@ -382,3 +383,53 @@ class TestScheduledSyncStatusPersistence:
         assert status["PROP3"][1] is None
         assert status["PROP1"][0] is not None
         assert status["PROP3"][0] is not None
+
+    @pytest.mark.asyncio
+    async def test_cycle_declares_listings_before_first_sync(
+        self, session_factory, seeded_listings
+    ):
+        """begin_cycle gets every enabled, sync-enabled listing, once, first."""
+        async with session_factory() as session:
+            session.add_all(
+                [
+                    Listing(
+                        pms_id="OFF",
+                        name="Disabled",
+                        ical_url_slug="off",
+                        enabled=False,
+                        sync_enabled=True,
+                    ),
+                    Listing(
+                        pms_id="NOSYNC",
+                        name="Not synced",
+                        ical_url_slug="nosync",
+                        enabled=True,
+                        sync_enabled=False,
+                    ),
+                ]
+            )
+            await session.commit()
+        events = []
+        provider = self._provider()
+        provider.begin_cycle = MagicMock(
+            side_effect=lambda ids: events.append(("begin", sorted(ids)))
+        )
+        fetch = provider.get_reservations.side_effect
+
+        async def recording_fetch(pms_id, *args, **kwargs):
+            """Record the fetch order, then delegate to the stub."""
+            events.append(("fetch", pms_id))
+            return await fetch(pms_id, *args, **kwargs)
+
+        provider.get_reservations = AsyncMock(side_effect=recording_fetch)
+        scheduler = SyncScheduler(session_factory)
+
+        with patch(
+            "src.services.scheduler.create_provider_for_credential",
+            return_value=provider,
+        ):
+            await scheduler._sync_all_listings()
+
+        provider.begin_cycle.assert_called_once()
+        assert events[0] == ("begin", ["PROP1", "PROP2", "PROP3"])
+        assert sorted(e[1] for e in events[1:]) == ["PROP1", "PROP2", "PROP3"]

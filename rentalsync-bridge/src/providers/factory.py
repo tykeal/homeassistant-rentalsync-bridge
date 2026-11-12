@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.config import get_settings
 from src.providers.registry import create_provider
 from src.repositories.credential_repository import CredentialRepository
 
@@ -39,6 +40,7 @@ def create_provider_for_credential(
             credential_id=credential.id,
             client_id=credential.client_id,
             client_secret=credential.client_secret,
+            reservations_api=get_settings().guesty_reservations_api,
         )
 
     # Cloudbeds and any other provider
