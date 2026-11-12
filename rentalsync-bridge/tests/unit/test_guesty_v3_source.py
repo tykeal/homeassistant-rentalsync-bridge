@@ -6,7 +6,11 @@ from datetime import date
 from typing import Any
 
 import pytest
-from src.providers.base import InlineCustomFields, PMSOccupancyInterval
+from src.providers.base import (
+    InlineCustomFields,
+    PMSOccupancyInterval,
+    PMSProviderError,
+)
 from src.providers.guesty.legacy_reservations import _resolve_room_id
 
 from tests.conftest import GuestyFakeTransport
@@ -175,3 +179,127 @@ class TestInlineCustomFields:
 
         assert inline.state == "malformed"
         assert dict(inline.values) == {}
+
+
+def _filter_ids(transport: GuestyFakeTransport) -> list[set[str]]:
+    """Return each recorded search's ``filter[listingId][in]`` ID set."""
+    return [
+        set(request.query["filter[listingId][in]"][0].split(","))
+        for request in transport.requests_for("v3_search")
+    ]
+
+
+class TestCombinedSearch:
+    """One combined search serves every tracked listing (T018, R2)."""
+
+    @pytest.fixture
+    def account(self, guesty_transport: GuestyFakeTransport) -> dict[str, Any]:
+        """Two single-unit listings and a multi-unit parent, one stay each."""
+        p = guesty_transport.payloads
+        a, b, parent = p.new_id("lst"), p.new_id("lst"), p.new_id("lst")
+        units = [p.new_id("lst"), p.new_id("lst")]
+        guesty_transport.add_listing(a)
+        guesty_transport.add_listing(b)
+        guesty_transport.add_listing(parent, children=units)
+        items = {
+            a: p.search_item(a),
+            b: p.search_item(b),
+            parent: p.search_item(units[0], parent_listing_id=parent),
+        }
+        guesty_transport.v3_items = list(items.values())
+        return {"a": a, "b": b, "parent": parent, "units": units, "items": items}
+
+    async def test_one_search_per_cycle(
+        self, guesty_transport: GuestyFakeTransport, account: dict[str, Any]
+    ) -> None:
+        """Three listings share one page sequence; each gets only its own."""
+        provider = guesty_transport.provider(reservations_api="v3")
+        tracked = [account["a"], account["b"], account["parent"]]
+        provider.begin_cycle(tracked)
+
+        for listing in tracked:
+            (reservation,) = await provider.get_reservations(listing)
+            expected = account["items"][listing]["reservationId"]
+            assert reservation.pms_booking_id == expected
+
+        assert guesty_transport.counts["v3_search"] == 1
+        assert guesty_transport.counts["listing"] == 3
+        assert _filter_ids(guesty_transport) == [
+            {account["a"], account["b"], account["parent"], *account["units"]}
+        ]
+
+    async def test_new_cycle_searches_again(
+        self, guesty_transport: GuestyFakeTransport, account: dict[str, Any]
+    ) -> None:
+        """``begin_cycle`` drops the previous cycle's result and scopes."""
+        provider = guesty_transport.provider(reservations_api="v3")
+        tracked = [account["a"], account["b"]]
+        for _cycle in range(2):
+            provider.begin_cycle(tracked)
+            for listing in tracked:
+                await provider.get_reservations(listing)
+
+        assert guesty_transport.counts["v3_search"] == 2
+        assert guesty_transport.counts["listing"] == 4
+
+    async def test_undeclared_listing_joins_and_searches_afresh(
+        self, guesty_transport: GuestyFakeTransport, account: dict[str, Any]
+    ) -> None:
+        """A listing outside the declared set is added to a fresh search."""
+        provider = guesty_transport.provider(reservations_api="v3")
+        provider.begin_cycle([account["a"], account["b"]])
+
+        await provider.get_reservations(account["a"])
+        (reservation,) = await provider.get_reservations(account["parent"])
+        await provider.get_reservations(account["b"])
+
+        expected = account["items"][account["parent"]]["reservationId"]
+        assert reservation.pms_booking_id == expected
+        assert guesty_transport.counts["v3_search"] == 2
+        assert guesty_transport.counts["listing"] == 3
+        first, second = _filter_ids(guesty_transport)
+        assert first == {account["a"], account["b"]}
+        assert second == {
+            account["a"],
+            account["b"],
+            account["parent"],
+            *account["units"],
+        }
+
+    async def test_filter_is_union_of_fetch_scopes(
+        self, guesty_transport: GuestyFakeTransport, account: dict[str, Any]
+    ) -> None:
+        """Sub-units of a tracked parent and an imported child's parent."""
+        p = guesty_transport.payloads
+        other_parent, child = p.new_id("lst"), p.new_id("lst")
+        sibling = p.new_id("lst")
+        guesty_transport.add_listing(other_parent, children=[child, sibling])
+        guesty_transport.add_listing(child, parent_id=other_parent)
+        provider = guesty_transport.provider(reservations_api="v3")
+        provider.begin_cycle([account["parent"], child])
+
+        await provider.get_reservations(child)
+
+        assert _filter_ids(guesty_transport) == [
+            {account["parent"], *account["units"], child, other_parent}
+        ]
+
+    async def test_scope_failure_aborts_only_that_listing(
+        self, guesty_transport: GuestyFakeTransport, account: dict[str, Any]
+    ) -> None:
+        """A failed listing document fails that listing; its ID is still sent."""
+        # Scopes resolve in sorted order, so the first listing document
+        # request is account["a"]'s.
+        guesty_transport.fail("listing", 500)
+        provider = guesty_transport.provider(reservations_api="v3")
+        provider.begin_cycle([account["a"], account["b"]])
+
+        (reservation,) = await provider.get_reservations(account["b"])
+        with pytest.raises(PMSProviderError):
+            await provider.get_reservations(account["a"])
+
+        expected = account["items"][account["b"]]["reservationId"]
+        assert reservation.pms_booking_id == expected
+        assert guesty_transport.counts["v3_search"] == 1
+        assert guesty_transport.counts["listing"] == 2
+        assert _filter_ids(guesty_transport) == [{account["a"], account["b"]}]
