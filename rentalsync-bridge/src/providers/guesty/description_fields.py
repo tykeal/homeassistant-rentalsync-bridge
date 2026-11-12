@@ -4,8 +4,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import date
+from types import MappingProxyType
 from typing import Any
 
 from src.providers.base import PMSOccupancyInterval
@@ -16,6 +17,39 @@ _CUSTOM_KEYS = ("source", "confirmationCode")
 # ``notes`` parts joined into the description, in order.  ``cleaning`` and
 # ``keyCode`` are deliberately never exported.
 _NOTE_KEYS = ("other", "guest", "specialRequests")
+
+_PAYMENT_TOTALS_REASON = (
+    "Guesty Reservations V3 no longer includes payment totals on reservations"
+)
+
+# Description fields legacy supplied and V3 cannot (FR-036): they are
+# flagged, never re-sourced, and their configuration is never deleted.
+RETIRED_DESCRIPTION_FIELDS: Mapping[str, str] = MappingProxyType(
+    {
+        "money_totalPaid": _PAYMENT_TOTALS_REASON,
+        "money_balanceDue": _PAYMENT_TOTALS_REASON,
+        "money_currency": _PAYMENT_TOTALS_REASON,
+    }
+)
+
+
+def retired_fields_for(pms_type: str, reservations_api: str) -> Mapping[str, str]:
+    """Return the description fields retired for a PMS configuration.
+
+    A static lookup, so the admin API needs neither a provider nor a
+    network call.  Only Guesty read through Reservations V3 retires any.
+
+    Args:
+        pms_type: The credential's PMS type.
+        reservations_api: The configured Guesty reservations API.
+
+    Returns:
+        Mapping of retired field key to a user-facing reason; empty when
+        nothing is retired.
+    """
+    if pms_type == "guesty" and reservations_api == "v3":
+        return RETIRED_DESCRIPTION_FIELDS
+    return MappingProxyType({})
 
 
 def _local_date(value: Any) -> date | None:
