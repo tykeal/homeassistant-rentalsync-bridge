@@ -270,7 +270,7 @@ Follow constitution Principle V:
   - intervals carry `local_dates` only, with no UTC instants
   - two same-room segments whose localized boundary dates are equal are reported as ambiguous, whether UTC-adjacent or separated by a same-day gap
   - an item with no `_id`, no `stay[]`, or a segment with neither `unitId` nor `unitTypeId` is invalid
-- [ ] T033 [P] [US2] Write integration tests in tests/integration/test_guesty_v3_sync.py for FR-011a:
+- [x] T033 [P] [US2] Write integration tests in tests/integration/test_guesty_v3_sync.py for FR-011a:
   - a reservation vanishing mid-search (US2-5) whose first segment is in the searched filter IDs is not retired when by-IDs returns it live; the verdict is `INCONSISTENT`, that listing aborts with last-good kept and an error naming the `guesty_reservations_api` setting, and the other listings in the cycle sync normally
   - a stored reservation re-arranged so its first segment is in an untracked property (US3-6) is `REATTRIBUTED`: the row in the still-occupied room is kept with its mapped status, its dates are re-anchored (unchanged local dates keep the stored instants byte-for-byte; a changed local date keeps the stored local time of day in the listing timezone), its custom fields and guest details stay last-good, and its UID and `Booking ID:` line are unchanged
   - the same re-arranged reservation over three consecutive cycles never aborts a sync, stays exported and costs one by-IDs call per cycle (call-count assertion)
