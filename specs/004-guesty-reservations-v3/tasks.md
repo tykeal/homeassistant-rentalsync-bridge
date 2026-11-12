@@ -134,7 +134,7 @@ Follow constitution Principle V:
 - [x] T013 [P] Write failing tests for the cycle hook (research R2):
   - in tests/unit/test_scheduler.py, a scheduled cycle calls `provider.begin_cycle` once per provider with the PMS IDs of every `enabled` and `sync_enabled` listing, before the first `sync_listing`
   - in tests/integration/test_listings_api.py, the manual single-listing sync declares the same set before syncing its listing
-- [ ] T014 Call `begin_cycle` from src/services/scheduler.py and from the manual sync in src/api/listings.py. This depends on T010 and T013.
+- [x] T014 Call `begin_cycle` from src/services/scheduler.py and from the manual sync in src/api/listings.py. This depends on T010 and T013.
 
 **Checkpoint**: The full suite is green. Legacy Guesty and Cloudbeds behave identically. The toggle exists and defaults to `legacy`; V3 is a stub that fails safely with `PMSProviderError` when selected.
 
