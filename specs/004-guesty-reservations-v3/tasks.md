@@ -505,7 +505,7 @@ Follow constitution Principle V:
 - [x] T069 [US7] Implement the legacy 404/410 message in src/providers/guesty/legacy_reservations.py. This makes T065 pass.
 - [x] T070 [US7] Add the FR-043 DEBUG diagnostics (research R15) in src/providers/guesty/reservations_v3.py and src/services/sync_service.py. Use reservation and listing IDs, counts and enum values only. This makes T066 pass.
 - [x] T071 [US7] Make T064 pass. Expected to need no code beyond T012 and T042; fix any gap found.
-- [ ] T072 [P] [US7] Document the option, pre-release validation (quickstart §4) and rollback (quickstart §5) in docs/homeassistant-addon-setup.md. Include the multi-segment rollback limitation and the legacy removal after 2027-03-01.
+- [x] T072 [P] [US7] Document the option, pre-release validation (quickstart §4) and rollback (quickstart §5) in docs/homeassistant-addon-setup.md. Include the multi-segment rollback limitation and the legacy removal after 2027-03-01.
 
 **Checkpoint**: The pre-release is ready for FR-042 validation.
 
