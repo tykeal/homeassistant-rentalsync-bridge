@@ -9,6 +9,7 @@ Pins the requests the V3 reservation source sends to
 from datetime import UTC, datetime
 
 import pytest
+from src.providers.base import PMSAuthenticationError, PMSGuest, PMSProviderError
 from src.providers.guesty import reservations_v3
 
 from tests.conftest import GuestyFakeTransport, GuestyV3Payloads
@@ -87,3 +88,80 @@ class TestV3SearchRequest:
         assert search.query["filter[listingId][in]"] == [
             ",".join(sorted([parent, child]))
         ]
+
+
+class TestGuestsCrudRequest:
+    """``get_guest`` reads ``/v1/guests-crud/{id}`` in V3 mode (FR-001)."""
+
+    async def test_v3_reads_guests_crud_with_fields(
+        self, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """The path and projection are pinned; the body maps to PMSGuest."""
+        guest_id = guesty_transport.payloads.new_id("gst")
+        guesty_transport.guests[guest_id] = guesty_transport.payloads.guests_crud_body(
+            guest_id
+        )
+        provider = guesty_transport.provider(reservations_api="v3")
+
+        guest = await provider.get_guest(guest_id)
+
+        assert guest == PMSGuest(
+            guest_id=guest_id,
+            full_name="Synthetic Guest",
+            phone="+15555550100",
+            email="guest@example.com",
+        )
+        (request,) = guesty_transport.requests
+        assert request.path == f"/v1/guests-crud/{guest_id}"
+        assert request.query == {"fields": ["fullName phone email"]}
+        assert guesty_transport.counts["guests"] == 0
+
+    async def test_v3_missing_guest_is_none(
+        self, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """A 404 is a legitimately absent guest, not an error."""
+        provider = guesty_transport.provider(reservations_api="v3")
+
+        assert await provider.get_guest("6630missing") is None
+        assert guesty_transport.counts["guests_crud"] == 1
+
+    async def test_v3_server_error_raises(
+        self, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """A 5xx surfaces as PMSProviderError so the sync keeps last-good."""
+        guesty_transport.fail("guests_crud", 503)
+        provider = guesty_transport.provider(reservations_api="v3")
+
+        with pytest.raises(PMSProviderError):
+            await provider.get_guest("6630anyguest")
+        assert guesty_transport.counts["guests_crud"] == 1
+
+    async def test_v3_unauthorised_raises_authentication_error(
+        self, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """A 401 surfaces as PMSAuthenticationError."""
+        guesty_transport.fail("guests_crud", 401)
+        provider = guesty_transport.provider(reservations_api="v3")
+
+        with pytest.raises(PMSAuthenticationError):
+            await provider.get_guest("6630anyguest")
+        assert guesty_transport.counts["guests_crud"] == 1
+
+    async def test_legacy_still_reads_v1_guests(
+        self, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """Legacy mode keeps the previous release's guest resource."""
+        guest_id = guesty_transport.payloads.new_id("gst")
+        guesty_transport.guests[guest_id] = guesty_transport.payloads.guests_crud_body(
+            guest_id
+        )
+        provider = guesty_transport.provider(reservations_api="legacy")
+
+        guest = await provider.get_guest(guest_id)
+
+        assert guest is not None
+        assert guest.full_name == "Synthetic Guest"
+        (request,) = guesty_transport.requests
+        assert request.path == f"/v1/guests/{guest_id}"
+        assert request.query == {}
+        assert guesty_transport.counts["guests_crud"] == 0
