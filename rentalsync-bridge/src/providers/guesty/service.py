@@ -482,6 +482,9 @@ class GuestyProvider(PMSProvider):
     async def get_guest(self, guest_id: str) -> PMSGuest | None:
         """Fetch guest details from the Guesty API.
 
+        V3 mode reads ``/v1/guests-crud/{id}`` projected to the three
+        fields used (FR-001); legacy mode reads ``/v1/guests/{id}``.
+
         Args:
             guest_id: Guesty guest ID.
 
@@ -491,11 +494,19 @@ class GuestyProvider(PMSProvider):
         Raises:
             PMSProviderError: On non-404 API failures.
         """
-        response = await self._request(
-            "GET",
-            f"/v1/guests/{guest_id}",
-            raise_on_404=False,
-        )
+        if self._reservations_api == "v3":
+            response = await self._request(
+                "GET",
+                f"/v1/guests-crud/{guest_id}",
+                params={"fields": "fullName phone email"},
+                raise_on_404=False,
+            )
+        else:
+            response = await self._request(
+                "GET",
+                f"/v1/guests/{guest_id}",
+                raise_on_404=False,
+            )
 
         if response.status_code == 404:  # noqa: PLR2004
             return None
