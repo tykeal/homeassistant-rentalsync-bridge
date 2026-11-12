@@ -374,7 +374,7 @@ Follow constitution Principle V:
   - an unknown status is stored verbatim with a WARNING
   - `alteration` is passed through as a hold status
   - the health guard counts `alteration` as classified, with thresholds unchanged (FR-025)
-- [ ] T044 [P] [US4] Write integration tests in tests/integration/test_guesty_v3_sync.py for the alteration lifecycle (FR-023, SC-008):
+- [x] T044 [P] [US4] Write integration tests in tests/integration/test_guesty_v3_sync.py for the alteration lifecycle (FR-023, SC-008):
   - for a stored live stay, status, dates and room are frozen while V3 reports new dates
   - enrichment (custom fields and guest contact) refreshes during the hold
   - the stay is never retired or withheld
