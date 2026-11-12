@@ -521,7 +521,7 @@ Follow constitution Principle V:
   - the legacy removal in a release after 2027-03-01
 - [x] T074 [P] Update rentalsync-bridge/README.md and README.md wherever they describe Guesty endpoints or settings.
 - [x] T075 Run the full suite and static checks from rentalsync-bridge/: `uv run pytest tests/ -q`, `uv run ruff check src/ tests/`, `uv run mypy src/` and interrogate through pre-commit. Fix all findings.
-- [ ] T076 Validate quickstart.md §3 commands against the final test file names, and update specs/004-guesty-reservations-v3/quickstart.md if any changed.
+- [x] T076 Validate quickstart.md §3 commands against the final test file names, and update specs/004-guesty-reservations-v3/quickstart.md if any changed.
 - [x] T077 Re-check that `GuestyProvider` makes no request to `/v1/reservations` or `/v1/guests/{id}` in V3 mode across the whole test suite. This uses the transport's request log in a session-level assertion in tests/contract/test_guesty_v3_contract.py (FR-001, FR-040).
 
 ---
