@@ -454,7 +454,7 @@ Follow constitution Principle V:
 
 ### Tests for User Story 6 (write first, confirm they fail)
 
-- [ ] T055 [P] [US6] Write unit tests in tests/unit/test_guesty_v3_source.py for the description fields (research R10):
+- [x] T055 [P] [US6] Write unit tests in tests/unit/test_guesty_v3_source.py for the description fields (research R10):
   - `guestsCount` is per interval (max), rendered as an int string, and equals legacy for single-segment stays
   - `notes` joins other, guest and specialRequests with `"; "` and excludes `cleaning` and `keyCode`; when all are empty the key is omitted
   - `nightsCount` is computed from the localized reservation dates and equals legacy; unparsable dates omit it
