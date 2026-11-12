@@ -120,7 +120,7 @@ Follow constitution Principle V:
 
   See data-model.md §1.
 - [x] T010 Add `PMSOccupancyInterval` (including `local_dates`), `InlineCustomFields`, `AbsenceVerdict`, `AbsenceResult`, `HOLD_STATUSES`, the three optional `PMSReservation` fields, `PMSProvider.begin_cycle()`, `PMSProvider.confirm_absent()` and `PMSProvider.retired_description_fields` with base defaults in src/providers/base.py. This depends on T009.
-- [ ] T011 Write failing tests in tests/unit/test_sync_service.py that pin the default code paths:
+- [x] T011 Write failing tests in tests/unit/test_sync_service.py that pin the default code paths:
   - with the base `confirm_absent` default, prune behaviour is unchanged for Cloudbeds and Guesty legacy
   - an empty `intervals` keeps today's `room_ids` behaviour
 
