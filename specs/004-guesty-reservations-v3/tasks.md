@@ -432,7 +432,7 @@ Follow constitution Principle V:
 ### Implementation for User Story 5
 
 - [x] T052 [US5] Implement `change_key` computation in the V3 mapper in src/providers/guesty/reservations_v3.py. This makes T048 pass.
-- [ ] T053 [US5] Implement change-key reuse in src/services/sync_service.py:
+- [x] T053 [US5] Implement change-key reuse in src/services/sync_service.py:
   - `BOOKKEEPING_KEYS` and the `_exportable` filter
   - `_guest_name` persistence
   - `_change_key` persistence, written only on full success
