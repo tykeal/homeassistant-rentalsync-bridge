@@ -239,7 +239,7 @@ Follow constitution Principle V:
 
 ### Tests for User Story 2 (write first, confirm they fail)
 
-- [ ] T029 [P] [US2] Write unit tests in tests/unit/test_guesty_v3_source.py for each research R4 guard check:
+- [x] T029 [P] [US2] Write unit tests in tests/unit/test_guesty_v3_source.py for each research R4 guard check:
   - (1) missing or malformed `results`/`pagination`/`hasMore`
   - (2) skip echo mismatch or `len > limit`
   - (3) empty `hasMore` page
