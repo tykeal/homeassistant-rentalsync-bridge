@@ -20,6 +20,7 @@ from src.providers.base import (
     PMSProviderError,
     PMSReservation,
 )
+from src.providers.guesty.description_fields import description_fields
 from src.providers.guesty.legacy_reservations import (
     _CLASSIFIED_STATUSES,
     _EXCLUDED_STATUSES,
@@ -28,9 +29,6 @@ from src.providers.guesty.legacy_reservations import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Reservation-level keys carried into ``custom_data`` unchanged (FR-034).
-_CUSTOM_KEYS = ("source", "confirmationCode")
 
 # The legacy status map plus V3's ``completed``, which is a finished stay
 # exported and aged out like ``checked_out`` (research R7, FR-023).
@@ -263,8 +261,14 @@ def _local_date(value: Any) -> date | None:
 
 
 def _guests(value: Any) -> int | None:
-    """Return a segment's ``guestsCount`` when it is an integer."""
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
+    """Return a segment's ``guestsCount`` when it is an integral number."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return None
 
 
 def _adjacent(previous: dict[str, Any], segment: dict[str, Any]) -> bool:
@@ -407,7 +411,7 @@ def map_search_item(
         check_out=check_out,
         status=status,
         room_ids=tuple(dict.fromkeys(i.room_id for i in intervals)),
-        custom_data={k: item[k] for k in _CUSTOM_KEYS if item.get(k) is not None},
+        custom_data=description_fields(item, segments, intervals),
         intervals=intervals,
         change_key=change_key(item),
         inline_custom_fields=inline_custom_fields(item),

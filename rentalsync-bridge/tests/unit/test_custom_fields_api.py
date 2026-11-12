@@ -21,7 +21,10 @@ def mock_db_session() -> MagicMock:
     avoiding unawaited-coroutine warnings for sync methods like add().
     """
     session = MagicMock(spec=AsyncSession)
-    session.execute = AsyncMock()
+    # Query results are synchronous objects; no credential is configured.
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    session.execute = AsyncMock(return_value=result)
     session.commit = AsyncMock()
     session.flush = AsyncMock()
     session.refresh = AsyncMock()

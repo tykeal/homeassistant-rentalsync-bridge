@@ -600,6 +600,13 @@ header .subtitle {
     flex-shrink: 0;
 }
 
+.badge.retired {
+    background: var(--warning-color);
+    color: var(--text-color);
+    flex-shrink: 0;
+    cursor: help;
+}
+
 .field-buttons {
     display: flex;
     flex-wrap: wrap;

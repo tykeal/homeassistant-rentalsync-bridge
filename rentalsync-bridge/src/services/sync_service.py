@@ -4,14 +4,16 @@
 
 import logging
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.database import get_session_factory
 from src.models.booking import OLD_BOOKING_RETENTION_DAYS, Booking
+from src.models.custom_field import CustomField
 from src.models.listing import Listing
 from src.providers.base import (
     HOLD_STATUSES,
@@ -44,6 +46,11 @@ from src.services.reattribution import (
 from src.utils.stay_time import get_timezone, is_stay_in_progress
 
 logger = logging.getLogger(__name__)
+
+# Whether this process has reported enabled retired description fields
+# (FR-037).  Add-on upgrades restart the process, so once per process is
+# once per upgrade.
+_retired_fields_warned = False
 
 PHONE_LAST_DIGITS = 4
 
@@ -82,6 +89,12 @@ GUEST_SOURCE_ID_KEY = "_guest_source_id"
 GUEST_NAME_KEY = "_guest_name"
 CHANGE_KEY_KEY = "_change_key"
 BOOKKEEPING_KEYS = frozenset({GUEST_SOURCE_ID_KEY, GUEST_NAME_KEY, CHANGE_KEY_KEY})
+
+# Description keys derived from the stay itself (research R10): they
+# describe whichever dates and room a row publishes.
+GUESTS_COUNT_KEY = "guestsCount"
+NIGHTS_COUNT_KEY = "nightsCount"
+_STAY_DERIVED_KEYS = (NIGHTS_COUNT_KEY, GUESTS_COUNT_KEY)
 
 # Enrichment keys owned by the guest lookup rather than the custom-fields
 # endpoint.  Provenance matters: a failed fetch may only fall back to the
@@ -221,6 +234,7 @@ class SyncService:
             logger.debug("Skipping disabled sync for listing %s", listing.pms_id)
             return {"inserted": 0, "updated": 0, "cancelled": 0}
 
+        await self._warn_retired_fields_once(provider)
         try:
             reservations = await provider.get_reservations(listing.pms_id)
             fetched_count = len(reservations)
@@ -344,6 +358,47 @@ class SyncService:
                 .values(last_sync_error=error_msg, last_sync_at=datetime.now(UTC))
             )
             await session.commit()
+
+    async def _warn_retired_fields_once(self, provider: PMSProvider) -> None:
+        """Report enabled description fields the provider no longer supplies.
+
+        Logs one WARNING per retired field enabled on any listing, once
+        per process (FR-037).  The configuration is left untouched
+        (FR-038), and a failed lookup never fails the sync.
+
+        Args:
+            provider: Provider being synced.
+        """
+        global _retired_fields_warned  # noqa: PLW0603 - once per process
+        retired = provider.retired_description_fields
+        if _retired_fields_warned or not isinstance(retired, Mapping) or not retired:
+            return
+        _retired_fields_warned = True
+        try:
+            rows = await self._session.execute(
+                select(CustomField.field_name, Listing.pms_id)
+                .join(Listing, Listing.id == CustomField.listing_id)
+                .where(
+                    CustomField.enabled.is_(True),
+                    CustomField.field_name.in_(list(retired)),
+                )
+            )
+        except Exception as exc:  # the notice is advisory, never fatal
+            _retired_fields_warned = False
+            logger.debug("Retired description field lookup failed: %s", exc)
+            return
+        listings: dict[str, set[str]] = {}
+        for field_name, pms_id in rows.all():
+            listings.setdefault(field_name, set()).add(pms_id)
+        for field_name in retired:
+            if field_name in listings:
+                logger.warning(
+                    "Description field '%s' is no longer supplied by Guesty "
+                    "Reservations V3 and will render empty; enabled on "
+                    "listings: %s. Remove or disable it in the admin UI.",
+                    field_name,
+                    ", ".join(sorted(listings[field_name])),
+                )
 
     @staticmethod
     async def _resolve_field_labels(provider: PMSProvider) -> dict[str, str]:
@@ -815,7 +870,9 @@ class SyncService:
                 continue
             booking.guest_name = self._held_guest_name(booking, reservation)
             booking.guest_phone_last4 = custom_data.get("guest_phone_last4")
-            booking.custom_data = custom_data or None
+            booking.custom_data = (
+                self._held_custom_data(booking.custom_data, custom_data) or None
+            )
             booking.pms_updated_at = reservation.updated_at
             booking.enrichment_data = enrichment_data
             booking.last_fetched_at = datetime.now(UTC)
@@ -831,6 +888,32 @@ class SyncService:
             refreshed,
         )
         return refreshed
+
+    @staticmethod
+    def _held_custom_data(stored: dict | None, incoming: dict) -> dict:
+        """Keep a held row's stay-derived description values as stored.
+
+        Nights and guests describe the stay a row publishes, and a held
+        row keeps publishing its stored dates and room (FR-023), so the
+        in-flight values are never taken; everything else refreshes.
+
+        Args:
+            stored: The row's stored custom data.
+            incoming: The held reservation's fresh custom data.
+
+        Returns:
+            The custom data to store on the held row.
+        """
+        stored = stored or {}
+        held = {
+            key: stored[key] if key in _STAY_DERIVED_KEYS else value
+            for key, value in incoming.items()
+            if key not in _STAY_DERIVED_KEYS or key in stored
+        }
+        for key in _STAY_DERIVED_KEYS:
+            if key in stored and key not in held:
+                held[key] = stored[key]
+        return held
 
     @staticmethod
     def _held_guest_name(booking: Booking, reservation: PMSReservation) -> str | None:
@@ -987,7 +1070,7 @@ class SyncService:
         else:
             # One booking per interval, or per room in the reservation.
             # The "::" delimiter avoids ambiguity with IDs.
-            units: list[tuple[str, str, dict]] = [
+            units: list[tuple[str, str, dict, dict]] = [
                 (
                     f"{pms_booking_id}::{interval.booking_suffix}",
                     interval.room_id,
@@ -997,13 +1080,14 @@ class SyncService:
                         "check_out_date": interval.check_out
                         or base_booking["check_out_date"],
                     },
+                    self._interval_custom_data(base_custom_data, interval),
                 )
                 for interval in intervals
             ] or [
-                (f"{pms_booking_id}::{pms_room_id}", pms_room_id, {})
+                (f"{pms_booking_id}::{pms_room_id}", pms_room_id, {}, base_custom_data)
                 for pms_room_id in room_ids
             ]
-            for booking_id, pms_room_id, dates in units:
+            for booking_id, pms_room_id, dates, custom_data in units:
                 booking_ids.add(booking_id)
 
                 room = await self._room_repo.get_by_pms_id(listing.id, pms_room_id)
@@ -1014,7 +1098,7 @@ class SyncService:
                 final_booking_data = {
                     **base_booking,
                     **dates,
-                    "custom_data": (base_custom_data if base_custom_data else None),
+                    "custom_data": custom_data or None,
                 }
 
                 was_created = await self._upsert_single_booking(
@@ -1026,6 +1110,32 @@ class SyncService:
                     updated += 1
 
         return inserted, updated, booking_ids
+
+    @staticmethod
+    def _interval_custom_data(
+        base_custom_data: dict, interval: PMSOccupancyInterval
+    ) -> dict:
+        """Narrow a reservation's ``guestsCount`` to one interval's own.
+
+        The reservation carries the largest interval count; each interval
+        booking describes only its room's guests, and omits the key when
+        its segments gave none (research R10).  Key order is kept.
+
+        Args:
+            base_custom_data: The reservation's storable custom data.
+            interval: The interval the booking stores.
+
+        Returns:
+            The custom data to store on that interval's booking.
+        """
+        if GUESTS_COUNT_KEY not in base_custom_data:
+            return base_custom_data
+        count = interval.guests_count
+        return {
+            key: str(count) if key == GUESTS_COUNT_KEY else value
+            for key, value in base_custom_data.items()
+            if key != GUESTS_COUNT_KEY or count is not None
+        }
 
     async def _log_missing_room(
         self,

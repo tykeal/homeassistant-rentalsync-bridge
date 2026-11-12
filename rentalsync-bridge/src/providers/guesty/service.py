@@ -25,6 +25,7 @@ from src.providers.base import (
     TokenResult,
 )
 from src.providers.guesty.auth import GUESTY_TOKEN_URL, GuestyTokenManager
+from src.providers.guesty.description_fields import retired_fields_for
 from src.providers.guesty.legacy_reservations import (
     DEFAULT_PAGE_LIMIT,
     LegacyReservationSource,
@@ -376,6 +377,16 @@ class GuestyProvider(PMSProvider):
     def has_separate_custom_fields(self) -> bool:
         """Guesty exposes custom fields via a dedicated v3 endpoint."""
         return True
+
+    @property
+    def retired_description_fields(self) -> dict[str, str]:
+        """Description fields Reservations V3 no longer supplies (FR-036).
+
+        Returns:
+            The retired ``money_*`` fields and their reason in V3 mode;
+            empty in legacy mode.
+        """
+        return dict(retired_fields_for("guesty", self._reservations_api))
 
     async def get_listings(self) -> list[PMSListing]:
         """Fetch all listings from the Guesty API.

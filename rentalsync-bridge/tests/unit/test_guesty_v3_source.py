@@ -16,13 +16,17 @@ from src.providers.base import (
     PMSProviderError,
 )
 from src.providers.guesty import reservations_v3, v3_search
-from src.providers.guesty.legacy_reservations import _resolve_room_id
+from src.providers.guesty.legacy_reservations import (
+    LegacyReservationSource,
+    _resolve_room_id,
+)
 from src.providers.guesty.v3_by_ids import (
     ambiguous_rooms,
     map_by_ids_item,
     normalise_by_ids_item,
 )
 from src.providers.guesty.v3_mapping import change_key, map_search_item
+from src.services.sync_service import SyncService
 
 from tests.conftest import GuestyFakeTransport, GuestyV3Payloads
 
@@ -86,6 +90,9 @@ class TestSingleSegmentMapping:
         assert reservation.custom_data == {
             "source": "airbnb",
             "confirmationCode": "SYN-CODE01",
+            "nightsCount": 3,
+            "guestsCount": 3,
+            "notes": "Synthetic other note; Synthetic guest note",
         }
         # No retiring resource is touched.
         assert guesty_transport.counts["reservations"] == 0
@@ -191,6 +198,227 @@ class TestInlineCustomFields:
 
         assert inline.state == "malformed"
         assert dict(inline.values) == {}
+
+
+def _description(item: dict[str, Any], *scope: str) -> dict[str, Any]:
+    """Map *item* for a listing owning *scope* and return its custom data."""
+    owned = frozenset(scope or {item["stay"][0]["listingId"]})
+    reservation = map_search_item(item, next(iter(owned)), owned)
+    assert reservation is not None
+    return dict(reservation.custom_data)
+
+
+class TestDescriptionFields:
+    """Description-field keys keep their meaning under V3 (T055, research R10)."""
+
+    def test_single_segment_matches_legacy(
+        self, guesty_v3_payloads: GuestyV3Payloads
+    ) -> None:
+        """Every key V3 still supplies renders exactly as legacy does."""
+        p = guesty_v3_payloads
+        listing = p.new_id("lst")
+        item = p.search_item(listing, check_in=7, check_out=11, guests_count=4)
+        legacy = p.as_legacy(item)
+
+        v3 = map_search_item(item, listing, frozenset({listing}))
+        assert v3 is not None
+        legacy_mapped = LegacyReservationSource._map_reservation(legacy, listing)
+        assert legacy_mapped is not None
+        legacy_rendered = SyncService._base_custom_data(legacy_mapped)
+
+        assert SyncService._base_custom_data(v3) == {
+            key: value
+            for key, value in legacy_rendered.items()
+            if not key.startswith("money_")
+        }
+        assert {"guestsCount", "nightsCount", "notes"} <= set(legacy_rendered)
+
+    def test_guests_count_is_the_segment_count(
+        self, guesty_v3_payloads: GuestyV3Payloads
+    ) -> None:
+        """A single segment's ``guestsCount`` is the reservation's count."""
+        p = guesty_v3_payloads
+        item = p.search_item(p.new_id("lst"), guests_count=3)
+
+        assert _description(item)["guestsCount"] == 3
+
+    @pytest.mark.parametrize(("raw", "rendered"), [(3, "3"), (3.0, "3")])
+    def test_guests_count_renders_as_an_int_string(
+        self, guesty_v3_payloads: GuestyV3Payloads, raw: Any, rendered: str
+    ) -> None:
+        """An integral count renders ``3``, never ``3.0``."""
+        p = guesty_v3_payloads
+        listing = p.new_id("lst")
+        item = p.search_item(listing)
+        item["stay"][0]["guestsCount"] = raw
+
+        reservation = map_search_item(item, listing, frozenset({listing}))
+        assert reservation is not None
+
+        assert reservation.intervals[0].guests_count == 3
+        assert SyncService._base_custom_data(reservation)["guestsCount"] == rendered
+
+    @pytest.mark.parametrize("raw", [None, "3", 2.5, True])
+    def test_unusable_guests_count_is_omitted(
+        self, guesty_v3_payloads: GuestyV3Payloads, raw: Any
+    ) -> None:
+        """A missing or non-integral count omits the key, as legacy does."""
+        p = guesty_v3_payloads
+        item = p.search_item(p.new_id("lst"), guests_count=None)
+        if raw is not None:
+            item["stay"][0]["guestsCount"] = raw
+
+        assert "guestsCount" not in _description(item)
+
+    def test_guests_count_is_the_maximum_of_merged_segments(
+        self, guesty_v3_payloads: GuestyV3Payloads
+    ) -> None:
+        """Adjacent same-room segments merge non-additively (max)."""
+        p = guesty_v3_payloads
+        listing = p.new_id("lst")
+        stay = p._segments([(listing, None), (listing, None)], 5, [2, 2])
+        stay[0]["guestsCount"], stay[1]["guestsCount"] = 2, 4
+        item = p.search_item(stay=stay)
+
+        reservation = map_search_item(item, listing, frozenset({listing}))
+        assert reservation is not None
+
+        assert [i.guests_count for i in reservation.intervals] == [4]
+        assert reservation.custom_data["guestsCount"] == 4
+
+    def test_guests_count_is_per_interval(
+        self, guesty_v3_payloads: GuestyV3Payloads
+    ) -> None:
+        """Each interval carries its own count; the reservation the maximum."""
+        p = guesty_v3_payloads
+        parent, unit_a, unit_b = (p.new_id("lst") for _ in range(3))
+        item = p.same_property_move(parent, unit_a, unit_b)
+        item["stay"][0]["guestsCount"], item["stay"][1]["guestsCount"] = 2, 5
+        scope = frozenset({parent, unit_a, unit_b})
+
+        reservation = map_search_item(item, parent, scope)
+        assert reservation is not None
+
+        assert [i.guests_count for i in reservation.intervals] == [2, 5]
+        assert reservation.custom_data["guestsCount"] == 5
+
+    def test_notes_join_in_order_and_skip_secrets(
+        self, guesty_v3_payloads: GuestyV3Payloads
+    ) -> None:
+        """other, guest, specialRequests joined; cleaning and keyCode never."""
+        p = guesty_v3_payloads
+        item = p.search_item(
+            p.new_id("lst"),
+            notes={
+                "keyCode": "0000",
+                "specialRequests": "  Synthetic request  ",
+                "cleaning": "Synthetic cleaning note",
+                "guest": "",
+                "other": "Synthetic other note",
+            },
+        )
+
+        notes = _description(item)["notes"]
+
+        assert notes == "Synthetic other note; Synthetic request"
+        assert "0000" not in notes
+        assert "cleaning" not in notes
+
+    @pytest.mark.parametrize(
+        "notes",
+        [
+            {"other": "", "guest": "  ", "specialRequests": ""},
+            {"cleaning": "Synthetic cleaning note", "keyCode": "0000"},
+            {"other": 5, "guest": None},
+            {},
+        ],
+        ids=["blank", "excluded-only", "non-string", "empty"],
+    )
+    def test_notes_without_text_are_omitted(
+        self, guesty_v3_payloads: GuestyV3Payloads, notes: dict[str, Any]
+    ) -> None:
+        """No usable note text omits the key."""
+        p = guesty_v3_payloads
+        item = p.search_item(p.new_id("lst"), notes=notes)
+
+        assert "notes" not in _description(item)
+
+    @pytest.mark.parametrize("notes", [None, "Synthetic text", ["Synthetic text"]])
+    def test_notes_of_an_unexpected_shape_are_omitted(
+        self, guesty_v3_payloads: GuestyV3Payloads, notes: Any
+    ) -> None:
+        """A missing or non-object ``notes`` omits the key without failing."""
+        p = guesty_v3_payloads
+        item = p.search_item(p.new_id("lst"))
+        if notes is None:
+            del item["notes"]
+        else:
+            item["notes"] = notes
+
+        assert "notes" not in _description(item)
+
+    def test_nights_count_spans_the_whole_reservation(
+        self, guesty_v3_payloads: GuestyV3Payloads
+    ) -> None:
+        """The reservation's nights, even for a listing owning one segment."""
+        p = guesty_v3_payloads
+        listing_a, listing_b = p.new_id("lst"), p.new_id("lst")
+        item = p.tracked_listing_move(listing_a, listing_b)
+
+        assert _description(item, listing_b)["nightsCount"] == 4
+        assert p.as_legacy(item)["nightsCount"] == 4
+
+    def test_nights_count_uses_the_localized_dates(
+        self, guesty_v3_payloads: GuestyV3Payloads
+    ) -> None:
+        """Nights follow the listing's local calendar, not UTC instants."""
+        p = guesty_v3_payloads
+        item = p.search_item(p.new_id("lst"), check_in=7, check_out=10)
+        item["checkInDateLocalized"] = "2030-03-01"
+        item["checkOutDateLocalized"] = "2030-03-06"
+
+        assert _description(item)["nightsCount"] == 5
+
+    @pytest.mark.parametrize(
+        ("check_in", "check_out"),
+        [
+            ("not-a-date", "2030-03-06"),
+            ("2030-03-01", None),
+            (None, None),
+            ("2030-03-06", "2030-03-06"),
+            ("2030-03-06", "2030-03-01"),
+        ],
+        ids=["garbage", "missing-out", "missing-both", "zero", "negative"],
+    )
+    def test_unusable_dates_omit_nights_count(
+        self,
+        guesty_v3_payloads: GuestyV3Payloads,
+        check_in: str | None,
+        check_out: str | None,
+    ) -> None:
+        """Unparsable or non-positive localized dates omit the key."""
+        p = guesty_v3_payloads
+        item = p.search_item(p.new_id("lst"))
+        for key, value in (
+            ("checkInDateLocalized", check_in),
+            ("checkOutDateLocalized", check_out),
+        ):
+            if value is None:
+                item.pop(key)
+            else:
+                item[key] = value
+            for segment in item["stay"]:
+                segment.pop(key, None)
+
+        assert "nightsCount" not in _description(item)
+
+    def test_no_money_fields(self, guesty_v3_payloads: GuestyV3Payloads) -> None:
+        """Payment totals are retired, never re-sourced (FR-036)."""
+        p = guesty_v3_payloads
+        item = p.search_item(p.new_id("lst"))
+        item["money"] = {"totalPaid": 450, "balanceDue": 0, "currency": "USD"}
+
+        assert not [key for key in _description(item) if key.startswith("money")]
 
 
 def _filter_ids(transport: GuestyFakeTransport) -> list[set[str]]:
@@ -1291,3 +1519,41 @@ class TestChangeKey:
         reservation = await _fetch_one(guesty_transport, listing)
 
         assert reservation.change_key == change_key(item)
+
+
+class TestRetiredDescriptionFields:
+    """Payment totals are retired for Guesty V3 only (T060, FR-036)."""
+
+    MONEY = frozenset({"money_totalPaid", "money_balanceDue", "money_currency"})
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("api", "retired"), [("v3", True), ("legacy", False)])
+    async def test_provider_exposes_them_in_v3_mode(
+        self, guesty_transport: GuestyFakeTransport, api: str, retired: bool
+    ) -> None:
+        """The provider reports the retired set only when reading V3."""
+        provider = guesty_transport.provider(reservations_api=api)
+        try:
+            fields = provider.retired_description_fields
+        finally:
+            await provider.aclose()
+
+        assert set(fields) == (self.MONEY if retired else set())
+        assert all(isinstance(reason, str) and reason for reason in fields.values())
+
+    @pytest.mark.parametrize(
+        ("pms_type", "api", "retired"),
+        [
+            ("guesty", "v3", True),
+            ("guesty", "legacy", False),
+            ("cloudbeds", "v3", False),
+            ("cloudbeds", "legacy", False),
+        ],
+    )
+    def test_static_lookup(self, pms_type: str, api: str, retired: bool) -> None:
+        """The lookup needs no provider instance or network call."""
+        from src.providers.guesty.description_fields import retired_fields_for
+
+        assert set(retired_fields_for(pms_type, api)) == (
+            self.MONEY if retired else set()
+        )

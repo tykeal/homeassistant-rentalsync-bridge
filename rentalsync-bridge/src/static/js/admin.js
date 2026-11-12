@@ -1122,6 +1122,28 @@ function renderCustomFields(fields) {
     `).join('');
 
     elements.customFieldsList.innerHTML = html;
+
+    // A retired field stays editable: the PMS no longer supplies its value.
+    elements.customFieldsList.querySelectorAll('.field-item').forEach((item) => {
+        const field = fields[Number(item.dataset.index)];
+        if (field.retired) {
+            item.querySelector('[data-field="field_name"]')
+                .after(retiredBadge(field.retired_reason));
+        }
+    });
+}
+
+/**
+ * Build the "Retired" badge for a field the PMS no longer supplies.
+ * @param {string|null} reason - Why the field is retired (tooltip text)
+ * @returns {HTMLSpanElement} The badge element
+ */
+function retiredBadge(reason) {
+    const badge = document.createElement('span');
+    badge.className = 'badge retired';
+    badge.textContent = 'Retired';
+    badge.title = reason || '';
+    return badge;
 }
 
 /**
@@ -1202,7 +1224,10 @@ function addField() {
         const hint = (field.sample_value !== null && field.sample_value !== undefined && field.sample_value !== '')
             ? ` (e.g. ${field.sample_value})`
             : '';
-        opt.textContent = `${field.display_name}${hint}`;
+        opt.textContent = `${field.display_name}${hint}${field.retired ? ' (Retired)' : ''}`;
+        if (field.retired && field.retired_reason) {
+            opt.title = field.retired_reason;
+        }
         selectEl.appendChild(opt);
     }
 
@@ -1304,6 +1329,9 @@ function addAllFields() {
         removeBtn.setAttribute('aria-label', 'Remove field');
 
         fieldItem.appendChild(fieldNameInput);
+        if (field.retired) {
+            fieldItem.appendChild(retiredBadge(field.retired_reason));
+        }
         fieldItem.appendChild(displayLabelInput);
         fieldItem.appendChild(toggleLabel);
         fieldItem.appendChild(removeBtn);

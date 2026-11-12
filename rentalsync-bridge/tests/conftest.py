@@ -8,7 +8,7 @@ import re
 from collections import Counter
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
@@ -754,6 +754,27 @@ class GuestyV3Payloads:
             item["status"] = search_item["status"]
         if first.get("parentListingId"):
             item["unitTypeId"] = first["parentListingId"]
+        # Description fields as the legacy resource reports them (FR-034,
+        # FR-036): the reservation's guest count and nights, its notes as
+        # ``{note}`` objects, and the money block V3 no longer carries.
+        counts = [
+            segment["guestsCount"]
+            for segment in search_item["stay"]
+            if segment.get("guestsCount") is not None
+        ]
+        if counts:
+            item["guestsCount"] = max(counts)
+        item["nightsCount"] = (
+            date.fromisoformat(search_item["checkOutDateLocalized"])
+            - date.fromisoformat(search_item["checkInDateLocalized"])
+        ).days
+        notes = search_item.get("notes") or {}
+        item["notes"] = [
+            {"note": notes[key]}
+            for key in ("other", "guest", "specialRequests")
+            if notes.get(key)
+        ]
+        item["money"] = {"totalPaid": 450, "balanceDue": 0, "currency": "USD"}
         return item
 
     # -- guests-crud ---------------------------------------------------------
@@ -853,6 +874,7 @@ class GuestyFakeTransport:
         v3_items: Search-shape V3 items (the by-IDs view is derived).
         by_ids_overrides: Explicit by-IDs items keyed by ``_id``.
         custom_fields: Explicit custom-field lists keyed by reservation.
+        custom_field_definitions: The account's custom-field definitions.
         guests: Guest bodies keyed by guest ID (both guest endpoints).
         ignore_reservation_ids: By-IDs ignores ``reservationIds`` and
             returns up to ``ignored_ids_limit`` account items instead.
@@ -866,6 +888,7 @@ class GuestyFakeTransport:
         self.v3_items: list[dict[str, Any]] = []
         self.by_ids_overrides: dict[str, dict[str, Any]] = {}
         self.custom_fields: dict[str, list[dict[str, Any]]] = {}
+        self.custom_field_definitions: list[dict[str, Any]] = []
         self.guests: dict[str, dict[str, Any]] = {}
         self.ignore_reservation_ids = False
         self.ignored_ids_limit = 10
@@ -1195,8 +1218,8 @@ class GuestyFakeTransport:
     def _serve_custom_field_definitions(
         self, _path: str, _params: httpx.QueryParams
     ) -> httpx.Response:
-        """Serve the (empty) custom-field definitions list."""
-        return httpx.Response(200, json=[])
+        """Serve the account's custom-field definitions (default: none)."""
+        return httpx.Response(200, json=self.custom_field_definitions)
 
 
 @pytest.fixture

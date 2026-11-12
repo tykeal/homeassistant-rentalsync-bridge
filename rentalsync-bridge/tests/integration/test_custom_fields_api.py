@@ -428,3 +428,175 @@ class TestUpdateCustomFields:
         remaining_names = [f.field_name for f in remaining_fields]
         assert "guest_phone_last4" not in remaining_names
         assert "guestName" in remaining_names
+
+
+MONEY_FIELDS = ("money_totalPaid", "money_balanceDue", "money_currency")
+MONEY_REASON = (
+    "Guesty Reservations V3 no longer includes payment totals on reservations"
+)
+
+
+class TestRetiredFields:
+    """``money_*`` fields are flagged, never removed (T056, FR-037/038)."""
+
+    @pytest.fixture
+    def reservations_api(self, monkeypatch):
+        """Select the Guesty reservations API for one test."""
+        from src.config import get_settings
+
+        def select_api(value: str) -> None:
+            monkeypatch.setenv("GUESTY_RESERVATIONS_API", value)
+            get_settings.cache_clear()
+
+        yield select_api
+        monkeypatch.undo()
+        get_settings.cache_clear()
+
+    @staticmethod
+    async def _listing(session, pms_type: str | None) -> Listing:
+        """Persist a listing with every money field discovered and enabled."""
+        from src.models.available_field import AvailableField
+        from src.models.oauth_credential import OAuthCredential
+
+        if pms_type is not None:
+            credential = OAuthCredential(client_id="client", pms_type=pms_type)
+            credential.client_secret = "secret"
+            session.add(credential)
+        listing = Listing(
+            pms_id="PROP1",
+            name="Test Property",
+            ical_url_slug="test-property",
+            enabled=True,
+            sync_enabled=True,
+        )
+        session.add(listing)
+        await session.commit()
+        await session.refresh(listing)
+        for n, key in enumerate((*MONEY_FIELDS, "source")):
+            session.add(
+                AvailableField(
+                    listing_id=listing.id,
+                    field_key=key,
+                    display_name=key,
+                    sample_value="1",
+                )
+            )
+            session.add(
+                CustomField(
+                    listing_id=listing.id,
+                    field_name=key,
+                    display_label=f"Label {n}",
+                    enabled=True,
+                    sort_order=n,
+                )
+            )
+        await session.commit()
+        return listing
+
+    @staticmethod
+    async def _responses(app, listing_id: int) -> dict[str, list[dict]]:
+        """GET both field endpoints and PUT the configuration back."""
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            base = f"/api/listings/{listing_id}"
+            configured = (await client.get(f"{base}/custom-fields")).json()["fields"]
+            available = (await client.get(f"{base}/available-custom-fields")).json()[
+                "available_fields"
+            ]
+            put = await client.put(
+                f"{base}/custom-fields",
+                json={
+                    "fields": [
+                        {
+                            "field_name": f["field_name"],
+                            "display_label": f["display_label"],
+                            "enabled": f["field_name"] != "money_currency",
+                            "sort_order": f["sort_order"],
+                        }
+                        for f in configured
+                    ]
+                },
+            )
+            assert put.status_code == 200
+        return {
+            "configured": configured,
+            "available": available,
+            "put": put.json()["fields"],
+        }
+
+    @staticmethod
+    def _flags(entries: list[dict], key: str) -> dict[str, tuple]:
+        """Index each entry's retired flag and reason by field name."""
+        return {e[key]: (e["retired"], e["retired_reason"]) for e in entries}
+
+    @pytest.mark.asyncio
+    async def test_flagged_in_v3_mode(
+        self, fields_app, fields_session, reservations_api
+    ):
+        """GET, available fields and the PUT response all flag money_*."""
+        reservations_api("v3")
+        listing = await self._listing(fields_session, "guesty")
+
+        responses = await self._responses(fields_app, listing.id)
+
+        for name, key in (
+            ("configured", "field_name"),
+            ("available", "field_key"),
+            ("put", "field_name"),
+        ):
+            flags = self._flags(responses[name], key)
+            for field in MONEY_FIELDS:
+                assert flags[field] == (True, MONEY_REASON), (name, field)
+            assert flags["source"] == (False, None), name
+
+    @pytest.mark.asyncio
+    async def test_put_never_deletes_a_retired_field(
+        self, fields_app, fields_session, reservations_api
+    ):
+        """A retired field is saved, disabled and kept like any other."""
+        reservations_api("v3")
+        listing = await self._listing(fields_session, "guesty")
+
+        responses = await self._responses(fields_app, listing.id)
+
+        put = {f["field_name"]: f for f in responses["put"]}
+        assert set(put) == {*MONEY_FIELDS, "source"}
+        assert put["money_currency"]["enabled"] is False
+        assert put["money_totalPaid"]["enabled"] is True
+        stored = (
+            (
+                await fields_session.execute(
+                    select(CustomField.field_name).where(
+                        CustomField.listing_id == listing.id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert set(stored) == {*MONEY_FIELDS, "source"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("api", "pms_type"),
+        [("legacy", "guesty"), ("v3", "cloudbeds"), ("v3", None)],
+        ids=["guesty-legacy", "cloudbeds", "no-credential"],
+    )
+    async def test_not_flagged_otherwise(
+        self, fields_app, fields_session, reservations_api, api, pms_type
+    ):
+        """Legacy Guesty, Cloudbeds and an unconfigured PMS retire nothing."""
+        reservations_api(api)
+        listing = await self._listing(fields_session, pms_type)
+
+        responses = await self._responses(fields_app, listing.id)
+
+        for name, key in (
+            ("configured", "field_name"),
+            ("available", "field_key"),
+            ("put", "field_name"),
+        ):
+            assert set(self._flags(responses[name], key).values()) == {(False, None)}, (
+                name
+            )

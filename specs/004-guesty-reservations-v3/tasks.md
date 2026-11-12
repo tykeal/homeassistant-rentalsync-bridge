@@ -454,25 +454,25 @@ Follow constitution Principle V:
 
 ### Tests for User Story 6 (write first, confirm they fail)
 
-- [ ] T055 [P] [US6] Write unit tests in tests/unit/test_guesty_v3_source.py for the description fields (research R10):
+- [x] T055 [P] [US6] Write unit tests in tests/unit/test_guesty_v3_source.py for the description fields (research R10):
   - `guestsCount` is per interval (max), rendered as an int string, and equals legacy for single-segment stays
   - `notes` joins other, guest and specialRequests with `"; "` and excludes `cleaning` and `keyCode`; when all are empty the key is omitted
   - `nightsCount` is computed from the localized reservation dates and equals legacy; unparsable dates omit it
   - no `money_*` keys are produced
-- [ ] T056 [P] [US6] Write integration tests in tests/integration/test_custom_fields_api.py (contracts/admin-custom-fields.md):
+- [x] T056 [P] [US6] Write integration tests in tests/integration/test_custom_fields_api.py (contracts/admin-custom-fields.md):
   - GET custom-fields, GET available-custom-fields and the PUT response carry `retired`/`retired_reason` for `money_*` in V3 mode
   - the flags are false in legacy mode and for Cloudbeds
   - PUT round-trips a retired field, and its configuration is never deleted
-- [ ] T057 [P] [US6] Write a unit test in tests/unit/test_sync_service.py for the one-time WARNING per enabled retired field. It names the listings, is logged once per process, and is not logged in legacy mode (FR-037).
-- [ ] T058 [P] [US6] Write a test in tests/integration/test_guesty_v3_sync.py for custom-field label continuity: labels resolved from the account definitions are unchanged in V3 mode (US6-3, FR-035).
+- [x] T057 [P] [US6] Write a unit test in tests/unit/test_sync_service.py for the one-time WARNING per enabled retired field. It names the listings, is logged once per process, and is not logged in legacy mode (FR-037).
+- [x] T058 [P] [US6] Write a test in tests/integration/test_guesty_v3_sync.py for custom-field label continuity: labels resolved from the account definitions are unchanged in V3 mode (US6-3, FR-035).
 
 ### Implementation for User Story 6
 
-- [ ] T059 [US6] Add `guestsCount`, `notes` and `nightsCount` mapping to src/providers/guesty/reservations_v3.py. This makes T055 pass.
-- [ ] T060 [US6] Create src/providers/guesty/description_fields.py with `RETIRED_DESCRIPTION_FIELDS`. Expose it through `GuestyProvider.retired_description_fields` in V3 mode only, and add a static `retired_fields_for(pms_type, reservations_api)` helper.
-- [ ] T061 [US6] Add `retired` and `retired_reason` to `CustomFieldResponse` and `AvailableFieldResponse` and populate them on GET and PUT in src/api/custom_fields.py. This depends on T060 and makes T056 pass.
-- [ ] T062 [US6] Emit the one-time retired-field WARNING at the first V3 sync in src/services/sync_service.py. This depends on T060 and makes T057 pass.
-- [ ] T063 [P] [US6] Show a "Retired" badge, with `retired_reason` as its title, for retired fields in src/static/js/admin.js. Add any badge style in src/templates/admin.html. The field stays editable.
+- [x] T059 [US6] Add `guestsCount`, `notes` and `nightsCount` mapping to src/providers/guesty/reservations_v3.py. This makes T055 pass.
+- [x] T060 [US6] Create src/providers/guesty/description_fields.py with `RETIRED_DESCRIPTION_FIELDS`. Expose it through `GuestyProvider.retired_description_fields` in V3 mode only, and add a static `retired_fields_for(pms_type, reservations_api)` helper.
+- [x] T061 [US6] Add `retired` and `retired_reason` to `CustomFieldResponse` and `AvailableFieldResponse` and populate them on GET and PUT in src/api/custom_fields.py. This depends on T060 and makes T056 pass.
+- [x] T062 [US6] Emit the one-time retired-field WARNING at the first V3 sync in src/services/sync_service.py. This depends on T060 and makes T057 pass.
+- [x] T063 [P] [US6] Show a "Retired" badge, with `retired_reason` as its title, for retired fields in src/static/js/admin.js. Add any badge style in src/templates/admin.html. The field stays editable.
 
 **Checkpoint**: SC-009 is met.
 

@@ -1025,6 +1025,131 @@ class TestUpgradeContinuity:
             if request.resource in retiring
         ]
 
+    async def test_description_fields_are_identical(self, v3: _Fixture) -> None:
+        """Configured description lines survive the switch (T055, SC-009).
+
+        Only the retired payment-total lines disappear; every other line,
+        the guest count and derived nights included, renders unchanged.
+        """
+        from src.models.custom_field import CustomField
+        from src.services.calendar_service import CalendarService
+
+        await v3.setup(check_in=3, check_out=7, guests_count=3)
+        p = v3.transport.payloads
+        v3.transport.legacy_reservations = [p.as_legacy(v3.item)]
+        retired = ("money_totalPaid", "money_balanceDue", "money_currency")
+        names = ("source", "confirmationCode", "nightsCount", "guestsCount", "notes")
+        enabled = [
+            CustomField(
+                listing_id=v3.listing.id,
+                field_name=name,
+                display_label=f"Label {n}",
+                enabled=True,
+                sort_order=n,
+            )
+            for n, name in enumerate((*names, *retired))
+        ]
+        v3.session.add_all(enabled)
+        await v3.session.commit()
+
+        async def description() -> list[str]:
+            """Render the listing's single event's description lines."""
+            from icalendar import Calendar
+
+            repo = BookingRepository(v3.session)
+            bookings = list(await repo.get_confirmed_for_listing(v3.listing.id))
+            for booking in bookings:
+                await v3.session.refresh(booking)
+            feed = CalendarService(cache=CalendarCache(ttl_seconds=0)).generate_ical(
+                v3.listing, bookings, custom_fields=enabled
+            )
+            (event,) = Calendar.from_ical(feed).walk("VEVENT")
+            return str(event["DESCRIPTION"]).splitlines()
+
+        await v3.sync_with(v3.transport.provider(reservations_api="legacy"), v3.listing)
+        legacy = await description()
+        await v3.sync()
+        upgraded = await description()
+
+        money = {f"Label {n}" for n in range(len(names), len(names) + len(retired))}
+        assert [line for line in legacy if line.split(":")[0] in money]
+        assert upgraded == [line for line in legacy if line.split(":")[0] not in money]
+        assert [line for line in upgraded if line.startswith("Label")] == [
+            "Label 0: direct",
+            f"Label 1: {v3.item['confirmationCode']}",
+            "Label 2: 4",
+            "Label 3: 3",
+            "Label 4: Synthetic other note; Synthetic guest note",
+        ]
+        assert upgraded[-1] == f"Booking ID: {v3.item['reservationId']}"
+
+    async def test_custom_field_labels_are_unchanged(self, v3: _Fixture) -> None:
+        """Account-defined labels resolve identically in V3 (T058, FR-035).
+
+        Discovered labels come from the same account definitions, and a
+        label the owner configured is never rewritten by the switch.
+        """
+        from sqlalchemy import delete, select
+        from src.models.available_field import AvailableField
+        from src.models.custom_field import CustomField
+        from src.providers.guesty.service import clear_custom_field_definitions_cache
+
+        p = v3.transport.payloads
+        defined, undefined = p.new_id("cf"), p.new_id("cf")
+        await v3.setup(
+            custom_fields=p.custom_fields({defined: "4242", undefined: "Synthetic"})
+        )
+        v3.transport.legacy_reservations = [p.as_legacy(v3.item)]
+        v3.transport.custom_field_definitions = [
+            {"object": "reservation", "fieldId": defined, "key": "Door lock code"}
+        ]
+        v3.session.add(
+            CustomField(
+                listing_id=v3.listing.id,
+                field_name=defined,
+                display_label="Owner's label",
+                enabled=True,
+                sort_order=0,
+            )
+        )
+        await v3.session.commit()
+
+        async def labels() -> dict[str, Any]:
+            """Return discovered and configured labels for both fields."""
+            rows = await v3.session.execute(
+                select(AvailableField.field_key, AvailableField.display_name).where(
+                    AvailableField.listing_id == v3.listing.id,
+                    AvailableField.field_key.in_((defined, undefined)),
+                )
+            )
+            configured = await v3.session.execute(
+                select(CustomField.field_name, CustomField.display_label).where(
+                    CustomField.listing_id == v3.listing.id
+                )
+            )
+            return {
+                "discovered": dict(rows.all()),
+                "configured": dict(configured.all()),
+            }
+
+        clear_custom_field_definitions_cache()
+        await v3.sync_with(v3.transport.provider(reservations_api="legacy"), v3.listing)
+        legacy = await labels()
+        await v3.session.execute(
+            delete(AvailableField).where(AvailableField.listing_id == v3.listing.id)
+        )
+        await v3.session.commit()
+        clear_custom_field_definitions_cache()
+        await v3.sync()
+        upgraded = await labels()
+        clear_custom_field_definitions_cache()
+
+        assert legacy == {
+            "discovered": {defined: "Door lock code", undefined: undefined},
+            "configured": {defined: "Owner's label"},
+        }
+        assert upgraded == legacy
+
 
 def _segment_span(segment: dict[str, Any]) -> tuple[datetime, datetime]:
     """Return a search segment's UTC ``(checkIn, checkOut)`` instants."""
@@ -1303,6 +1428,38 @@ class TestAlterationHold:
             p.check_out_at(9),
             v3.room_id,
         )
+
+    async def test_stay_derived_description_is_frozen(self, v3: _Fixture) -> None:
+        """Nights and guests describe the published stay, not the altered one.
+
+        Both derive from the in-flight stay, so they stay as stored for
+        as long as the dates and room do (FR-023); notes keep refreshing.
+        """
+        await v3.setup(check_in=2, check_out=5, guests_count=2)
+        await v3.sync()
+        before = (await v3.bookings())[v3.booking_id].custom_data
+        assert (before["nightsCount"], before["guestsCount"]) == ("3", "2")
+
+        _reissue(
+            v3,
+            status="alteration",
+            check_in=2,
+            check_out=9,
+            guests_count=6,
+            notes={"other": "Synthetic altered note"},
+        )
+        await v3.sync()
+
+        held = (await v3.bookings())[v3.booking_id].custom_data
+        assert list(held) == list(before)
+        assert (held["nightsCount"], held["guestsCount"]) == ("3", "2")
+        assert held["notes"] == "Synthetic altered note"
+
+        _reissue(v3, status="confirmed", check_in=2, check_out=9, guests_count=6)
+        await v3.sync()
+
+        released = (await v3.bookings())[v3.booking_id].custom_data
+        assert (released["nightsCount"], released["guestsCount"]) == ("7", "6")
 
     async def test_enrichment_refreshes_during_the_hold(
         self, v3: _Fixture, guesty_transport: GuestyFakeTransport
