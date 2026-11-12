@@ -489,7 +489,7 @@ Follow constitution Principle V:
 
 ### Tests for User Story 7 (write first, confirm they fail)
 
-- [ ] T064 [P] [US7] Write an integration test in tests/integration/test_guesty_v3_toggle.py (new) for SC-011:
+- [x] T064 [P] [US7] Write an integration test in tests/integration/test_guesty_v3_toggle.py (new) for SC-011:
   - V3 → legacy → V3 against one DB, with no migration
   - single-segment UIDs and `Booking ID:` lines are unchanged
   - multi-segment `#n` rows retire in legacy mode while the first interval keeps `{rid}::{room}`
