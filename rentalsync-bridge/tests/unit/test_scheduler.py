@@ -332,6 +332,7 @@ class TestScheduledSyncStatusPersistence:
             return (reservations_by_listing or {}).get(pms_id, [])
 
         provider.get_reservations = AsyncMock(side_effect=get_reservations)
+        provider.begin_cycle = MagicMock()
         return provider
 
     @staticmethod

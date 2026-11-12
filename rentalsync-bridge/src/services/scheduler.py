@@ -221,6 +221,7 @@ class SyncScheduler:
 
                 # Create provider from credential
                 provider = create_provider_for_credential(credential, session)
+                provider.begin_cycle([listing.pms_id for listing in listings])
                 # Sync each listing
                 sync_service = SyncService(
                     session=session,
