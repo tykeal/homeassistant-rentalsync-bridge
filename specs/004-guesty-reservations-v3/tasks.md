@@ -346,7 +346,7 @@ Follow constitution Principle V:
   - `room_ids` = distinct interval rooms
 
   Replace the US1 first-segment partitioning. This makes T039 pass.
-- [ ] T042 [US3] Complete interval handling in src/services/sync_service.py:
+- [x] T042 [US3] Complete interval handling in src/services/sync_service.py:
   - room resolution per interval
   - unassigned parent → listing-level booking with no room, as today
   - prune of disappearing interval IDs
