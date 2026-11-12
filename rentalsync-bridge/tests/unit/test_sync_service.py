@@ -4198,6 +4198,7 @@ class TestOccupancyIntervalBookings:
                 check_out=_test_date(19),
                 room_ids=("IGNORED",),
                 guest_id="G1" if enriched else None,
+                guest_name=None if enriched else "John Smith",
             ),
             intervals=(
                 interval("U1", 1, 10, 13),

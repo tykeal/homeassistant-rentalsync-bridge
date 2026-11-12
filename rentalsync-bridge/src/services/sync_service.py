@@ -4,7 +4,7 @@
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import update
@@ -1358,15 +1358,9 @@ class SyncService:
         ):
             return reservation
 
-        return PMSReservation(
-            pms_booking_id=reservation.pms_booking_id,
-            listing_pms_id=reservation.listing_pms_id,
+        return replace(
+            reservation,
             guest_name=resolved_name,
-            guest_id=reservation.guest_id,
-            check_in=reservation.check_in,
-            check_out=reservation.check_out,
-            status=reservation.status,
-            room_ids=reservation.room_ids,
             custom_data={**_exportable(data), **reservation.custom_data},
             updated_at=updated_at,
         )
