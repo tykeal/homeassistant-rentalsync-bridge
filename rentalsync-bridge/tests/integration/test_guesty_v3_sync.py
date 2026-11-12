@@ -308,3 +308,144 @@ class TestIdentityVerification:
             for record in caplog.records
         )
         assert (await v3.bookings())[v3.booking_id].status == "confirmed"
+
+
+def _events(feed: str) -> dict[str, dict[str, Any]]:
+    """Index a rendered feed's events by UID."""
+    from icalendar import Calendar
+
+    events: dict[str, dict[str, Any]] = {}
+    for event in Calendar.from_ical(feed).walk("VEVENT"):
+        description = str(event.get("DESCRIPTION", ""))
+        booking_line = [
+            line for line in description.splitlines() if line.startswith("Booking ID:")
+        ]
+        events[str(event["UID"])] = {
+            "DTSTART": event["DTSTART"].to_ical(),
+            "DTEND": event["DTEND"].to_ical(),
+            "SUMMARY": str(event["SUMMARY"]),
+            "Booking ID": booking_line,
+        }
+    return events
+
+
+class TestUpgradeContinuity:
+    """Switching legacy → V3 republishes identical events (T022, SC-002)."""
+
+    async def test_single_segment_feeds_are_identical(
+        self,
+        async_session: AsyncSession,
+        async_session_factory: async_sessionmaker[AsyncSession],
+        guesty_reference_account: Any,
+    ) -> None:
+        """UIDs, dates, summaries, booking IDs and door codes survive."""
+        from src.services.calendar_service import CalendarService
+
+        account = guesty_reference_account
+        transport: GuestyFakeTransport = account.transport
+        p = transport.payloads
+        multi_segment = {
+            str(item["reservationId"])
+            for item in transport.v3_items
+            if len(item["stay"]) > 1
+        }
+        # Give a few fresh stays door-code custom fields; legacy reads them
+        # through the per-reservation endpoint, V3 inline.
+        fresh = [
+            item
+            for item in transport.v3_items
+            if str(item["reservationId"]) in account.freshness_ids
+            and str(item["reservationId"]) not in multi_segment
+        ]
+        for n, item in enumerate(fresh[:4]):
+            item["customFields"] = p.custom_fields({DOOR_CODE: f"{n:04d}"})
+
+        listings: list[Listing] = []
+        for n, pms_id in enumerate(account.tracked_listing_ids):
+            listing = make_listing(pms_id=pms_id, slug=f"ref-{n}", timezone="UTC")
+            async_session.add(listing)
+            await async_session.commit()
+            await async_session.refresh(listing)
+            rooms = (
+                account.sub_units if pms_id == account.multi_unit_parent else (pms_id,)
+            )
+            for m, room_id in enumerate(rooms):
+                async_session.add(
+                    make_room(
+                        listing_id=listing.id,
+                        pms_room_id=room_id,
+                        slug=f"ref-{n}-{m}",
+                    )
+                )
+            await async_session.commit()
+            listings.append(listing)
+
+        async def sync_and_render(
+            provider: Any,
+        ) -> tuple[dict[str, dict[str, Any]], dict[str, tuple[Any, ...]]]:
+            """Sync every listing, then return its feed events and codes."""
+            service = SyncService(
+                async_session,
+                calendar_cache=CalendarCache(ttl_seconds=0),
+                session_factory=async_session_factory,
+            )
+            events: dict[str, dict[str, Any]] = {}
+            codes: dict[str, tuple[Any, ...]] = {}
+            repo = BookingRepository(async_session)
+            for listing in listings:
+                await service.sync_listing(listing, provider)
+                bookings = list(await repo.get_confirmed_for_listing(listing.id))
+                for booking in bookings:
+                    await async_session.refresh(booking)
+                feed = CalendarService(
+                    cache=CalendarCache(ttl_seconds=0)
+                ).generate_ical(listing, bookings)
+                events.update(_events(feed))
+                for booking in bookings:
+                    data = booking.custom_data or {}
+                    codes[booking.pms_booking_id] = (
+                        booking.guest_phone_last4,
+                        data.get(DOOR_CODE),
+                        data.get("confirmationCode"),
+                    )
+            return events, codes
+
+        legacy_events, legacy_codes = await sync_and_render(
+            transport.provider(reservations_api="legacy")
+        )
+        v3_start = len(transport.requests)
+        provider = transport.provider(reservations_api="v3")
+        provider.begin_cycle(list(account.tracked_listing_ids))
+        v3_events, v3_codes = await sync_and_render(provider)
+
+        def single_segment(events: dict[str, Any]) -> dict[str, Any]:
+            """Drop the events of multi-segment stays."""
+            return {
+                uid: event
+                for uid, event in events.items()
+                if not any(rid in uid for rid in multi_segment)
+            }
+
+        expected = single_segment(legacy_events)
+        assert len(expected) > 20
+        assert single_segment(v3_events) == expected
+        assert any(event["Booking ID"] for event in expected.values())
+
+        def single_codes(codes: dict[str, Any]) -> dict[str, Any]:
+            """Drop the bookings of multi-segment stays."""
+            return {
+                key: value
+                for key, value in codes.items()
+                if key.split("::")[0] not in multi_segment
+            }
+
+        assert single_codes(v3_codes) == single_codes(legacy_codes)
+        assert {code for _, code, _ in legacy_codes.values()} >= {"0000", "0001"}
+        assert {last4 for last4, _, _ in legacy_codes.values()} == {"0100"}
+
+        retiring = {"reservations", "guests"}
+        assert not [
+            request
+            for request in transport.requests[v3_start:]
+            if request.resource in retiring
+        ]
