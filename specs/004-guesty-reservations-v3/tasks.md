@@ -255,7 +255,7 @@ Follow constitution Principle V:
 - [x] T030 [US2] Write unit tests in tests/unit/test_guesty_v3_source.py:
   - HTTP 400 on search → `PMSProviderError` naming the status and an excerpt (FR-021), never an empty result
   - a missing `status` key → abort (FR-026)
-- [ ] T031 [P] [US2] Write contract tests in tests/contract/test_guesty_v3_contract.py for by-IDs (contracts/guesty-v3-by-ids.md):
+- [x] T031 [P] [US2] Write contract tests in tests/contract/test_guesty_v3_contract.py for by-IDs (contracts/guesty-v3-by-ids.md):
   - form-exploded `reservationIds`
   - ≤ 10 IDs per call, the control always included, and 9 candidates per batch
   - no request when there are no candidates
