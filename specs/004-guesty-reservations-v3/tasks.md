@@ -49,7 +49,7 @@ Follow constitution Principle V:
 
 **Purpose**: Synthetic V3 fixtures and a counting fake transport used by every later phase.
 
-- [ ] T001 Create synthetic V3 payload builders as a factory fixture `guesty_v3_payloads` in tests/conftest.py. Include:
+- [x] T001 Create synthetic V3 payload builders as a factory fixture `guesty_v3_payloads` in tests/conftest.py. Include:
   - `search_item()`, `stay_segment()`, `search_page(results, skip, limit, has_more)`
   - `by_ids_item()` in the by-IDs shape (`_id`, per-segment `unitId`/`unitTypeId`, localized dates only), and `as_by_ids(search_item)` that converts one search item to the by-IDs shape so both endpoints describe the same reservation
   - `guests_crud_body()`
