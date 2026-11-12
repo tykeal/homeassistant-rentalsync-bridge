@@ -24,7 +24,7 @@ from src.providers.guesty.service import GuestyProvider
 from src.services.calendar_service import CalendarCache
 from src.services.sync_service import SyncService, SyncServiceError
 
-from tests.conftest import make_listing, make_room
+from tests.conftest import confirm_all_absent, make_listing, make_room
 
 
 class TestGuest404Fallback:
@@ -265,6 +265,7 @@ class TestCancelledReservation:
         mock_provider = AsyncMock()
         mock_provider.provider_type = "guesty"
         mock_provider.has_separate_custom_fields = True
+        mock_provider.confirm_absent = AsyncMock(side_effect=confirm_all_absent)
         mock_provider.get_reservations = AsyncMock(
             return_value=[
                 PMSReservation(

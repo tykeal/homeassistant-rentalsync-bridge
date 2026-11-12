@@ -31,6 +31,8 @@ from src.services.sync_service import (
     SyncServiceError,
 )
 
+from tests.conftest import confirm_all_absent
+
 
 @pytest.fixture
 async def sync_engine():
@@ -91,6 +93,7 @@ def mock_provider():
     provider.get_custom_fields = AsyncMock(return_value={})
     provider.has_separate_custom_fields = False
     provider.provider_type = "cloudbeds"
+    provider.confirm_absent = AsyncMock(side_effect=confirm_all_absent)
     return provider
 
 
@@ -3894,11 +3897,6 @@ class TestCustomFieldLabels:
 # --- Spec 004 provider-agnostic seams (T011) ---------------------------------
 
 
-def _confirm_all(listing_pms_id, reservation_ids):
-    """Delegate to the base ``confirm_absent`` default (``self`` is unused)."""
-    return PMSProvider.confirm_absent(None, listing_pms_id, reservation_ids)  # type: ignore[arg-type]
-
-
 def _verdicts(verdict, *, reservation=None):
     """Build a ``confirm_absent`` side effect answering *verdict* for every ID."""
     from src.providers.base import AbsenceResult
@@ -3960,7 +3958,7 @@ class TestAbsenceConfirmationSeam:
         mock_provider.get_reservations = AsyncMock(
             return_value=[_make_reservation(pms_booking_id="KEPT")]
         )
-        mock_provider.confirm_absent = AsyncMock(side_effect=_confirm_all)
+        mock_provider.confirm_absent = AsyncMock(side_effect=confirm_all_absent)
 
         result = await SyncService(sync_session).sync_listing(
             test_listing, mock_provider
@@ -4000,7 +3998,7 @@ class TestAbsenceConfirmationSeam:
         mock_provider.get_reservations = AsyncMock(
             return_value=[_make_reservation(pms_booking_id="SEEN")]
         )
-        mock_provider.confirm_absent = AsyncMock(side_effect=_confirm_all)
+        mock_provider.confirm_absent = AsyncMock(side_effect=confirm_all_absent)
 
         await SyncService(sync_session).sync_listing(test_listing, mock_provider)
 
@@ -4042,7 +4040,7 @@ class TestAbsenceConfirmationSeam:
 
         async def only_a(listing_pms_id, reservation_ids):
             """Answer for A only."""
-            return await _confirm_all(listing_pms_id, ["A"])
+            return await confirm_all_absent(listing_pms_id, ["A"])
 
         mock_provider.confirm_absent = AsyncMock(side_effect=only_a)
 

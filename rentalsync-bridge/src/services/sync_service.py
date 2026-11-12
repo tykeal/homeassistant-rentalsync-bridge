@@ -15,7 +15,10 @@ from src.models.booking import OLD_BOOKING_RETENTION_DAYS, Booking
 from src.models.listing import Listing
 from src.providers.base import (
     RECOGNISED_NON_EXPORT_STATUSES,
+    AbsenceResult,
+    AbsenceVerdict,
     PMSGuest,
+    PMSOccupancyInterval,
     PMSProvider,
     PMSProviderError,
     PMSReservation,
@@ -199,6 +202,11 @@ class SyncService:
             )
             self._log_reservation_snapshot(listing, reservations)
 
+            # Ask the provider about stored reservations missing from the
+            # snapshot before anything is written, so an inconsistent
+            # answer fails this listing with the stored bookings untouched.
+            absence = await self._confirm_absences(provider, listing, reservations)
+
             # Resolve guest details and provider custom fields, reusing
             # stored values for unchanged out-of-window reservations.
             reservations, enrichment = await self._enrich_reservations(
@@ -210,6 +218,7 @@ class SyncService:
                 reservations,
                 enrichment,
                 await self._resolve_field_labels(provider),
+                absence=absence,
             )
 
             # Update sync status on success.  This has to be committed here
@@ -335,12 +344,122 @@ class SyncService:
             listing.id, field_labels or {}
         )
 
+    async def _confirm_absences(
+        self,
+        provider: PMSProvider,
+        listing: Listing,
+        reservations: list[PMSReservation],
+    ) -> dict[str, AbsenceResult]:
+        """Ask the provider whether stored, now-absent reservations are gone.
+
+        Candidates are the stored bookings the prune loop would otherwise
+        retire: not already cancelled, within retention, not in progress,
+        and whose base reservation is missing from the snapshot.
+
+        Args:
+            provider: Provider that produced the snapshot.
+            listing: Listing being synced.
+            reservations: Retention-filtered snapshot.
+
+        Returns:
+            Results by base reservation ID; empty when there are no
+            candidates or the provider's answer is unusable (every
+            candidate is then kept).
+
+        Raises:
+            PMSProviderError: If any candidate is ``INCONSISTENT``.
+        """
+        seen = {r.pms_booking_id for r in reservations if r.pms_booking_id}
+        candidates: set[str] = set()
+        for booking in await self._booking_repo.get_for_listing(listing.id):
+            base_id = self._extract_base_reservation_id(booking.pms_booking_id)
+            if (
+                booking.status == "cancelled"
+                or base_id in seen
+                or self._is_beyond_retention(booking)
+                or self._is_in_progress(booking, listing)
+            ):
+                continue
+            candidates.add(base_id)
+        if not candidates:
+            return {}
+
+        # Typed as object: an answer that is not a dict must keep every row.
+        results: object = await provider.confirm_absent(
+            listing.pms_id, sorted(candidates)
+        )
+        if not isinstance(results, dict):
+            logger.error(
+                "Provider returned an unusable absence answer for listing %s; "
+                "keeping %d absent reservation(s)",
+                listing.pms_id,
+                len(candidates),
+            )
+            return {}
+
+        inconsistent = sorted(
+            rid
+            for rid, result in results.items()
+            if getattr(result, "verdict", None) is AbsenceVerdict.INCONSISTENT
+        )
+        if inconsistent:
+            msg = (
+                f"Provider reported an inconsistent state for reservation(s) "
+                f"{', '.join(inconsistent)}; no bookings were changed"
+            )
+            raise PMSProviderError(msg)
+        return results
+
+    def _keep_unconfirmed_absence(
+        self,
+        booking_id: str,
+        listing: Listing,
+        result: AbsenceResult | None,
+    ) -> bool:
+        """Decide whether an absent booking must be kept, logging why.
+
+        Args:
+            booking_id: Stored booking ID.
+            listing: Listing being synced.
+            result: The provider's answer for the booking's reservation.
+
+        Returns:
+            True unless the provider confirmed the reservation absent.
+        """
+        verdict = getattr(result, "verdict", None)
+        if verdict is AbsenceVerdict.CONFIRMED_ABSENT:
+            return False
+        if result is None or verdict is None:
+            logger.error(
+                "Keeping booking %s for listing %s: provider gave no absence verdict",
+                booking_id,
+                listing.pms_id,
+            )
+        elif verdict is AbsenceVerdict.REATTRIBUTED:
+            logger.info(
+                "Keeping booking %s for listing %s: reservation re-attributed (%s)",
+                booking_id,
+                listing.pms_id,
+                result.detail,
+            )
+        else:
+            logger.warning(
+                "Keeping booking %s for listing %s: absence %s (%s)",
+                booking_id,
+                listing.pms_id,
+                verdict,
+                result.detail,
+            )
+        return True
+
     async def _process_reservations(
         self,
         listing: Listing,
         reservations: list[PMSReservation],
         enrichment: dict[str, dict] | None = None,
         field_labels: dict[str, str] | None = None,
+        *,
+        absence: dict[str, AbsenceResult],
     ) -> dict[str, int]:
         """Process reservations and update local bookings.
 
@@ -350,6 +469,8 @@ class SyncService:
             enrichment: Enrichment-owned values by reservation ID, persisted
                 so the next sync can reuse them without re-fetching.
             field_labels: Provider-supplied labels for custom field keys.
+            absence: ``confirm_absent`` results by base reservation ID; an
+                absent booking is retired only when confirmed absent.
 
         Returns:
             Dict with counts: inserted, updated, cancelled.
@@ -400,6 +521,7 @@ class SyncService:
                 listing,
                 reservation.pms_booking_id,
                 booking_data,
+                intervals=reservation.intervals,
             )
             counts["inserted"] += inserted
             counts["updated"] += updated
@@ -454,7 +576,11 @@ class SyncService:
                     existing_booking.status,
                 )
                 continue
-            # Reservation no longer exists at all
+            if self._keep_unconfirmed_absence(
+                booking_id, listing, absence.get(base_reservation_id)
+            ):
+                continue
+            # Reservation confirmed gone
             await self._booking_repo.mark_cancelled(existing_booking)
             counts["cancelled"] += 1
 
@@ -524,15 +650,20 @@ class SyncService:
         listing: Listing,
         pms_booking_id: str,
         booking_data: dict,
+        *,
+        intervals: tuple[PMSOccupancyInterval, ...] = (),
     ) -> tuple[int, int, set[str]]:
         """Create booking records for a reservation.
 
-        For multi-room reservations, creates one booking per room.
+        With occupancy intervals, creates one booking per interval keyed
+        ``{rid}::{room}`` or ``{rid}::{room}#n``; otherwise one booking per
+        room in ``room_ids``.
 
         Args:
             listing: The listing being synced.
             pms_booking_id: The PMS reservation ID.
             booking_data: Extracted booking data.
+            intervals: Per-room occupancy intervals; overrides ``room_ids``.
 
         Returns:
             Tuple of (inserted_count, updated_count, set of IDs).
@@ -557,7 +688,7 @@ class SyncService:
         }
 
         # If no rooms specified, create booking without room association
-        if not room_ids:
+        if not room_ids and not intervals:
             booking_id = str(pms_booking_id)
             booking_ids.add(booking_id)
             # Use base custom data as-is (no room-specific data to merge)
@@ -573,11 +704,25 @@ class SyncService:
             else:
                 updated += 1
         else:
-            # Create a booking for EACH room in the reservation
-            for pms_room_id in room_ids:
-                # Always use composite booking ID when room ID is present
-                # Use "::" delimiter to avoid ambiguity with IDs
-                booking_id = f"{pms_booking_id}::{pms_room_id}"
+            # One booking per interval, or per room in the reservation.
+            # The "::" delimiter avoids ambiguity with IDs.
+            units: list[tuple[str, str, dict]] = [
+                (
+                    f"{pms_booking_id}::{interval.booking_suffix}",
+                    interval.room_id,
+                    {
+                        "check_in_date": interval.check_in
+                        or base_booking["check_in_date"],
+                        "check_out_date": interval.check_out
+                        or base_booking["check_out_date"],
+                    },
+                )
+                for interval in intervals
+            ] or [
+                (f"{pms_booking_id}::{pms_room_id}", pms_room_id, {})
+                for pms_room_id in room_ids
+            ]
+            for booking_id, pms_room_id, dates in units:
                 booking_ids.add(booking_id)
 
                 room = await self._room_repo.get_by_pms_id(listing.id, pms_room_id)
@@ -587,6 +732,7 @@ class SyncService:
 
                 final_booking_data = {
                     **base_booking,
+                    **dates,
                     "custom_data": (base_custom_data if base_custom_data else None),
                 }
 

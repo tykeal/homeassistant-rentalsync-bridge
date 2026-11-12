@@ -313,6 +313,22 @@ def make_pms_guest(
     )
 
 
+async def confirm_all_absent(
+    listing_pms_id: str, reservation_ids: list[str]
+) -> dict[str, Any]:
+    """Reproduce the base ``PMSProvider.confirm_absent`` default.
+
+    ``AsyncMock(spec=PMSProvider)`` would otherwise answer with a mock,
+    which the sync treats as unusable and keeps every absent booking.
+    Use as ``AsyncMock(side_effect=confirm_all_absent)``.
+    """
+    return await PMSProvider.confirm_absent(
+        None,  # type: ignore[arg-type]
+        listing_pms_id,
+        reservation_ids,
+    )
+
+
 def make_mock_provider(
     *,
     provider_type: str = "guesty",
@@ -329,6 +345,7 @@ def make_mock_provider(
     mock.get_rooms = AsyncMock(return_value=rooms or [])
     mock.get_guest = AsyncMock(return_value=guest)
     mock.get_custom_fields = AsyncMock(return_value={})
+    mock.confirm_absent = AsyncMock(side_effect=confirm_all_absent)
     return mock
 
 
