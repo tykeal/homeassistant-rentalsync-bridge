@@ -419,11 +419,13 @@ class TestUpgradeContinuity:
         v3_events, v3_codes = await sync_and_render(provider)
 
         def single_segment(events: dict[str, Any]) -> dict[str, Any]:
-            """Drop the events of multi-segment stays."""
+            """Drop the events of multi-segment stays (UIDs are hashed)."""
             return {
                 uid: event
                 for uid, event in events.items()
-                if not any(rid in uid for rid in multi_segment)
+                if not any(
+                    rid in line for line in event["Booking ID"] for rid in multi_segment
+                )
             }
 
         expected = single_segment(legacy_events)
