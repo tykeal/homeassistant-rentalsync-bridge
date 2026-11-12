@@ -157,7 +157,7 @@ Follow constitution Principle V:
   - no `fields`
   - an untracked listing's ID never appears in the filter
   - the window dates computed from a frozen clock per research R3, including both 1-day pads
-- [ ] T016 [US1] Write a contract test in tests/contract/test_guesty_v3_contract.py for guests-crud (contracts/guesty-guests-crud.md):
+- [x] T016 [US1] Write a contract test in tests/contract/test_guesty_v3_contract.py for guests-crud (contracts/guesty-guests-crud.md):
   - the path `/v1/guests-crud/{id}` and `fields=fullName phone email`
   - 404 → `None`, 5xx → `PMSProviderError`, 401 → `PMSAuthenticationError`
   - legacy mode still calls `/v1/guests/{id}`
