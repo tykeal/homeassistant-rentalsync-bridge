@@ -347,8 +347,15 @@
     {
       "rule": "ai-slop/todo-stub",
       "engine": "ai-slop",
-      "file": "rentalsync-bridge/src/providers/guesty/service.py",
+      "file": "rentalsync-bridge/src/providers/guesty/legacy_reservations.py",
       "fingerprint": "2fbd0c17a426844c",
+      "count": 1
+    },
+    {
+      "rule": "complexity/file-too-large",
+      "engine": "code-quality",
+      "file": "rentalsync-bridge/src/providers/guesty/legacy_reservations.py",
+      "fingerprint": "message:96b0128c3491727f",
       "count": 1
     },
     {
