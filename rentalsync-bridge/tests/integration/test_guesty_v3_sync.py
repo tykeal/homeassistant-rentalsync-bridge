@@ -1472,3 +1472,58 @@ async def _withheld(v3: _Fixture) -> list[dict[str, Any]]:
         response = await client.get("/api/bookings/withheld")
     assert response.status_code == 200
     return response.json()["bookings"]
+
+
+class TestUnknownStatus:
+    """An unknown V3 status is withheld, never retired (T045, US4-3/4)."""
+
+    async def test_withheld_and_listed_in_the_panel(
+        self, v3: _Fixture, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Stored verbatim, out of the feed, in the panel, warned."""
+        await v3.setup()
+        await v3.sync()
+        assert len(await v3.feed()) == 1
+
+        _reissue(v3, status="synthetic_new")
+        with caplog.at_level(logging.WARNING):
+            counts = await v3.sync()
+
+        row = (await v3.bookings())[v3.booking_id]
+        assert row.status == "synthetic_new"
+        assert counts["cancelled"] == 0
+        assert await v3.feed() == {}
+        (entry,) = await _withheld(v3)
+        assert entry["pms_booking_id"] == v3.booking_id
+        assert entry["status"] == "synthetic_new"
+        assert any(
+            "synthetic_new" in r.getMessage() and r.levelno == logging.WARNING
+            for r in caplog.records
+        )
+
+    async def test_majority_unclassified_keeps_last_good(
+        self, v3: _Fixture, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """Over half of four or more unknown: abort, nothing changes."""
+        p = guesty_transport.payloads
+        await v3.setup()
+        pms_id = v3.listing.pms_id
+        others = [
+            p.search_item(pms_id, check_in=6 + 3 * n, check_out=8 + 3 * n)
+            for n in range(3)
+        ]
+        guesty_transport.v3_items = [v3.item, *others]
+        await v3.sync()
+        before = {k: _shape(r) for k, r in (await v3.bookings()).items()}
+        feed_before = await v3.feed()
+        assert len(before) == 4
+
+        for item in others:
+            item["status"] = "synthetic_new"
+        with pytest.raises(SyncServiceError, match="unrecognised"):
+            await v3.sync()
+
+        assert {k: _shape(r) for k, r in (await v3.bookings()).items()} == before
+        assert await v3.feed() == feed_before
+        await v3.session.refresh(v3.listing)
+        assert v3.listing.last_sync_error
