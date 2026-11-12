@@ -96,7 +96,7 @@ Follow constitution Principle V:
   - `" Legacy "` normalises to `"legacy"`
   - an invalid value raises at construction
   - the `GUESTY_RESERVATIONS_API` env var is read
-- [ ] T006 Add `guesty_reservations_api: Literal["v3", "legacy"]` with a normalising validator to `Settings` in src/config.py (contracts/addon-toggle.md). This depends on T005.
+- [x] T006 Add `guesty_reservations_api: Literal["v3", "legacy"]` with a normalising validator to `Settings` in src/config.py (contracts/addon-toggle.md). This depends on T005.
 - [ ] T007 [P] Write failing tests in tests/unit/test_provider_registry.py:
   - `create_provider_for_credential` passes `reservations_api` from settings to `GuestyProvider`
   - `GuestyProvider(reservations_api="legacy")` selects `LegacyReservationSource`
