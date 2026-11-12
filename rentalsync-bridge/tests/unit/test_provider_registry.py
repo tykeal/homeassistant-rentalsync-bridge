@@ -243,3 +243,114 @@ class TestConcurrency:
             results = [f.result() for f in as_completed(futures)]
 
         assert all(r is _StubProvider for r in results)
+
+
+# ---------------------------------------------------------------------------
+# Guesty reservations API toggle wiring (spec 004, FR-041)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _settings_env(monkeypatch):
+    """Isolate get_settings() so a test can set GUESTY_RESERVATIONS_API."""
+    from src.config import get_settings
+
+    get_settings.cache_clear()
+    yield monkeypatch
+    get_settings.cache_clear()
+
+
+def _credential(pms_type: str):
+    """Build an unsaved credential for *pms_type*."""
+    from src.models.oauth_credential import OAuthCredential
+
+    if pms_type == "guesty":
+        return OAuthCredential(
+            pms_type="guesty", client_id="synthetic-id", client_secret="synthetic"
+        )
+    return OAuthCredential(pms_type=pms_type, api_key="synthetic-key")
+
+
+class TestReservationsApiWiring:
+    """create_provider_for_credential and GuestyProvider honour the toggle."""
+
+    @pytest.mark.parametrize("value", ["v3", "legacy"])
+    def test_factory_passes_setting_to_guesty(self, _settings_env, value):
+        """The Guesty branch forwards reservations_api from settings."""
+        from unittest.mock import MagicMock, patch
+
+        from src.providers.factory import create_provider_for_credential
+
+        _settings_env.setenv("GUESTY_RESERVATIONS_API", value)
+        with patch("src.providers.factory.create_provider") as create:
+            create_provider_for_credential(_credential("guesty"), MagicMock())
+        assert create.call_args.args == ("guesty",)
+        assert create.call_args.kwargs["reservations_api"] == value
+
+    def test_factory_does_not_pass_setting_to_cloudbeds(self, _settings_env):
+        """Cloudbeds ignores the toggle: no reservations_api kwarg is sent."""
+        from unittest.mock import MagicMock, patch
+
+        from src.providers.factory import create_provider_for_credential
+
+        _settings_env.setenv("GUESTY_RESERVATIONS_API", "v3")
+        with patch("src.providers.factory.create_provider") as create:
+            create_provider_for_credential(_credential("cloudbeds"), MagicMock())
+        assert create.call_args.args == ("cloudbeds",)
+        assert "reservations_api" not in create.call_args.kwargs
+
+    def test_cloudbeds_constructs_with_setting(self):
+        """CloudbedsProvider tolerates the kwarg (registry compatibility)."""
+        from src.providers.cloudbeds.provider import CloudbedsProvider
+
+        assert CloudbedsProvider(api_key="k", reservations_api="v3")
+
+    def test_guesty_legacy_selects_legacy_source(self):
+        """reservations_api='legacy' selects LegacyReservationSource."""
+        from src.providers.guesty.legacy_reservations import (
+            LegacyReservationSource,
+        )
+        from src.providers.guesty.service import GuestyProvider
+
+        provider = GuestyProvider(reservations_api="legacy")
+        assert isinstance(provider._reservations, LegacyReservationSource)
+
+    def test_guesty_default_is_legacy(self):
+        """Without the kwarg GuestyProvider stays on the legacy source."""
+        from src.providers.guesty.legacy_reservations import (
+            LegacyReservationSource,
+        )
+        from src.providers.guesty.service import GuestyProvider
+
+        assert isinstance(GuestyProvider()._reservations, LegacyReservationSource)
+
+    def test_guesty_v3_selects_v3_source(self):
+        """reservations_api='v3' selects the V3ReservationSource stub."""
+        from src.providers.guesty.reservations_v3 import V3ReservationSource
+        from src.providers.guesty.service import GuestyProvider
+
+        provider = GuestyProvider(reservations_api="v3")
+        assert isinstance(provider._reservations, V3ReservationSource)
+
+    def test_guesty_unknown_value_raises(self):
+        """An unknown reservations_api is a programming error."""
+        from src.providers.guesty.service import GuestyProvider
+
+        with pytest.raises(ValueError, match="reservations_api"):
+            GuestyProvider(reservations_api="v2")
+
+    async def test_v3_stub_fails_safely(self, guesty_transport):
+        """Selecting v3 before it exists raises PMSProviderError, never [].
+
+        The error is raised before any reservation request, so the sync
+        aborts the listing without handing the prune loop a snapshot.
+        """
+        from src.providers.base import PMSProviderError
+
+        guesty_transport.add_listing("L1")
+        provider = guesty_transport.provider(reservations_api="v3")
+        with pytest.raises(PMSProviderError, match="guesty_reservations_api"):
+            await provider.get_reservations("L1")
+        await provider.aclose()
+        assert guesty_transport.counts["reservations"] == 0
+        assert guesty_transport.counts["v3_search"] == 0
