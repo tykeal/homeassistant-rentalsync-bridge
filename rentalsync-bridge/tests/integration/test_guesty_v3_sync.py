@@ -1783,8 +1783,10 @@ class TestGuestLookupFailure:
     """A failed guest lookup outside a hold (T050, FR-031, FR-032)."""
 
     @staticmethod
-    async def _stored(v3: _Fixture, *, reassigned: bool, **extra: Any) -> None:
-        """Store last-good contact and fail the next lookup.
+    async def _stored(
+        v3: _Fixture, *, reassigned: bool, status: int = 503, **extra: Any
+    ) -> None:
+        """Store last-good contact and fail the next lookup with ``status``.
 
         The contact belongs to the stay's guest, or to another guest when
         ``reassigned``.
@@ -1802,13 +1804,16 @@ class TestGuestLookupFailure:
             enrichment_data=contact,
             guest_phone_last4="0100",
         )
-        v3.transport.fail("guests_crud", 503)
+        v3.transport.fail("guests_crud", status)
 
+    @pytest.mark.parametrize("status", [503, 404])
     async def test_reassignment_publishes_no_previous_contact(
-        self, v3: _Fixture
+        self, v3: _Fixture, status: int
     ) -> None:
         """The previous guest's last-4 and name are never published."""
-        await self._stored(v3, reassigned=True, _guest_name="Stored Name")
+        await self._stored(
+            v3, reassigned=True, status=status, _guest_name="Stored Name"
+        )
 
         await v3.sync()
 
@@ -1820,11 +1825,14 @@ class TestGuestLookupFailure:
         assert "0100" not in str(row.enrichment_data)
         assert "Stored Name" not in str(row.enrichment_data)
 
+    @pytest.mark.parametrize("status", [503, 404])
     async def test_same_guest_keeps_contact_and_recorded_name(
-        self, v3: _Fixture
+        self, v3: _Fixture, status: int
     ) -> None:
         """Last-good contact and ``_guest_name`` survive (US5-4)."""
-        await self._stored(v3, reassigned=False, _guest_name="Stored Name")
+        await self._stored(
+            v3, reassigned=False, status=status, _guest_name="Stored Name"
+        )
         guest_id = v3.item["guestId"]
 
         await v3.sync()
