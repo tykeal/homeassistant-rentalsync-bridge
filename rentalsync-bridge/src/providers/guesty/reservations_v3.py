@@ -20,7 +20,12 @@ from src.providers.guesty.legacy_reservations import (
     _guard_unclassified,
     _overlaps_window,
 )
-from src.providers.guesty.v3_mapping import map_search_item, owned_by
+from src.providers.guesty.v3_by_ids import (
+    MAX_CANDIDATES_PER_CALL,
+    AbsenceContext,
+    confirm_batch,
+)
+from src.providers.guesty.v3_mapping import map_search_item, owned_by, reservation_id
 from src.providers.guesty.v3_search import combined_search, pack_chunks
 from src.utils.datetime_utils import ensure_utc
 
@@ -109,6 +114,7 @@ class V3ReservationSource:
         self._scopes: dict[str, Scopes | PMSProviderError] = {}
         self._result: list[dict[str, Any]] | PMSProviderError | None = None
         self._window: tuple[date, date] | None = None
+        self._filter_ids: frozenset[str] = frozenset()
 
     def begin_cycle(self, listing_pms_ids: Sequence[str]) -> None:
         """Declare the cycle's listings and drop the previous cycle's state.
@@ -167,8 +173,10 @@ class V3ReservationSource:
                     else scope[0] | {listing}
                 )
                 families.append(fetch_ids)
+            self._filter_ids = frozenset().union(*families)
             try:
                 window = self._window or search_window(*default_window(_utcnow()))
+                self._window = window
                 items, pages = await combined_search(
                     self._request, pack_chunks(families), window
                 )
@@ -237,33 +245,68 @@ class V3ReservationSource:
         _guard_unclassified(unclassified, len(reservations), listing_pms_id)
         return reservations
 
-    def confirm_absent(
+    def _control(
+        self,
+        items: list[dict[str, Any]],
+        scope_ids: frozenset[str],
+        candidates: set[str],
+    ) -> str | None:
+        """Pick the control: a searched reservation, this listing's first."""
+        others = sorted(
+            (not owned_by(item, scope_ids), reservation_id(item))
+            for item in items
+            if reservation_id(item) not in candidates
+        )
+        return others[0][1] if others else None
+
+    async def confirm_absent(
         self, listing_pms_id: str, reservation_ids: Sequence[str]
     ) -> dict[str, AbsenceResult]:
-        """Leave every absent reservation unconfirmed (interim, until US2).
+        """Confirm reservations absent from the search through a by-IDs lookup.
 
         Offset paging can skip a reservation without any detectable page
-        fault, so absence from the search alone must never retire a
-        booking.  Until the by-ID confirmation lookup (research R5)
-        exists, every candidate is kept.
+        fault, so absence from the search alone never retires a booking
+        (FR-011a).  Candidates are looked up by ID, at most nine per call
+        plus one control reservation the search returned; the verdicts
+        follow research R5.
 
         Args:
             listing_pms_id: Listing being synced.
             reservation_ids: Base reservation IDs absent from its snapshot.
 
         Returns:
-            ``UNCONFIRMED`` for every ID.
+            One result per requested ID.
         """
-        if reservation_ids:
-            logger.info(
-                "Guesty V3: keeping %d reservation(s) absent from listing %s's "
-                "search; absence confirmation is not available yet",
-                len(reservation_ids),
+        candidates = sorted(set(reservation_ids))
+        if not candidates:
+            return {}
+        scope = self._scopes.get(listing_pms_id)
+        if (
+            not isinstance(self._result, list)
+            or self._window is None
+            or not isinstance(scope, tuple)
+        ):
+            logger.warning(
+                "Guesty V3: no accepted search for listing %s; keeping its %d "
+                "absent reservation(s)",
                 listing_pms_id,
+                len(candidates),
             )
-        return {
-            rid: AbsenceResult(
-                AbsenceVerdict.UNCONFIRMED, detail="V3 absence check unavailable"
-            )
-            for rid in reservation_ids
-        }
+            return {
+                rid: AbsenceResult(AbsenceVerdict.UNCONFIRMED, detail="no search")
+                for rid in candidates
+            }
+        items = self._result
+        context = AbsenceContext(
+            listing_pms_id=listing_pms_id,
+            scope_ids=scope[1],
+            filter_ids=self._filter_ids,
+            searched_ids=frozenset(reservation_id(item) for item in items),
+            window=self._window,
+        )
+        control = self._control(items, scope[1], set(candidates))
+        results: dict[str, AbsenceResult] = {}
+        for i in range(0, len(candidates), MAX_CANDIDATES_PER_CALL):
+            batch = candidates[i : i + MAX_CANDIDATES_PER_CALL]
+            results.update(await confirm_batch(self._request, context, batch, control))
+        return results

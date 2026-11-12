@@ -406,7 +406,9 @@ class GuestyProvider(PMSProvider):
             One result per requested ID.
         """
         if isinstance(self._reservations, V3ReservationSource):
-            return self._reservations.confirm_absent(listing_pms_id, reservation_ids)
+            return await self._reservations.confirm_absent(
+                listing_pms_id, reservation_ids
+            )
         return await super().confirm_absent(listing_pms_id, reservation_ids)
 
     async def get_reservations(

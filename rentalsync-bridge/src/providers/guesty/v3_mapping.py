@@ -224,13 +224,18 @@ def _local_date(value: Any) -> date | None:
 
 
 def _intervals(
-    segments: list[dict[str, Any]], scope_ids: frozenset[str]
+    segments: list[dict[str, Any]],
+    scope_ids: frozenset[str],
+    *,
+    with_instants: bool = True,
 ) -> tuple[PMSOccupancyInterval, ...]:
     """Build the occupancy intervals of the segments a listing owns.
 
     Args:
         segments: Validated stay segments.
         scope_ids: Listing IDs owned by the listing being synced.
+        with_instants: False for by-IDs segments, which carry only local
+            dates; their intervals then have no UTC instants.
 
     Returns:
         One interval per owned segment; ordinals count repeats per room.
@@ -249,8 +254,10 @@ def _intervals(
             PMSOccupancyInterval(
                 room_id=room,
                 ordinal=seen[room],
-                check_in=_parse_date(segment.get("checkIn")),
-                check_out=_parse_date(segment.get("checkOut")),
+                check_in=_parse_date(segment.get("checkIn")) if with_instants else None,
+                check_out=_parse_date(segment.get("checkOut"))
+                if with_instants
+                else None,
                 local_dates=(check_in_local, check_out_local)
                 if check_in_local and check_out_local
                 else None,
