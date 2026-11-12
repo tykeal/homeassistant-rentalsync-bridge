@@ -316,6 +316,7 @@ def _intervals(
             and _adjacent(previous, segment)
         ):
             intervals[-1] = _merge(intervals[-1], segment)
+            previous = segment
             continue
         previous = segment if owned else None
         if not owned:
