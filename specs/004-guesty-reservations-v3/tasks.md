@@ -91,7 +91,7 @@ Follow constitution Principle V:
   - `GuestyProvider` delegates to the source.
 
   No behaviour change. tests/unit/test_guesty_service.py, tests/integration/test_guesty_sync.py and tests/integration/test_guesty_edge_cases.py must pass unmodified, except for import paths.
-- [ ] T005 [P] Write failing tests in tests/unit/test_config.py for `Settings.guesty_reservations_api`:
+- [x] T005 [P] Write failing tests in tests/unit/test_config.py for `Settings.guesty_reservations_api`:
   - the default is `"legacy"` until the final PR flips it to `"v3"` (see the deviation note above)
   - `" Legacy "` normalises to `"legacy"`
   - an invalid value raises at construction
