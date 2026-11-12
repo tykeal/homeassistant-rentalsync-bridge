@@ -593,6 +593,47 @@ class SyncService:
             reattributions or {}, seen_booking_ids, seen_reservation_ids
         )
 
+        counts["cancelled"] += await self._prune_absent(
+            listing, seen_booking_ids, seen_reservation_ids, absence
+        )
+
+        await self._session.commit()
+
+        # Invalidate calendar cache AFTER commit to avoid race conditions
+        # Use prefix invalidation to clear all room-level caches for this listing
+        if self._calendar_cache and sum(counts.values()) > 0:
+            self._calendar_cache.invalidate_prefix(listing.ical_url_slug)
+            logger.debug("Invalidated cache for listing %s", listing.ical_url_slug)
+
+        logger.info(
+            "Synced listing %s: %d inserted, %d updated, %d cancelled",
+            listing.pms_id,
+            counts["inserted"],
+            counts["updated"],
+            counts["cancelled"],
+        )
+
+        return counts
+
+    async def _prune_absent(
+        self,
+        listing: Listing,
+        seen_booking_ids: set[str],
+        seen_reservation_ids: set[str],
+        absence: dict[str, AbsenceResult],
+    ) -> int:
+        """Retire stored bookings the snapshot no longer accounts for.
+
+        Args:
+            listing: Listing being synced.
+            seen_booking_ids: Booking IDs the sync kept.
+            seen_reservation_ids: Reservation IDs present in the snapshot.
+            absence: ``confirm_absent`` results by base reservation ID.
+
+        Returns:
+            The number of bookings retired.
+        """
+        cancelled = 0
         # Mark cancelled bookings (not in current fetch)
         # A booking is cancelled if neither its exact ID nor its base reservation ID
         # is in the seen sets. This handles transitions between single/multi-room.
@@ -620,7 +661,7 @@ class SyncService:
                 # been re-created under its new room ID, so keeping the
                 # stale per-room booking would duplicate the stay.
                 await self._booking_repo.mark_cancelled(existing_booking)
-                counts["cancelled"] += 1
+                cancelled += 1
                 continue
             if self._is_in_progress(existing_booking, listing):
                 # Reservation missing from the fetch but the stay is
@@ -648,25 +689,9 @@ class SyncService:
                 continue
             # Reservation confirmed gone
             await self._booking_repo.mark_cancelled(existing_booking)
-            counts["cancelled"] += 1
+            cancelled += 1
 
-        await self._session.commit()
-
-        # Invalidate calendar cache AFTER commit to avoid race conditions
-        # Use prefix invalidation to clear all room-level caches for this listing
-        if self._calendar_cache and sum(counts.values()) > 0:
-            self._calendar_cache.invalidate_prefix(listing.ical_url_slug)
-            logger.debug("Invalidated cache for listing %s", listing.ical_url_slug)
-
-        logger.info(
-            "Synced listing %s: %d inserted, %d updated, %d cancelled",
-            listing.pms_id,
-            counts["inserted"],
-            counts["updated"],
-            counts["cancelled"],
-        )
-
-        return counts
+        return cancelled
 
     async def _apply_reattributions(
         self,
