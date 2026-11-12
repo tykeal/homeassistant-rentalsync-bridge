@@ -4,14 +4,16 @@
 
 import logging
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.database import get_session_factory
 from src.models.booking import OLD_BOOKING_RETENTION_DAYS, Booking
+from src.models.custom_field import CustomField
 from src.models.listing import Listing
 from src.providers.base import (
     HOLD_STATUSES,
@@ -44,6 +46,11 @@ from src.services.reattribution import (
 from src.utils.stay_time import get_timezone, is_stay_in_progress
 
 logger = logging.getLogger(__name__)
+
+# Whether this process has reported enabled retired description fields
+# (FR-037).  Add-on upgrades restart the process, so once per process is
+# once per upgrade.
+_retired_fields_warned = False
 
 PHONE_LAST_DIGITS = 4
 
@@ -227,6 +234,7 @@ class SyncService:
             logger.debug("Skipping disabled sync for listing %s", listing.pms_id)
             return {"inserted": 0, "updated": 0, "cancelled": 0}
 
+        await self._warn_retired_fields_once(provider)
         try:
             reservations = await provider.get_reservations(listing.pms_id)
             fetched_count = len(reservations)
@@ -350,6 +358,47 @@ class SyncService:
                 .values(last_sync_error=error_msg, last_sync_at=datetime.now(UTC))
             )
             await session.commit()
+
+    async def _warn_retired_fields_once(self, provider: PMSProvider) -> None:
+        """Report enabled description fields the provider no longer supplies.
+
+        Logs one WARNING per retired field enabled on any listing, once
+        per process (FR-037).  The configuration is left untouched
+        (FR-038), and a failed lookup never fails the sync.
+
+        Args:
+            provider: Provider being synced.
+        """
+        global _retired_fields_warned  # noqa: PLW0603 - once per process
+        retired = provider.retired_description_fields
+        if _retired_fields_warned or not isinstance(retired, Mapping) or not retired:
+            return
+        _retired_fields_warned = True
+        try:
+            rows = await self._session.execute(
+                select(CustomField.field_name, Listing.pms_id)
+                .join(Listing, Listing.id == CustomField.listing_id)
+                .where(
+                    CustomField.enabled.is_(True),
+                    CustomField.field_name.in_(list(retired)),
+                )
+            )
+        except Exception as exc:  # the notice is advisory, never fatal
+            _retired_fields_warned = False
+            logger.debug("Retired description field lookup failed: %s", exc)
+            return
+        listings: dict[str, set[str]] = {}
+        for field_name, pms_id in rows.all():
+            listings.setdefault(field_name, set()).add(pms_id)
+        for field_name in retired:
+            if field_name in listings:
+                logger.warning(
+                    "Description field '%s' is no longer supplied by Guesty "
+                    "Reservations V3 and will render empty; enabled on "
+                    "listings: %s. Remove or disable it in the admin UI.",
+                    field_name,
+                    ", ".join(sorted(listings[field_name])),
+                )
 
     @staticmethod
     async def _resolve_field_labels(provider: PMSProvider) -> dict[str, str]:
