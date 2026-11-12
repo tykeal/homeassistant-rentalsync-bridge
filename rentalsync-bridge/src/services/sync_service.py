@@ -1270,6 +1270,10 @@ class SyncService:
         if not provider.has_separate_custom_fields:
             return {}, False
 
+        inline = self._inline_custom_fields(reservation, cached, payload_keys)
+        if inline is not None:
+            return inline
+
         try:
             return await provider.get_custom_fields(reservation.pms_booking_id), False
         except PMSProviderError:
@@ -1283,11 +1287,69 @@ class SyncService:
                 reservation.pms_booking_id,
                 exc_info=True,
             )
-            if cached is None:
-                return {}, True
-            if cached.data is not None:
-                return _enrichment_owned(cached.data), True
-            return self._bootstrap_custom_fields(cached, payload_keys), True
+            return self._last_good_custom_fields(cached, payload_keys), True
+
+    def _inline_custom_fields(
+        self,
+        reservation: PMSReservation,
+        cached: _StoredEnrichment | None,
+        payload_keys: set[str],
+    ) -> tuple[dict, bool] | None:
+        """Resolve custom fields delivered with the reservation (research R8).
+
+        A ``present`` block is used directly.  An ``absent`` block is an
+        empty read when nothing endpoint-owned was ever published for the
+        reservation; otherwise only the custom-fields endpoint can tell a
+        cleared value from an omitted block, so one call confirms it.  A
+        ``malformed`` block is treated like a failed fetch.
+
+        Args:
+            reservation: Reservation being enriched.
+            cached: Enrichment state stored by the previous sync.
+            payload_keys: Custom-data keys this sync's reservation
+                payloads supply, used for bootstrap recovery only.
+
+        Returns:
+            ``(custom field values, fetch failed)``, or None when the
+            custom-fields endpoint must be called.
+        """
+        inline = reservation.inline_custom_fields
+        if inline is None:
+            return None
+        if inline.state == "present":
+            return dict(inline.values), False
+        if inline.state == "malformed":
+            logger.warning(
+                "Reservation %s carries a malformed customFields block; "
+                "reusing last known values",
+                reservation.pms_booking_id,
+            )
+            return self._last_good_custom_fields(cached, payload_keys), True
+        if cached is None:
+            return {}, False
+        if cached.data is not None and not _enrichment_owned(cached.data):
+            return {}, False
+        return None
+
+    def _last_good_custom_fields(
+        self,
+        cached: _StoredEnrichment | None,
+        payload_keys: set[str],
+    ) -> dict:
+        """Return the values to keep when custom fields cannot be read.
+
+        Args:
+            cached: Enrichment state stored by the previous sync.
+            payload_keys: Keys supplied by this sync's reservations.
+
+        Returns:
+            The last-good endpoint-owned values (FR-032).
+        """
+        if cached is None:
+            return {}
+        if cached.data is not None:
+            return _enrichment_owned(cached.data)
+        return self._bootstrap_custom_fields(cached, payload_keys)
 
     @staticmethod
     def _bootstrap_custom_fields(
