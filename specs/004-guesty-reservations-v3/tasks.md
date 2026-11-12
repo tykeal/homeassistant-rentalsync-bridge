@@ -152,7 +152,7 @@ Follow constitution Principle V:
 
 ### Tests for User Story 1 (write first, confirm they fail)
 
-- [ ] T015 [P] [US1] Write a contract test in tests/contract/test_guesty_v3_contract.py (new) for the search request (contracts/guesty-v3-search.md):
+- [x] T015 [P] [US1] Write a contract test in tests/contract/test_guesty_v3_contract.py (new) for the search request (contracts/guesty-v3-search.md):
   - the exact query for page 0 and page 1: `filter[listingId][in]` (comma-joined, sorted fetch-scope IDs of the tracked listings), `filter[checkOut][gte]`, `filter[checkIn][lte]`, `sort=_id`, `limit=100`, `skip`
   - no `fields`
   - an untracked listing's ID never appears in the filter
