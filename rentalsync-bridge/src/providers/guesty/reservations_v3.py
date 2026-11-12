@@ -24,6 +24,7 @@ from src.providers.guesty.v3_by_ids import (
     AbsenceContext,
     confirm_batch,
 )
+from src.providers.guesty.v3_diagnostics import ListingStats
 from src.providers.guesty.v3_mapping import (
     V3_CLASSIFIED_STATUSES,
     map_search_item,
@@ -236,17 +237,20 @@ class V3ReservationSource:
         scope_ids = scope[1]
 
         reservations: list[PMSReservation] = []
-        unclassified = 0
+        stats = ListingStats()
         for item in items:
             if not owned_by(item, scope_ids):
                 continue
+            stats.owned += 1
             mapped = map_search_item(item, listing_pms_id, scope_ids)
             if mapped is None or not _overlaps_window(mapped, start, end):
                 continue
             if mapped.status not in V3_CLASSIFIED_STATUSES:
-                unclassified += 1
+                stats.unclassified += 1
             reservations.append(mapped)
-        _guard_unclassified(unclassified, len(reservations), listing_pms_id)
+        stats.in_window = len(reservations)
+        stats.log(listing_pms_id, reservations)
+        _guard_unclassified(stats.unclassified, len(reservations), listing_pms_id)
         return reservations
 
     def _control(
