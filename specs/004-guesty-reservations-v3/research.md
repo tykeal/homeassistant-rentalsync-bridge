@@ -164,10 +164,14 @@ Code facts were read from the live source on `main` at the 004 clarify merge (`0
   | Returned, overall stay outside the sync window | `CONFIRMED_ABSENT` | retire |
   | Returned, status excluded (`inquiry`/`reserved`) | `CONFIRMED_ABSENT` | retire (excluded statuses are dropped from snapshots today, so they are pruned today) |
   | Returned, status `alteration` | `UNCONFIRMED` | keep unchanged (FR-023) |
-  | Returned, in scope and window, any other status | `PRESENT` | keep; **abort this listing's sync** as an undetected shift (FR-011) |
+  | Returned, in scope and window, any other status | `PRESENT` | keep; **abort this listing's sync** as an undetected shift (FR-011), and **poison the cycle's sweep** (below) |
   | Not returned, control returned | `CONFIRMED_ABSENT` | retire (deleted) |
   | Not returned, control **not** returned | `UNCONFIRMED` | keep; log ERROR (the response is untrustworthy) |
   | Request failed, rate-limited after retries, or malformed | `UNCONFIRMED` | keep; log WARNING (FR-011a) |
+  | Response contains any `_id` that was **not requested**, or the same `_id` twice | `UNCONFIRMED` for the whole batch | keep; log ERROR. The parameter was ignored or mis-serialised, so omission proves nothing |
+
+- **Whole-response validation first.** The response is validated as a whole before any verdict is assigned. It must be a list, every item must have an `_id`, every `_id` must be one of the requested IDs, and there must be no duplicates. Only then are per-candidate verdicts derived. This stops an ignored `reservationIds` parameter, which could return unrelated account results that happen to include the control, from turning an omission into a retirement.
+- **Sweep poisoning on `PRESENT`.** A `PRESENT` verdict proves the shared sweep missed a live reservation. The provider marks its cached sweep as failed, with the same error as a guard failure (R2), so **every later listing in the cycle aborts** with last-good kept. Listings committed earlier in the same cycle are not rolled back. Their only retirements were each individually confirmed absent by by-IDs (positive evidence, not inference from the snapshot), and their creates and updates reflect records Guesty actually returned. The worst effect of the miss on them is a reservation created one cycle late, so FR-011 and SC-003 hold. A cross-listing two-phase commit (confirm every listing before committing any) was considered. It was rejected because the scheduler commits per listing, and the change would add no retirement safety beyond per-booking confirmation.
 
 - With no candidates, no request is made. In steady state that is **0 calls**. When `k` stored bookings disappear, it costs `ceil(k/9)` calls.
 - Candidates are grouped by base reservation ID, so a multi-room reservation costs one slot.

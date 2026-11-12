@@ -96,7 +96,8 @@ V3 mode populates the existing fields as follows:
   canceled ──────────────────► stored row → cancelled (retired)
   absent from snapshot ─► FR-011a confirm ─► CONFIRMED_ABSENT → cancelled
                                           ├► UNCONFIRMED → unchanged
-                                          └► PRESENT → abort listing sync
+                                          └► PRESENT → abort listing sync,
+                                             mark cycle sweep failed
 ```
 
 ---
