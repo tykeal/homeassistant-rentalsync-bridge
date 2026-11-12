@@ -420,7 +420,7 @@ Follow constitution Principle V:
   - a failed lookup for the same guest keeps last-good contact and `_guest_name`
   - on a first-V3-sync failure for a row written by the previous release (no `_guest_name`), a matching `_guest_source_id` keeps `Booking.guest_name`
   - with a non-matching source, the placeholder is used
-- [ ] T051 [US5] Write the budget integration test in tests/integration/test_guesty_v3_budget.py (new):
+- [x] T051 [US5] Write the budget integration test in tests/integration/test_guesty_v3_budget.py (new):
   - run the reference account in legacy and V3 modes over two cycles and assert `v3_calls ≤ legacy_calls` (SC-006)
   - assert that reservation pages per cycle equal `ceil(in_window/100)`, independent of out-of-window history size (SC-007)
   - assert one combined search per cycle, and one page sequence per chunk
