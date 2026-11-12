@@ -220,7 +220,7 @@ Follow constitution Principle V:
 
   This makes T020 pass.
 - [x] T027 [US1] Implement the FR-006 identity check in src/services/sync_service.py, before any upsert or prune for the listing. It maps stored active bookings' `custom_data.confirmationCode` to base IDs, aborts on a mismatch, and logs the first-sync matched count at INFO. This makes T021 pass.
-- [ ] T028 [US1] Make the V3 path end-to-end, so that T022 passes:
+- [x] T028 [US1] Make the V3 path end-to-end, so that T022 passes:
   - replace the `PMSProviderError` stub so `GuestyProvider(reservations_api="v3")` serves `get_reservations` from the combined search, partitioned per listing by simple single-segment ownership (`stay[0].listingId` in the ownership scope); the full multi-segment attribution comes in US3
   - fix any parity gaps T022 exposes
 
