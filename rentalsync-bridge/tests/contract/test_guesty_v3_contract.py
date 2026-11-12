@@ -434,6 +434,42 @@ class TestV3ByIdsOutcomes:
         assert _verdicts(results) == {rid: AbsenceVerdict.UNCONFIRMED}
         assert "WARNING" in _levels(caplog)
 
+    async def test_ambiguous_boundary_in_new_sub_unit_is_unconfirmed(
+        self, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """A sub-unit owned only through its parent is checked too."""
+        p = guesty_transport.payloads
+        parent, untracked, unit = p.new_id("lst"), p.new_id("lst"), p.new_id("lst")
+        guesty_transport.add_listing(parent)
+        guesty_transport.add_listing(untracked)
+        guesty_transport.v3_items = [p.search_item(parent, check_in=20, check_out=22)]
+        item = p.search_item(
+            stay=[
+                p.stay_segment(untracked, p.check_in_at(4), p.check_out_at(5)),
+                p.stay_segment(
+                    unit,
+                    p.check_out_at(5),
+                    p.check_out_at(7),
+                    parent_listing_id=parent,
+                ),
+                p.stay_segment(
+                    unit,
+                    p.check_in_at(7),
+                    p.check_out_at(9),
+                    parent_listing_id=parent,
+                ),
+            ]
+        )
+        rid = item["reservationId"]
+        guesty_transport.by_ids_overrides[rid] = p.as_by_ids(item)
+        provider = guesty_transport.provider(reservations_api="v3")
+        provider.begin_cycle([parent])
+        await provider.get_reservations(parent)
+
+        results = await provider.confirm_absent(parent, [rid])
+
+        assert _verdicts(results) == {rid: AbsenceVerdict.UNCONFIRMED}
+
     async def test_omitted_with_control_returned_is_absent(
         self, guesty_transport: GuestyFakeTransport
     ) -> None:
