@@ -24,6 +24,7 @@ from src.providers.base import (
     PMSProviderError,
     PMSReservation,
 )
+from src.utils.stay_time import has_meaningful_times, to_local_date
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -45,6 +46,17 @@ GuestLookup = Callable[[str], Awaitable[PMSGuest | None]]
 def _as_utc(value: datetime) -> datetime:
     """Return a stored (SQLite-naive UTC) datetime as aware UTC."""
     return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+def _ends_after_start(check_in: datetime, check_out: datetime, tz: ZoneInfo) -> bool:
+    """Return whether the stay ends after it starts, as the calendar exports it.
+
+    Timed stays compare instants; all-day and mixed stays compare the
+    exported dates.
+    """
+    if has_meaningful_times(check_in, check_out):
+        return _as_utc(check_out) > _as_utc(check_in)
+    return to_local_date(check_out, tz) > to_local_date(check_in, tz)
 
 
 def reanchor(stored: datetime, target: date, tz: ZoneInfo) -> datetime:
@@ -246,7 +258,7 @@ async def _row_updates(
             continue
         check_in = reanchor(booking.check_in_date, interval.local_dates[0], tz)
         check_out = reanchor(booking.check_out_date, interval.local_dates[1], tz)
-        if _as_utc(check_out) <= _as_utc(check_in):
+        if not _ends_after_start(check_in, check_out, tz):
             logger.warning(
                 "Keeping reservation %s on listing %s unchanged: re-anchoring "
                 "booking %s to its new dates would end it before it starts",
