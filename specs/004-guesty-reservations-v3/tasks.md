@@ -35,7 +35,11 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Commit Guidance
 
-- Each task, or a tight test-plus-implementation pair, is one atomic, signed, DCO commit with `Co-Authored-By`.
+Follow constitution Principle V:
+
+- **Each completed task is its own atomic commit.** It is signed, has a DCO sign-off and a `Co-Authored-By` trailer, and a subject of at most 50 characters.
+- **Each task commit is followed by a separate `Docs:` commit** that ticks that task's checkbox in this file.
+- **Test tasks are committed before their implementation tasks.** Run each test, confirm it fails for the intended reason, and record that in the test commit body. The PR head must be green before push for review.
 - T004 is a **pure refactor** and must be committed alone, with no behaviour change.
 - Never bypass pre-commit.
 
@@ -45,19 +49,19 @@ SPDX-License-Identifier: Apache-2.0
 
 **Purpose**: Synthetic V3 fixtures and a counting fake transport used by every later phase.
 
-- [ ] T001 [P] Create synthetic V3 payload builders in tests/fixtures/guesty_v3.py. Include:
+- [ ] T001 Create synthetic V3 payload builders as a factory fixture `guesty_v3_payloads` in tests/conftest.py. Include:
   - `search_item()`, `stay_segment()`, `search_page(results, skip, limit, has_more)`
   - `by_ids_item()`, `guests_crud_body()`
   - multi-segment helpers: same-property move, cross-property move with untracked first segment, A→B→A, unassigned parent
   - every V3 status
 
-  Follow contracts/guesty-v3-search.md, contracts/guesty-v3-by-ids.md and contracts/guesty-guests-crud.md. Add `tests/fixtures/__init__.py`. Values must be synthetic, because the `check-fixture-pii` hook scans them.
-- [ ] T002 [P] Create a counting fake Guesty transport in tests/fixtures/guesty_transport.py.
+  Follow contracts/guesty-v3-search.md, contracts/guesty-v3-by-ids.md and contracts/guesty-guests-crud.md. Values must be synthetic, because the `check-fixture-pii` hook scans them. Helpers live in `conftest.py`, never in a non-`test_*.py` module under `tests/`, because the `name-tests-test --pytest-test-first` hook rejects such modules.
+- [ ] T002 Create a counting fake Guesty transport as a fixture `guesty_transport` in tests/conftest.py.
   - Build it on `httpx.MockTransport`. It routes listings, legacy `/v1/reservations`, `/v1/reservations-v3/search`, `/v1/reservations-v3?reservationIds=`, `/v1/reservations-v3/{id}/custom-fields`, `/v1/guests/{id}` and `/v1/guests-crud/{id}`.
   - It records every request (path and parsed query) and counts per resource.
   - It applies `filter[checkOut][gte]`/`filter[checkIn][lte]` and `sort=_id`/`skip`/`limit` server-side, so narrowing is observable (FR-015).
   - It supports injected faults: short or empty `hasMore` pages, duplicates, out-of-order IDs, 400, 429, and an ignored `reservationIds` parameter.
-- [ ] T003 Build a reference-account fixture in tests/fixtures/guesty_reference_account.py for SC-006 and SC-007:
+- [ ] T003 Build a reference-account fixture `guesty_reference_account` in tests/conftest.py for SC-006 and SC-007:
   - 3 tracked listings, one of them multi-unit, plus 1 untracked listing
   - about 110 reservations within the window, plus multi-year out-of-window history
   - about 12 reservations inside the freshness window
@@ -136,7 +140,7 @@ SPDX-License-Identifier: Apache-2.0
   - the exact query for page 0 and page 1: `filter[checkOut][gte]`, `filter[checkIn][lte]`, `sort=_id`, `limit=100`, `skip`
   - no `filter[listingId]` and no `fields`
   - the window dates computed from a frozen clock per research R3, including both 1-day pads
-- [ ] T014 [P] [US1] Write a contract test in tests/contract/test_guesty_v3_contract.py for guests-crud (contracts/guesty-guests-crud.md):
+- [ ] T014 [US1] Write a contract test in tests/contract/test_guesty_v3_contract.py for guests-crud (contracts/guesty-guests-crud.md):
   - the path `/v1/guests-crud/{id}` and `fields=fullName phone email`
   - 404 → `None`, 5xx → `PMSProviderError`, 401 → `PMSAuthenticationError`
   - legacy mode still calls `/v1/guests/{id}`
@@ -145,7 +149,7 @@ SPDX-License-Identifier: Apache-2.0
   - `guest_id`, with `guest_name=None` and `updated_at=None`
   - `custom_data` keys `source` and `confirmationCode`
   - `InlineCustomFields` PRESENT, ABSENT and MALFORMED parsing (research R8)
-- [ ] T016 [P] [US1] Write a unit test in tests/unit/test_guesty_v3_source.py for one sweep per provider instance: `get_reservations` for three listings issues the search pages exactly once (call-count assertion, research R2).
+- [ ] T016 [US1] Write a unit test in tests/unit/test_guesty_v3_source.py for one sweep per provider instance: `get_reservations` for three listings issues the search pages exactly once (call-count assertion, research R2).
 - [ ] T017 [P] [US1] Write integration tests in tests/integration/test_guesty_v3_sync.py (new) for custom-field enrichment (research R8):
   - PRESENT makes no custom-field call
   - ABSENT with non-NULL `{}`-shaped enrichment makes no call
@@ -153,7 +157,7 @@ SPDX-License-Identifier: Apache-2.0
   - ABSENT with NULL `enrichment_data` makes one confirmation call. On failure, `_bootstrap_custom_fields` recovery applies
   - MALFORMED keeps last-good and logs a WARNING without aborting
   - a published door-code custom field is never blanked in any of these cases
-- [ ] T018 [P] [US1] Write integration tests in tests/integration/test_guesty_v3_sync.py for identity verification (research R14, FR-006):
+- [ ] T018 [US1] Write integration tests in tests/integration/test_guesty_v3_sync.py for identity verification (research R14, FR-006):
   - the same `confirmationCode` under a new ID, with the old ID absent → `SyncServiceError`; nothing created or retired; the message names the setting `guesty_reservations_api`
   - matching IDs → the INFO line reports the matched count
 - [ ] T019 [US1] Write the upgrade-continuity integration test in tests/integration/test_guesty_v3_sync.py (SC-002):
@@ -220,7 +224,7 @@ SPDX-License-Identifier: Apache-2.0
   - (9) 429 after retries
 
   Each must raise `PMSProviderError` with no partial items, and the failure must be cached so a second listing in the same cycle raises without new requests (call-count assertion).
-- [ ] T027 [P] [US2] Write unit tests in tests/unit/test_guesty_v3_source.py:
+- [ ] T027 [US2] Write unit tests in tests/unit/test_guesty_v3_source.py:
   - HTTP 400 on search → `PMSProviderError` naming the status and an excerpt (FR-021), never an empty result
   - a missing `status` key → abort (FR-026)
 - [ ] T028 [P] [US2] Write contract tests in tests/contract/test_guesty_v3_contract.py for by-IDs (contracts/guesty-v3-by-ids.md):
@@ -240,7 +244,7 @@ SPDX-License-Identifier: Apache-2.0
 - [ ] T030 [P] [US2] Write integration tests in tests/integration/test_in_progress_reservations.py, extended to V3 mode (SC-004, US2-3):
   - a stay that checked in 400 days ago and checks out in the future is in the snapshot and stays exported across syncs
   - a test pins `V3_LOOKBACK_DAYS >= OLD_BOOKING_RETENTION_DAYS + 1`
-- [ ] T031 [P] [US2] Write an integration test in tests/integration/test_guesty_v3_sync.py for SC-003: for every R4 fault injected mid-sweep, no booking is retired and the cached feed is unchanged.
+- [ ] T031 [US2] Write an integration test in tests/integration/test_guesty_v3_sync.py for SC-003: for every R4 fault injected mid-sweep, no booking is retired and the cached feed is unchanged.
 
 ### Implementation for User Story 2
 
@@ -332,7 +336,7 @@ SPDX-License-Identifier: Apache-2.0
   - leaving `alteration` applies the new dates
   - first-seen `alteration` is not stored, is logged at DEBUG, is not in the withheld panel, and is never retired
   - by-IDs `alteration` for a candidate gives `UNCONFIRMED`
-- [ ] T041 [P] [US4] Write an integration test in tests/integration/test_guesty_v3_sync.py for an unknown status: it appears in the withheld-bookings panel API (US4-3), and the over-50% unclassified case aborts with last-good (US4-4).
+- [ ] T041 [US4] Write an integration test in tests/integration/test_guesty_v3_sync.py for an unknown status: it appears in the withheld-bookings panel API (US4-3), and the over-50% unclassified case aborts with last-good (US4-4).
 
 ### Implementation for User Story 4
 
@@ -366,7 +370,7 @@ SPDX-License-Identifier: Apache-2.0
   - no reuse when any stored booking is inside the freshness window on its frozen dates during an alteration hold
   - `_change_key` is not persisted after a failed lookup
   - the bookkeeping keys `_guest_source_id`, `_guest_name` and `_change_key` never reach `custom_data` or the description
-- [ ] T046 [P] [US5] Write integration tests in tests/integration/test_guesty_v3_sync.py for guest failure (FR-031, FR-032, US5-4, US5-5):
+- [ ] T046 [US5] Write integration tests in tests/integration/test_guesty_v3_sync.py for guest failure (FR-031, FR-032, US5-4, US5-5):
   - after a reassignment with a failed lookup, no previous-guest last-4 is published
   - a failed lookup for the same guest keeps last-good contact and `_guest_name`
   - on a first-V3-sync failure for a row written by the previous release (no `_guest_name`), a matching `_guest_source_id` keeps `Booking.guest_name`
@@ -480,7 +484,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Phase dependencies
 
-- **Setup (Phase 1)**: none. T003 depends on T001.
+- **Setup (Phase 1)**: none. T001 → T002 → T003, all in tests/conftest.py.
 - **Foundational (Phase 2)**: depends on Phase 1. T004 must be committed first and alone. It blocks all stories.
 - **US1 (Phase 3)**: depends on Phase 2. **This is the MVP.**
 - **US2 (Phase 4)**: depends on US1, because it extends the sweep built in T020.
@@ -515,31 +519,35 @@ Setup → Foundational → US1 (MVP) ─┬─► US2 ────────�
 ## Parallel Examples
 
 ```text
-# Phase 1
-T001 fixtures  ‖  T002 transport
+# Parallel means distinct files only. Tasks sharing a file run sequentially.
+
+# Phase 1: sequential (all in tests/conftest.py)
+T001 → T002 → T003
 
 # Phase 2 tests
-T005 config tests  ‖  T007 registry tests  ‖  T009 base DTO tests
+T005 (test_config.py)  ‖  T007 (test_provider_registry.py)  ‖  T009 (test_provider_base.py)
 
-# US1 tests (all different concerns; same new files are append-only sections)
-T013 search contract  ‖  T014 guests-crud contract  ‖  T015 mapping unit
-T016 sweep-once unit  ‖  T017 custom-field integration  ‖  T018 identity integration
+# US1 tests: one task per file in parallel, then the same-file follow-ups
+T013 (contract)  ‖  T015 (unit v3 source)  ‖  T017 (integration v3 sync)
+then  T014 (contract), T016 (unit), T018 → T019 (integration)
 
 # US2 tests
-T026 guard  ‖  T027 400/status  ‖  T028 by-IDs contract  ‖  T029 FR-011a  ‖  T030 in-progress  ‖  T031 SC-003
+T026 (unit)  ‖  T028 (contract)  ‖  T029 (integration v3 sync)  ‖  T030 (in-progress)
+then  T027 (unit), T031 (integration v3 sync)
 
-# After US1: US3 ‖ US4 ‖ US6 (different modules, except the sync_service edits, which are sequenced)
+# After US1: US3, US4 and US6 provider/API work in parallel (different modules);
+# their src/services/sync_service.py edits are sequenced
 ```
 
 ---
 
 ## Implementation Strategy
 
-### MVP first (US1 + US2: both P1)
+### P1 validation checkpoint (US1 + US2)
 
 1. Phase 1 → Phase 2 (legacy unchanged; full suite green).
 2. US1. Validate single-segment parity (T019).
-3. US2. Validate door-code safety (T026–T031). **This is the minimum shippable pre-release scope.**
+3. US2. Validate door-code safety (T026–T031). This is an **internal P1 validation checkpoint, not a shippable scope**: the alteration hold (US4) and the request budget (US5) are not in place yet. Nothing is released before all phases are complete.
 
 ### Incremental delivery
 
@@ -561,4 +569,7 @@ T026 guard  ‖  T027 400/status  ‖  T028 by-IDs contract  ‖  T029 FR-011a  
 - [P] means a different file and no dependency on an incomplete task.
 - A test task and its implementation may be committed together only if the test was first seen to fail. Record that in the commit body.
 - Never use `--no-verify` or `git reset` after a failed hook. Fix the problem and recommit.
-- Owner decisions listed in plan.md ("Owner Decisions Before Implement") must be confirmed before T037, T043 and T055 are started.
+- Owner decisions listed in plan.md ("Owner Decisions Before Implement") must be confirmed before implementation starts. In particular:
+  - decision 3 (sweep vs scoped search) gates T020, T025 and T037
+  - decisions 1–2 (alteration) gate T043
+  - decision 4 (notes/guestsCount) gates T055
