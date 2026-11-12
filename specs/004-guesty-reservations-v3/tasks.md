@@ -440,7 +440,7 @@ Follow constitution Principle V:
   - `_StoredEnrichment.guest_name` for the upgrade name bootstrap
 
   This makes T049 and T050 pass.
-- [ ] T054 [US5] Add per-cycle request counters by resource to `GuestyProvider` in src/providers/guesty/service.py. Log one INFO line per cycle (`search=… by_ids=… guests=… custom_fields=… listings=…`) when the provider closes (FR-043). Then make T051 pass, tuning only within the R9 and R12 design.
+- [x] T054 [US5] Add per-cycle request counters by resource to `GuestyProvider` in src/providers/guesty/service.py. Log one INFO line per cycle (`search=… by_ids=… guests=… custom_fields=… listings=…`) when the provider closes (FR-043). Then make T051 pass, tuning only within the R9 and R12 design.
 
 **Checkpoint**: SC-006 and SC-007 are enforced by tests, and the #129 invariants are preserved.
 
