@@ -254,7 +254,10 @@ class AbsenceContext:
     def _reattribute(self, item: dict[str, Any]) -> AbsenceResult:
         """Rebuild a live candidate the search cannot see from its segments."""
         rid = item["reservationId"]
-        ambiguous = ambiguous_rooms(item) & self.scope_ids
+        owned = {
+            s["listingId"] for s in item["stay"] if segment_owned(s, self.scope_ids)
+        }
+        ambiguous = ambiguous_rooms(item) & owned
         if ambiguous:
             logger.warning(
                 "Guesty V3: reservation %s has same-room segments meeting on "
