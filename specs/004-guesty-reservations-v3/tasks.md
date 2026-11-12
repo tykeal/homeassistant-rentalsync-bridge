@@ -386,7 +386,7 @@ Follow constitution Principle V:
 ### Implementation for User Story 4
 
 - [x] T046 [US4] Complete `_STATUS_MAP`, the excluded set and the health-guard classification in src/providers/guesty/reservations_v3.py, reusing the base `RECOGNISED_NON_EXPORT_STATUSES` and `HOLD_STATUSES`. This makes T043 pass.
-- [ ] T047 [US4] Implement hold-status handling in src/services/sync_service.py:
+- [x] T047 [US4] Implement hold-status handling in src/services/sync_service.py:
   - a stored base ID → mark all rows seen, skip the upsert, run an enrichment-only refresh that writes `custom_data` and enrichment without touching status, dates or room
   - no stored row → skip with a DEBUG log
 
