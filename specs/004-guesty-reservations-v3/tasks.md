@@ -408,7 +408,7 @@ Follow constitution Principle V:
   - it is deterministic across key order
   - it changes on each included field: status, guestId, dates, stay segments, customFields, notes, source, confirmationCode
   - it is unchanged by ignored fields such as financial blocks
-- [ ] T049 [P] [US5] Write integration tests in tests/integration/test_guesty_v3_sync.py for reuse (research R9):
+- [x] T049 [P] [US5] Write integration tests in tests/integration/test_guesty_v3_sync.py for reuse (research R9):
   - reuse only when all R9 conditions hold
   - no reuse when `enrichment_data` is NULL
   - no reuse inside the freshness window (US5-3)
