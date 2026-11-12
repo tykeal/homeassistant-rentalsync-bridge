@@ -63,7 +63,7 @@ Follow constitution Principle V:
   - It records every request (path and parsed query) and counts per resource.
   - It applies `filter[listingId][in]` (matching the **first** segment's `listingId` or `parentListingId`, as Guesty documents for `unitId`/`unitTypeId`), `filter[checkOut][gte]`/`filter[checkIn][lte]` and `sort=_id`/`skip`/`limit` server-side, so the residual gap and narrowing are observable (FR-015, FR-016).
   - It supports injected faults: short or empty `hasMore` pages, duplicates, out-of-order IDs, 400, 429, and an ignored `reservationIds` parameter.
-- [ ] T003 Build a reference-account fixture `guesty_reference_account` in tests/conftest.py for SC-006 and SC-007:
+- [x] T003 Build a reference-account fixture `guesty_reference_account` in tests/conftest.py for SC-006 and SC-007:
   - 3 tracked listings, one of them multi-unit, plus 1 untracked listing
   - about 110 reservations within the window, plus multi-year out-of-window history
   - about 12 reservations inside the freshness window
