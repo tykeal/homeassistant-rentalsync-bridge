@@ -29,6 +29,7 @@ Example: `GET /v1/reservations-v3?reservationIds=6650aa…&reservationIds=6650ab
   {
     "_id": "string",                 // REQUIRED: matched against the requested IDs (search calls it reservationId)
     "status": "canceled",            // REQUIRED: 12-value enum
+    "guestId": "string",             // optional: compared with the stored _guest_source_id (FR-031); missing → guest-owned data not published
     "stay": [                        // REQUIRED, chronological, ≥ 1
       { "unitTypeId": "string",      // the listing or multi-unit parent
         "unitId": "string",          // the assigned sub-unit (absent when unassigned)
@@ -54,7 +55,7 @@ The by-IDs item has **no** `reservationId`, **no** `stay[].listingId`/`parentLis
 - The same R6 attribution and identity code then runs, so `pms_booking_id`, the event UID and the `Booking ID:` line are **byte-identical** to what a search result for the same reservation produces (FR-005).
 - The window test uses the first segment's `checkInDateLocalized` and the last segment's `checkOutDateLocalized` against R3's padded `[D_start, D_end]`, the same bounds the search filter used.
 - The first-segment test for `INCONSISTENT` checks the first segment's `unitId` and `unitTypeId` against the searched filter ID set.
-- All other fields, including the financial and guest blocks, are ignored and never logged.
+- All other fields, including the financial and guest blocks, are ignored and never logged. `guestId` is an opaque ID and may be logged.
 
 ## Outcome per candidate
 

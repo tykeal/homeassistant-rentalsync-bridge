@@ -112,7 +112,7 @@ Verify feature design compliance with `.specify/memory/constitution.md`:
 2. **Enrichment during the alteration freeze (D7).** Accepted 2026-11-12: status, dates and room are frozen, but door-code enrichment keeps refreshing.
 3. **Fetch strategy (D2).** Decided 2026-11-12: the combined listing search, not the account-wide sweep, with the FR-016 residual gap documented in the spec. FR-011a re-attribution (D5) replaces the earlier abort-on-`PRESENT` so a re-arranged reservation cannot cause a permanent outage.
 4. **`notes` / `guestsCount` mapping (D10).** Accepted 2026-11-12: `keyCode` is excluded from `notes` because it is a door secret, and `guestsCount` is the maximum over merged segments.
-5. **Enrichment of re-attributed reservations (D5).** Open, low impact, not blocking implement (FR-011a specifies the last-good behaviour): a reservation kept only through by-IDs re-attribution keeps its last-good custom fields and guest details (never blanked) until the search finds it again. Refreshing them from the by-IDs payload is a possible refinement once live validation confirms that payload's shape (R15 item 12).
+5. **Enrichment of re-attributed reservations (D5).** Open, low impact, not blocking implement (FR-011a specifies the behaviour): a reservation kept only through by-IDs re-attribution keeps its last-good custom fields (never blanked) until the search finds it again; its guest details stay last-good only while the by-IDs `guestId` matches the stored guest (a changed guest is looked up, an unverifiable one publishes no contact). Refreshing them from the by-IDs payload is a possible refinement once live validation confirms that payload's shape (R15 item 12).
 
 ## Release Gate
 

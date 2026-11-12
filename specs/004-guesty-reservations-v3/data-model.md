@@ -69,7 +69,7 @@ V3 mode populates the existing fields as follows:
 | `AbsenceResult` field | Type | Meaning |
 |---|---|---|
 | `verdict` | `AbsenceVerdict` | the per-candidate outcome |
-| `reservation` | `PMSReservation \| None` | set only for `REATTRIBUTED`: the reservation rebuilt from the normalised by-IDs item (§2.3), with `intervals` computed by the same R6 code as a search result, interval dates as **localized dates only** (see `PMSOccupancyInterval.local_dates`), `inline_custom_fields=None`, `change_key=None` and `guest_name=None`. Its reservation-level `check_in`/`check_out` are the localized dates at 00:00 in the listing timezone, used for logging only; the sync never writes them (R5) |
+| `reservation` | `PMSReservation \| None` | set only for `REATTRIBUTED`: the reservation rebuilt from the normalised by-IDs item (§2.3), with `intervals` computed by the same R6 code as a search result, interval dates as **localized dates only** (see `PMSOccupancyInterval.local_dates`), `inline_custom_fields=None`, `change_key=None`, `guest_name=None` and `guest_id` from the item's top-level `guestId` (or `None`), which the sync compares with the stored `_guest_source_id` (R5). Its reservation-level `check_in`/`check_out` are the localized dates at 00:00 in the listing timezone, used for logging only; the sync never writes them (R5) |
 | `detail` | `str` | non-PII reason for logs (for example "no control", "unrequested _id") |
 
 ### 1.5 `PMSProvider` interface additions

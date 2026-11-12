@@ -270,6 +270,8 @@ Follow constitution Principle V:
   - a re-arranged reservation with no segment left in a tracked listing retires
   - a stored reservation in room A re-arranged to untracked U → tracked B (residual gap): A's row retires, B is not created, and an INFO line names the reservation and B
   - same-room segments meeting on one local date give `UNCONFIRMED` and retire no `#n` row
+  - a re-anchored row whose check-out would not be after its check-in (a same-day assignment) makes the whole candidate `UNCONFIRMED`: no row updated or retired
+  - a re-attributed reservation reassigned to another guest publishes no previous-guest contact or last-4 and makes one `guests-crud` call for the new guest; with the same `guestId` it makes no guest call; with no `guestId` it publishes no guest contact and keeps its custom fields (FR-031)
   - a re-attributed `alteration` reservation is held (`UNCONFIRMED`)
   - a canceled reservation absent from the window retires
   - an omitted candidate with the control returned retires
@@ -293,7 +295,7 @@ Follow constitution Principle V:
 - [ ] T038 [US2] Finish FR-011a integration in the src/services/sync_service.py prune path:
   - group candidates by base ID
   - an `INCONSISTENT` verdict raises before commit for this listing only
-  - `REATTRIBUTED`: keep and mark seen the rows whose `pms_booking_id` matches an interval, apply the mapped status and re-anchored dates (stored instants, listing timezone), retire other rows as room changes, keep `custom_data` and enrichment last-good, and exclude the result from the health guard
+  - `REATTRIBUTED`: keep and mark seen the rows whose `pms_booking_id` matches an interval, apply the mapped status and re-anchored dates (stored instants, listing timezone), retire other rows as room changes, keep `custom_data` last-good, guard guest-owned enrichment by `guestId` vs `_guest_source_id` (research R5), downgrade the candidate to `UNCONFIRMED` when any re-anchored row is invalid (validated before any write), and exclude the result from the health guard
   - log `UNCONFIRMED` at WARNING or ERROR as specified
 
   This makes T033 and T034 pass.
