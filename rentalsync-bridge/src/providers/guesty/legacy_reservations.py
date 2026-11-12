@@ -14,10 +14,16 @@ from src.providers.base import (
     PMSProviderError,
     PMSReservation,
 )
+from src.providers.guesty.sources import GuestyHTTPError
 from src.utils.datetime_utils import ensure_utc
 
 if TYPE_CHECKING:
+    import httpx
+
     from src.providers.guesty.sources import ListingScopesFn, RequestFn
+
+# Statuses that mean Guesty has retired /v1/reservations (FR-010).
+RETIRED_STATUSES = frozenset({404, 410})
 
 logger = logging.getLogger(__name__)
 
@@ -202,6 +208,20 @@ class LegacyReservationSource:
         self._request = request
         self._listing_scopes = listing_scopes
 
+    async def _get_page(self, params: dict[str, Any]) -> httpx.Response:
+        """GET one /v1/reservations page, explaining a retired resource."""
+        try:
+            return await self._request("GET", "/v1/reservations", params=params)
+        except GuestyHTTPError as e:
+            if e.status_code in RETIRED_STATUSES:
+                raise PMSProviderError(
+                    f"Guesty legacy reservations API returned HTTP "
+                    f"{e.status_code}; it appears to be retired. Set the "
+                    f"add-on option guesty_reservations_api to v3 and "
+                    f"restart the add-on."
+                ) from e
+            raise
+
     async def fetch(
         self,
         listing_pms_id: str,
@@ -283,7 +303,7 @@ class LegacyReservationSource:
                 "limit": DEFAULT_PAGE_LIMIT,
                 "skip": skip,
             }
-            response = await self._request("GET", "/v1/reservations", params=params)
+            response = await self._get_page(params)
             data = response.json()
             results = data.get("results", [])
 
