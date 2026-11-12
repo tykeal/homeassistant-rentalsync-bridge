@@ -10,6 +10,7 @@ from datetime import UTC, date, datetime, time
 from typing import TYPE_CHECKING, Any
 
 from src.providers.base import (
+    HOLD_STATUSES,
     AbsenceResult,
     AbsenceVerdict,
     PMSProviderError,
@@ -37,7 +38,6 @@ BY_IDS_PATH = "/v1/reservations-v3"
 MAX_CANDIDATES_PER_CALL = 9
 
 _CANCELLED = frozenset({"canceled", "cancelled"})
-_HELD = frozenset({"alteration"})
 
 _UNCONFIRMED = AbsenceVerdict.UNCONFIRMED
 
@@ -226,7 +226,7 @@ class AbsenceContext:
         raw = str(item.get("status") or "").lower()
         if raw in _CANCELLED or raw in _EXCLUDED_STATUSES:
             return _verdict(AbsenceVerdict.CONFIRMED_ABSENT, f"status {raw}")
-        if raw in _HELD:
+        if raw in HOLD_STATUSES:
             return _verdict(_UNCONFIRMED, f"status {raw} (held)")
         return None
 
