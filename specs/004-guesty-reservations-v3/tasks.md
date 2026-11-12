@@ -299,7 +299,7 @@ Follow constitution Principle V:
   - `REATTRIBUTED` results carrying the normalised reservation, with intervals from the same R6 code
 
   `INCONSISTENT` never poisons the cached search. Legacy mode keeps the base default. This makes T031 and T032 pass.
-- [ ] T038 [US2] Finish FR-011a integration in the src/services/sync_service.py prune path:
+- [x] T038 [US2] Finish FR-011a integration in the src/services/sync_service.py prune path:
   - group candidates by base ID
   - an `INCONSISTENT` verdict raises before commit for this listing only
   - `REATTRIBUTED`: keep and mark seen the rows whose `pms_booking_id` matches an interval, apply the mapped status and re-anchored dates (stored instants, listing timezone), retire other rows as room changes, keep `custom_data` last-good, guard guest-owned enrichment by `guestId` vs `_guest_source_id` (research R5), downgrade the candidate to `UNCONFIRMED` when any re-anchored row is invalid (validated before any write), and exclude the result from the health guard
