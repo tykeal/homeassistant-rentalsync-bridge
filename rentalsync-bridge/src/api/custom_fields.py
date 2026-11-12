@@ -78,11 +78,15 @@ async def _retired_fields(db: AsyncSession) -> Mapping[str, str]:
     Returns:
         Mapping of retired field key to its reason.
     """
-    result = await db.execute(select(OAuthCredential.pms_type).limit(1))
-    pms_type = result.scalar_one_or_none()
-    if pms_type is None:
+    # Select the full row like the scheduler: a column-only query may be
+    # answered from the pms_type index and pick a different credential.
+    result = await db.execute(select(OAuthCredential).limit(1))
+    credential = result.scalar_one_or_none()
+    if credential is None:
         return {}
-    return retired_fields_for(pms_type, get_settings().guesty_reservations_api)
+    return retired_fields_for(
+        credential.pms_type, get_settings().guesty_reservations_api
+    )
 
 
 def _retired_flags(
