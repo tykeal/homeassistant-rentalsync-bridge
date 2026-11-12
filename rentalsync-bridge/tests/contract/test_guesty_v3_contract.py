@@ -380,7 +380,10 @@ class TestV3ByIdsOutcomes:
         assert interval.room_id == account.listing
         assert interval.check_in is None
         assert interval.check_out is None
-        assert interval.local_dates == (account.local(7), account.local(9))
+        assert interval.local_dates == (
+            account.p.day(7).date(),
+            account.p.day(9).date(),
+        )
 
     @pytest.mark.parametrize("unit", ["unitId", "unitTypeId"])
     async def test_first_segment_searched_is_inconsistent(
