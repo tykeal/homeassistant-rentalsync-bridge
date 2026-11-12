@@ -203,7 +203,7 @@ Follow constitution Principle V:
   - the per-instance `V3CombinedSearch` cache (data-model.md §2.1)
 
   The minimal guard is shape and `hasMore`; the full guard comes in US2. This makes T015, T018 and T019 pass.
-- [ ] T024 [US1] Implement the single-segment V3 mapping in src/providers/guesty/reservations_v3.py:
+- [x] T024 [US1] Implement the single-segment V3 mapping in src/providers/guesty/reservations_v3.py:
   - status via `_STATUS_MAP`, initially confirmed, checked_in, checked_out and canceled
   - top-level and stay dates to UTC
   - one interval per segment with `room_id = stay.listingId`
