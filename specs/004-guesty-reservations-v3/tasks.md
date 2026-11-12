@@ -415,7 +415,7 @@ Follow constitution Principle V:
   - no reuse when any stored booking is inside the freshness window on its frozen dates during an alteration hold
   - `_change_key` is not persisted after a failed lookup
   - the bookkeeping keys `_guest_source_id`, `_guest_name` and `_change_key` never reach `custom_data` or the description
-- [ ] T050 [US5] Write integration tests in tests/integration/test_guesty_v3_sync.py for guest failure (FR-031, FR-032, US5-4, US5-5):
+- [x] T050 [US5] Write integration tests in tests/integration/test_guesty_v3_sync.py for guest failure (FR-031, FR-032, US5-4, US5-5):
   - after a reassignment with a failed lookup, no previous-guest last-4 is published
   - a failed lookup for the same guest keeps last-good contact and `_guest_name`
   - on a first-V3-sync failure for a row written by the previous release (no `_guest_name`), a matching `_guest_source_id` keeps `Booking.guest_name`
