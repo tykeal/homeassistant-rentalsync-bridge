@@ -23,6 +23,7 @@ from src.providers.base import (
 )
 from src.providers.guesty import reservations_v3
 
+from tests import conftest
 from tests.conftest import GuestyFakeTransport, GuestyV3Payloads
 
 # Late in the UTC day, so a naive local-date computation would differ.
@@ -31,6 +32,33 @@ FROZEN_NOW = datetime(2026, 11, 12, 23, 30, tzinfo=UTC)
 # Research R3: UTC date(now - 91 d) - 1 d and UTC date(now + 365 d) + 1 d.
 EXPECTED_CHECKOUT_GTE = "2026-08-12"
 EXPECTED_CHECKIN_LTE = "2027-11-13"
+
+
+class TestV3LegacyRequestTagging:
+    """The fake transport records legacy requests made in V3 mode."""
+
+    @pytest.mark.asyncio
+    async def test_only_v3_mode_requests_are_tagged(
+        self, guesty_transport: GuestyFakeTransport
+    ):
+        """Test V3-mode legacy requests are tagged and legacy-mode ones not."""
+        before = list(conftest.V3_FORBIDDEN_REQUESTS)
+        legacy = guesty_transport.provider(reservations_api="legacy")
+        v3 = guesty_transport.provider(reservations_api="v3")
+        try:
+            for provider in (legacy, v3):
+                await provider._http_client.get("/v1/reservations")
+                await provider._http_client.get("/v1/guests/g1")
+                await provider._http_client.get("/v1/guests-crud/g1")
+            tagged = conftest.V3_FORBIDDEN_REQUESTS[len(before) :]
+            assert [(r.resource, r.path) for r in tagged] == [
+                ("reservations", "/v1/reservations"),
+                ("guests", "/v1/guests/g1"),
+            ]
+        finally:
+            del conftest.V3_FORBIDDEN_REQUESTS[len(before) :]
+            await legacy.aclose()
+            await v3.aclose()
 
 
 class TestV3SearchRequest:

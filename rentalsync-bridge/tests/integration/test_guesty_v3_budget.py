@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from src.models.booking import Booking
 from src.models.listing import Listing
 from src.providers.guesty.service import (
-    GuestyProvider,
     clear_custom_field_definitions_cache,
 )
 from src.services.calendar_service import CalendarCache
@@ -92,10 +91,8 @@ class _Budget:
         token_manager = AsyncMock()
         token_manager.get_token = AsyncMock(return_value="synthetic-token")
         token_manager.account_key = "synthetic-account"
-        provider = GuestyProvider(
-            token_manager=token_manager,
-            http_client=self.transport.client(),
-            reservations_api=mode,
+        provider = self.transport.provider(
+            token_manager=token_manager, reservations_api=mode
         )
         provider.begin_cycle([listing.pms_id for listing in self.listings])
         service = SyncService(

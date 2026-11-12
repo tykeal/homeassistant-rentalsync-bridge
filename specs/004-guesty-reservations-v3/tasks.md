@@ -489,23 +489,23 @@ Follow constitution Principle V:
 
 ### Tests for User Story 7 (write first, confirm they fail)
 
-- [ ] T064 [P] [US7] Write an integration test in tests/integration/test_guesty_v3_toggle.py (new) for SC-011:
+- [x] T064 [P] [US7] Write an integration test in tests/integration/test_guesty_v3_toggle.py (new) for SC-011:
   - V3 → legacy → V3 against one DB, with no migration
   - single-segment UIDs and `Booking ID:` lines are unchanged
   - multi-segment `#n` rows retire in legacy mode while the first interval keeps `{rid}::{room}`
-- [ ] T065 [P] [US7] Write a unit test in tests/unit/test_guesty_service.py: in legacy mode, a 404 or 410 from `/v1/reservations` raises `PMSProviderError` with an actionable message to switch `guesty_reservations_api` to `v3`, and last-good is kept.
-- [ ] T066 [P] [US7] Extend tests/integration/test_logging_privacy.py to V3 mode at DEBUG:
+- [x] T065 [P] [US7] Write a unit test in tests/unit/test_guesty_service.py: in legacy mode, a 404 or 410 from `/v1/reservations` raises `PMSProviderError` with an actionable message to switch `guesty_reservations_api` to `v3`, and last-good is kept.
+- [x] T066 [P] [US7] Extend tests/integration/test_logging_privacy.py to V3 mode at DEBUG:
   - no guest name, phone, email, door code or `keyCode` appears in any record
   - the research R15 diagnostic lines are present: status histogram, segment-shape lines with **every segment's listing ID** per reservation (FR-043), filter IDs and chunk count, per-chunk pagination signals, window-narrowing counts, matched-ID count, FR-011a verdict counts with the INFO re-attribution lines, per-cycle request counts
 
 ### Implementation for User Story 7
 
-- [ ] T067 [US7] Add the `guesty_reservations_api: v3` option and the `list(v3|legacy)?` schema to config.yaml. Create translations/en.yaml with names and descriptions for `log_level` and `guesty_reservations_api`, with an SPDX header or a `REUSE.toml` entry (contracts/addon-toggle.md).
-- [ ] T068 [US7] Export `GUESTY_RESERVATIONS_API` (default `v3`; the same PR flips the `Settings` default from `legacy` to `v3`, see the Phase 2 deviation note) and log the selected value in rootfs/etc/s6-overlay/s6-rc.d/rentalsync/run.
-- [ ] T069 [US7] Implement the legacy 404/410 message in src/providers/guesty/legacy_reservations.py. This makes T065 pass.
-- [ ] T070 [US7] Add the FR-043 DEBUG diagnostics (research R15) in src/providers/guesty/reservations_v3.py and src/services/sync_service.py. Use reservation and listing IDs, counts and enum values only. This makes T066 pass.
-- [ ] T071 [US7] Make T064 pass. Expected to need no code beyond T012 and T042; fix any gap found.
-- [ ] T072 [P] [US7] Document the option, pre-release validation (quickstart §4) and rollback (quickstart §5) in docs/homeassistant-addon-setup.md. Include the multi-segment rollback limitation and the legacy removal after 2027-03-01.
+- [x] T067 [US7] Add the `guesty_reservations_api: v3` option and the `list(v3|legacy)?` schema to config.yaml. Create translations/en.yaml with names and descriptions for `log_level` and `guesty_reservations_api`, with an SPDX header or a `REUSE.toml` entry (contracts/addon-toggle.md).
+- [x] T068 [US7] Export `GUESTY_RESERVATIONS_API` (default `v3`; the same PR flips the `Settings` default from `legacy` to `v3`, see the Phase 2 deviation note) and log the selected value in rootfs/etc/s6-overlay/s6-rc.d/rentalsync/run.
+- [x] T069 [US7] Implement the legacy 404/410 message in src/providers/guesty/legacy_reservations.py. This makes T065 pass.
+- [x] T070 [US7] Add the FR-043 DEBUG diagnostics (research R15) in src/providers/guesty/reservations_v3.py and src/services/sync_service.py. Use reservation and listing IDs, counts and enum values only. This makes T066 pass.
+- [x] T071 [US7] Make T064 pass. Expected to need no code beyond T012 and T042; fix any gap found.
+- [x] T072 [P] [US7] Document the option, pre-release validation (quickstart §4) and rollback (quickstart §5) in docs/homeassistant-addon-setup.md. Include the multi-segment rollback limitation and the legacy removal after 2027-03-01.
 
 **Checkpoint**: The pre-release is ready for FR-042 validation.
 
@@ -513,16 +513,16 @@ Follow constitution Principle V:
 
 ## Phase 10: Polish & Cross-Cutting Concerns
 
-- [ ] T073 [P] Add a reno release note in releasenotes/notes/ (FR-004):
+- [x] T073 [P] Add a reno release note in releasenotes/notes/ (FR-004):
   - upgrade before 2027-03-01
   - the new option and the rollback path
   - the retired `money_*` fields
   - the multi-segment rollback limitation
   - the legacy removal in a release after 2027-03-01
-- [ ] T074 [P] Update rentalsync-bridge/README.md and README.md wherever they describe Guesty endpoints or settings.
-- [ ] T075 Run the full suite and static checks from rentalsync-bridge/: `uv run pytest tests/ -q`, `uv run ruff check src/ tests/`, `uv run mypy src/` and interrogate through pre-commit. Fix all findings.
-- [ ] T076 Validate quickstart.md §3 commands against the final test file names, and update specs/004-guesty-reservations-v3/quickstart.md if any changed.
-- [ ] T077 Re-check that `GuestyProvider` makes no request to `/v1/reservations` or `/v1/guests/{id}` in V3 mode across the whole test suite. This uses the transport's request log in a session-level assertion in tests/contract/test_guesty_v3_contract.py (FR-001, FR-040).
+- [x] T074 [P] Update rentalsync-bridge/README.md and README.md wherever they describe Guesty endpoints or settings.
+- [x] T075 Run the full suite and static checks from rentalsync-bridge/: `uv run pytest tests/ -q`, `uv run ruff check src/ tests/`, `uv run mypy src/` and interrogate through pre-commit. Fix all findings.
+- [x] T076 Validate quickstart.md §3 commands against the final test file names, and update specs/004-guesty-reservations-v3/quickstart.md if any changed.
+- [x] T077 Re-check that `GuestyProvider` makes no request to `/v1/reservations` or `/v1/guests/{id}` in V3 mode across the whole test suite. This uses the transport's request log in a session-level assertion in tests/contract/test_guesty_v3_contract.py (FR-001, FR-040).
 
 ---
 

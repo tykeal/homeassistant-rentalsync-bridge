@@ -270,6 +270,28 @@ class TestInlineCustomFieldEnrichment:
         assert booking.custom_data[DOOR_CODE] == "1234"
         assert guesty_transport.counts["custom_fields"] == 1
 
+    async def test_bootstrap_does_not_revive_retired_fields(
+        self, v3: _Fixture, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """A pre-upgrade row's retired money_* values are not republished."""
+        await v3.setup()
+        guesty_transport.fail("custom_fields", 500)
+        await v3.store(
+            custom_data={
+                DOOR_CODE: "1234",
+                "money_totalPaid": 500,
+                "money_balanceDue": 0,
+                "money_currency": "USD",
+            },
+            enrichment_data=None,
+        )
+
+        await v3.sync()
+
+        booking = (await v3.bookings())[v3.booking_id]
+        assert booking.custom_data[DOOR_CODE] == "1234"
+        assert not {k for k in booking.custom_data if k.startswith("money_")}
+
     @pytest.mark.parametrize(
         "malformed",
         ["not-a-list", [{"value": "0000"}], [{"fieldId": DOOR_CODE}]],

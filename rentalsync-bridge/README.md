@@ -94,9 +94,10 @@ docker run -d \
 
 Add-on options:
 
-| Option      | Description                                                         | Default |
-| ----------- | ------------------------------------------------------------------- | ------- |
-| `log_level` | Logging verbosity (`debug`, `info`, `warning`, `error`, `critical`) | `info`  |
+| Option                    | Description                                                         | Default |
+| ------------------------- | ------------------------------------------------------------------- | ------- |
+| `log_level`               | Logging verbosity (`debug`, `info`, `warning`, `error`, `critical`) | `info`  |
+| `guesty_reservations_api` | Guesty reservations API: `v3` or `legacy` (rollback only)           | `v3`    |
 
 Set `log_level` to `debug` when collecting diagnostics for a bug report.
 `debug` adds application diagnostics (reservation ids, statuses, dates, room
@@ -104,6 +105,13 @@ ids and sync counts) and deliberately leaves SQL, database driver and HTTP
 client logging suppressed, so guest names, contact details and API credentials
 are not emitted. Provider error messages and property names can still appear,
 so review and redact a log before posting it publicly.
+
+Guesty retires its legacy reservations API on 2027-03-01, so
+`guesty_reservations_api` defaults to `v3`. Set it to `legacy` and restart
+only to roll back; that value is removed in a release after 2027-03-01. On
+`v3` the `money_*` payment description fields are retired: they render empty,
+carry a **Retired** badge in the admin UI and trigger one warning per add-on
+start. Cloudbeds ignores this option.
 
 ## Database Backup
 

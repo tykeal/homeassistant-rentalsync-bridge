@@ -4,6 +4,7 @@
 
 import logging
 import re
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -578,6 +579,19 @@ class SyncService:
                 len(candidates),
             )
             return {}
+        logger.debug(
+            "Absence check for listing %s: candidates=%d verdicts=%s",
+            listing.pms_id,
+            len(candidates),
+            dict(
+                sorted(
+                    Counter(
+                        str(getattr(result, "verdict", None))
+                        for result in results.values()
+                    ).items()
+                )
+            ),
+        )
 
         inconsistent = sorted(
             rid
@@ -1514,6 +1528,12 @@ class SyncService:
         # Every custom-data key this listing's payloads currently supply.
         # Used only to keep bootstrap recovery off reservation-owned keys.
         payload_keys = {k for r in reservations for k in r.custom_data}
+        # Retired fields are never re-sourced (FR-036): treating them as
+        # payload-supplied keeps bootstrap recovery from republishing a
+        # pre-upgrade row's stale values.
+        retired = provider.retired_description_fields
+        if isinstance(retired, Mapping):
+            payload_keys |= set(retired)
 
         guests, failed_guest_ids = await self._resolve_guests(
             provider,
@@ -1563,13 +1583,12 @@ class SyncService:
                 self._with_enrichment(r, data, updated_at, guest_name=guest_name)
             )
 
-        if reusable:
-            logger.debug(
-                "Reused stored enrichment for %d unchanged reservation(s) "
-                "on listing %s",
-                len(reusable),
-                listing.pms_id,
-            )
+        logger.debug(
+            "Enrichment for listing %s: reused=%d fetched=%d",
+            listing.pms_id,
+            len(reusable),
+            len(reservations) - len(reusable),
+        )
         return enriched, payloads
 
     async def _resolve_guests(

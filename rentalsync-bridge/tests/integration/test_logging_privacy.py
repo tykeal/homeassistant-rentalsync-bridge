@@ -10,6 +10,7 @@ captured output, regardless of which logger emitted it.
 """
 
 import logging
+import re
 from datetime import UTC, datetime, timedelta
 from io import StringIO
 from unittest.mock import AsyncMock, MagicMock
@@ -23,13 +24,22 @@ from src.services.cloudbeds_service import CloudbedsService
 from src.services.sync_service import SyncService
 from src.utils import logging as logging_utils
 
-from tests.conftest import make_listing, make_mock_provider, make_pms_reservation
+from tests.conftest import (
+    GuestyFakeTransport,
+    make_booking,
+    make_listing,
+    make_mock_provider,
+    make_pms_reservation,
+    make_room,
+)
 
 # Distinctive sentinel values.  None of these may ever appear in log output.
 GUEST_NAME = "Zebulon Quartzfeather"
 GUEST_EMAIL = "zebulon.quartzfeather@example-sentinel.invalid"
 GUEST_PHONE = "+15557770001"
 GUEST_ADDRESS = "4417 Sentinel Hollow Road"
+DOOR_CODE_VALUE = "door-sentinel-5150"
+KEY_CODE_VALUE = "keycode-sentinel-8842"
 API_TOKEN = "sentinel-access-token-7f3a9c1e"
 CLIENT_SECRET = "sentinel-client-secret-b2d8"
 
@@ -38,6 +48,8 @@ PII_SENTINELS = (
     GUEST_EMAIL,
     GUEST_PHONE,
     GUEST_ADDRESS,
+    DOOR_CODE_VALUE,
+    KEY_CODE_VALUE,
 )
 CREDENTIAL_SENTINELS = (
     API_TOKEN,
@@ -248,3 +260,116 @@ class TestProductionDebugLoggingPrivacy:
             assert library_logger.getEffectiveLevel() >= logging.WARNING
             assert not library_logger.isEnabledFor(logging.DEBUG)
             assert not library_logger.isEnabledFor(logging.INFO)
+
+
+class TestGuestyV3DebugDiagnostics:
+    """V3 DEBUG logs answer research R15 without PII (T066, FR-043)."""
+
+    @pytest.mark.asyncio
+    async def test_v3_cycle_logs_diagnostics_without_pii(
+        self,
+        async_session,
+        async_session_factory,
+        debug_log_stream,
+        guesty_transport: GuestyFakeTransport,
+    ):
+        """Test every R15 diagnostic is logged and no guest data is."""
+        p = guesty_transport.payloads
+        single, parent = p.new_id("lst"), p.new_id("lst")
+        unit_a, unit_b, untracked = p.new_id("lst"), p.new_id("lst"), p.new_id("lst")
+        guesty_transport.add_listing(single)
+        guesty_transport.add_listing(parent, children=[unit_a, unit_b])
+        guesty_transport.add_listing(untracked)
+        listings = {}
+        for pms_id, rooms in ((single, [single]), (parent, [unit_a, unit_b])):
+            listing = make_listing(pms_id=pms_id, slug=f"pv-{pms_id[-6:]}")
+            async_session.add(listing)
+            await async_session.commit()
+            await async_session.refresh(listing)
+            for room in rooms:
+                async_session.add(
+                    make_room(
+                        listing_id=listing.id,
+                        pms_room_id=room,
+                        slug=f"pv-{room[-6:]}",
+                    )
+                )
+            await async_session.commit()
+            listings[pms_id] = listing
+
+        notes = {"other": "", "guest": "", "keyCode": KEY_CODE_VALUE}
+        stay = p.search_item(
+            single,
+            notes=notes,
+            custom_fields=p.custom_fields({"door_code": DOOR_CODE_VALUE}),
+        )
+        trip = p.round_trip_move(parent, unit_a, unit_b, notes=notes)
+        moved_id = p.new_id("res")
+        moved = p.rearranged_into_untracked(
+            untracked, single, start=0, reservation_id=moved_id, notes=notes
+        )
+        guesty_transport.v3_items = [stay, trip, moved]
+        for item in guesty_transport.v3_items:
+            guesty_transport.guests[item["guestId"]] = p.guests_crud_body(
+                item["guestId"],
+                full_name=GUEST_NAME,
+                phone=GUEST_PHONE,
+                email=GUEST_EMAIL,
+            )
+        for rid, code, start, end in (
+            (stay["reservationId"], stay["confirmationCode"], 7, 10),
+            (moved_id, moved["confirmationCode"], 2, 5),
+        ):
+            async_session.add(
+                make_booking(
+                    listing_id=listings[single].id,
+                    pms_booking_id=f"{rid}::{single}",
+                    guest_name=GUEST_NAME,
+                    check_in_date=p.check_in_at(start),
+                    check_out_date=p.check_out_at(end),
+                    custom_data={"confirmationCode": code},
+                )
+            )
+        await async_session.commit()
+
+        provider = guesty_transport.provider(reservations_api="v3")
+        provider.begin_cycle([single, parent])
+        service = SyncService(async_session, session_factory=async_session_factory)
+        for listing in listings.values():
+            await service.sync_listing(listing, provider)
+        await provider.aclose()
+
+        output = debug_log_stream.getvalue()
+        _assert_no_sentinels(output)
+        trip_id = trip["reservationId"]
+        expected = [
+            # Filter IDs and chunks.
+            r"Guesty V3 search: filter_ids=\d+ chunks=1 window=",
+            # Per-chunk pagination signals.
+            r"Guesty V3 search chunk 1/1: listing_ids=\d+ pages=1 "
+            r"has_more=\[False\] items=2",
+            # Totals, cross-chunk duplicates, status and segment histograms.
+            r"Guesty V3 search result: items=2 duplicates=0 "
+            r"statuses=\{'confirmed': 2\} segments=\{1: 1, 3: 1\}",
+            # Every segment's listing ID per reservation.
+            rf"Guesty V3 reservation {trip_id}: status=confirmed segments=3 "
+            rf"listings={unit_a},{unit_b},{unit_a}",
+            # Per-listing ownership and window narrowing.
+            rf"Guesty V3 listing {parent}: owned=1 in_window=1 intervals=3 "
+            r"extra_intervals=2 holds=0 unclassified=0",
+            # Matched-ID count.
+            rf"Identity check for listing {single}: 1 stored reservation\(s\) "
+            r"matched by ID",
+            # FR-011a candidates, verdicts and control outcome.
+            rf"Absence check for listing {single}: candidates=1 "
+            r"verdicts=\{'reattributed': 1\}",
+            rf"Guesty V3 by-IDs lookup for listing {single}: candidates=1 "
+            r"control=returned",
+            rf"INFO.*Guesty V3 reservation {moved_id} re-attributed: "
+            rf"segment listings {untracked},{single}",
+            # Per-cycle request counts and enrichment reuse.
+            r"INFO.*Guesty requests this cycle: search=1 by_ids=1",
+            r"Enrichment for listing \S+: reused=\d+ fetched=\d+",
+        ]
+        missing = [line for line in expected if not re.search(line, output)]
+        assert not missing, f"diagnostics missing: {missing}"

@@ -12,6 +12,11 @@ from src.providers.guesty.legacy_reservations import (
     MAX_RESERVATION_PAGES,
 )
 from src.providers.guesty.sources import GuestyHTTPError
+from src.providers.guesty.v3_diagnostics import (
+    log_chunk,
+    log_search_plan,
+    log_search_result,
+)
 from src.providers.guesty.v3_mapping import change_key, reservation_id, stay_segments
 
 if TYPE_CHECKING:
@@ -159,7 +164,7 @@ async def _search_chunk(
     request: RequestFn,
     chunk: tuple[str, ...],
     window: tuple[date, date],
-) -> tuple[list[dict[str, Any]], int]:
+) -> tuple[list[dict[str, Any]], list[bool]]:
     """Page one chunk's search to completion behind the R4 guard.
 
     Args:
@@ -168,7 +173,7 @@ async def _search_chunk(
         window: ``(D_start, D_end)`` localized stay-date bounds.
 
     Returns:
-        The chunk's raw items and the number of pages fetched.
+        The chunk's raw items and each fetched page's ``hasMore`` flag.
 
     Raises:
         PMSProviderError: On API failure (after the request's own 429
@@ -178,6 +183,7 @@ async def _search_chunk(
     limit = DEFAULT_PAGE_LIMIT
     items: list[dict[str, Any]] = []
     seen: list[str] = []
+    more: list[bool] = []
     for page in range(MAX_RESERVATION_PAGES):
         skip = page * limit
         params: dict[str, Any] = {
@@ -205,8 +211,9 @@ async def _search_chunk(
         results, has_more = _page_items(data, page, skip, limit)
         _check_items(results, seen, page)
         items.extend(results)
+        more.append(has_more)
         if not has_more:
-            return items, page + 1
+            return items, more
     msg = (
         f"Guesty Reservations V3 search exceeded {MAX_RESERVATION_PAGES} "
         f"pages; {_PARTIAL}"
@@ -233,11 +240,13 @@ async def combined_search(
         PMSProviderError: If any chunk fails, or two chunks return
             different copies of one reservation (an FR-011 shift).
     """
+    log_search_plan(chunks, window)
     merged: dict[str, tuple[str, dict[str, Any]]] = {}
-    pages = 0
-    for chunk in chunks:
-        items, chunk_pages = await _search_chunk(request, chunk, window)
-        pages += chunk_pages
+    pages = duplicates = 0
+    for index, chunk in enumerate(chunks, 1):
+        items, more = await _search_chunk(request, chunk, window)
+        log_chunk(index, len(chunks), chunk, more, len(items))
+        pages += len(more)
         for item in items:
             rid = reservation_id(item)
             key = change_key(item)
@@ -248,5 +257,8 @@ async def combined_search(
                     f"the next sync cycle)"
                 )
                 raise PMSProviderError(msg)
+            duplicates += rid in merged
             merged.setdefault(rid, (key, item))
-    return [item for _key, item in merged.values()], pages
+    result = [item for _key, item in merged.values()]
+    log_search_result(result, duplicates)
+    return result, pages

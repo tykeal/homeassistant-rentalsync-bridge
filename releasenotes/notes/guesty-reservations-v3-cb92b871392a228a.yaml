@@ -1,0 +1,52 @@
+---
+upgrade:
+  - |
+    Guesty retires its legacy reservations API (`/v1/reservations`) on
+    2027-03-01. **Upgrade to this release before then**: Guesty
+    installations now read reservations from Guesty Reservations V3 by
+    default. The switch happens at the first start after upgrading, with
+    no database change, and single-segment bookings keep their event
+    UIDs, summaries and `Booking ID:` lines.
+  - |
+    New add-on option **Guesty reservations API**
+    (`guesty_reservations_api`): `v3` (default) or `legacy`. To roll
+    back, set it to `legacy` and restart the add-on; the startup log
+    shows which API is in use (`Guesty reservations API: v3`). Standalone
+    deployments use the `GUESTY_RESERVATIONS_API` environment variable.
+    Legacy works only until Guesty retires `/v1/reservations`; after
+    that a legacy sync fails with an error asking you to switch to `v3`,
+    and the last good feeds are kept. Cloudbeds ignores the option.
+  - |
+    Rollback limitation: on `legacy`, a reservation that spans several
+    rooms collapses back to one booking in its first unit, and the extra
+    `#n` room events V3 created are retired at the next sync.
+  - |
+    The `money_totalPaid`, `money_balanceDue` and `money_currency`
+    description fields are retired on V3, because Reservations V3 no
+    longer carries payment totals; they render empty. Their configuration
+    is kept, and they render again if you roll back to `legacy`. The
+    admin UI marks them with a **Retired** badge, and the add-on logs one
+    WARNING per enabled retired field, once per start, naming the
+    listings that use it. Remove or disable these fields to silence it.
+features:
+  - |
+    Guesty reservations are read with one combined, listing-filtered
+    Reservations V3 search per sync cycle. A stored reservation that
+    disappears from the search is confirmed with a by-IDs lookup before
+    its booking is retired. On a synthetic reference account the first
+    cycle needs 122 Guesty requests instead of 237, and each later cycle
+    17 instead of 31.
+  - |
+    Multi-unit Guesty reservations that change room part-way through a
+    stay are exported as one event per room interval, each in its own
+    room's feed for exactly the dates the guest is assigned there.
+  - |
+    At `debug` log level, Guesty V3 syncs log search, pagination,
+    status, segment and absence-check diagnostics using reservation and
+    listing IDs and counts only, never guest details or door codes. Each
+    cycle also logs its Guesty request counts by resource at INFO.
+deprecations:
+  - |
+    The `legacy` value of `guesty_reservations_api`, and the legacy
+    reservations code path, will be removed in a release after
+    2027-03-01.

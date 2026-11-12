@@ -3331,3 +3331,49 @@ class TestBaseProviderDefinitions:
         provider = CloudbedsProvider(access_token="tok")
 
         assert await provider.get_custom_field_definitions() == {}
+
+
+class TestLegacyResourceRetired:
+    """Legacy mode after Guesty retires ``/v1/reservations`` (T065, FR-041)."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [404, 410])
+    async def test_retired_resource_asks_to_switch_and_keeps_last_good(
+        self, async_session, async_session_factory, guesty_transport, status
+    ):
+        """Test a 404/410 names the v3 setting and retires nothing."""
+        from src.repositories.booking_repository import BookingRepository
+        from src.services.sync_service import SyncService, SyncServiceError
+
+        from tests.conftest import make_booking, make_listing
+
+        pms_id = guesty_transport.payloads.new_id("lst")
+        guesty_transport.add_listing(pms_id)
+        listing = make_listing(pms_id=pms_id, slug="legacy-gone")
+        async_session.add(listing)
+        await async_session.commit()
+        await async_session.refresh(listing)
+        async_session.add(
+            make_booking(listing_id=listing.id, pms_booking_id=f"R1::{pms_id}")
+        )
+        await async_session.commit()
+        guesty_transport.fail("reservations", status)
+        provider = guesty_transport.provider(reservations_api="legacy")
+
+        with pytest.raises(PMSProviderError) as direct:
+            await provider.get_reservations(pms_id)
+        guesty_transport.fail("reservations", status)
+        with pytest.raises(SyncServiceError) as synced:
+            await SyncService(
+                async_session, session_factory=async_session_factory
+            ).sync_listing(listing, provider)
+        await provider.aclose()
+
+        for message in (str(direct.value), str(synced.value)):
+            assert "guesty_reservations_api" in message
+            assert "v3" in message
+            assert str(status) in message
+        rows = await BookingRepository(async_session).get_for_listing(listing.id)
+        assert [(r.pms_booking_id, r.status) for r in rows] == [
+            (f"R1::{pms_id}", "confirmed")
+        ]

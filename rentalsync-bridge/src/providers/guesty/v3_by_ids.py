@@ -269,6 +269,11 @@ class AbsenceContext:
         mapped = map_by_ids_item(item, self.listing_pms_id, self.scope_ids)
         if mapped is None or any(i.local_dates is None for i in mapped.intervals):
             return _verdict(_UNCONFIRMED, "unusable stay dates")
+        logger.info(
+            "Guesty V3 reservation %s re-attributed: segment listings %s",
+            rid,
+            ",".join(s["listingId"] for s in item["stay"]),
+        )
         return AbsenceResult(
             AbsenceVerdict.REATTRIBUTED,
             reservation=mapped,
@@ -366,6 +371,13 @@ async def confirm_batch(
     items = _validated(data, requested, listing)
     if items is None:
         return unconfirmed
+    logger.debug(
+        "Guesty V3 by-IDs lookup for listing %s: candidates=%d control=%s returned=%d",
+        listing,
+        len(candidates),
+        "none" if control is None else ("returned" if control in items else "missing"),
+        sum(rid in items for rid in candidates),
+    )
 
     results: dict[str, AbsenceResult] = {}
     for rid in candidates:

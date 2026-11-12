@@ -121,12 +121,12 @@ class TestSettings:
 class TestGuestyReservationsApi:
     """Tests for the guesty_reservations_api toggle (spec 004, FR-041)."""
 
-    def test_default_is_legacy(self, monkeypatch):
-        """The default stays legacy until the final spec 004 PR flips it."""
+    def test_default_is_v3(self, monkeypatch):
+        """The default is v3; legacy is an explicit rollback choice."""
         from src.config import Settings
 
         monkeypatch.delenv("GUESTY_RESERVATIONS_API", raising=False)
-        assert Settings().guesty_reservations_api == "legacy"
+        assert Settings().guesty_reservations_api == "v3"
 
     @pytest.mark.parametrize(
         ("raw", "expected"),

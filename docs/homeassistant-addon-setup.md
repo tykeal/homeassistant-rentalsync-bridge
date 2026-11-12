@@ -46,6 +46,7 @@ log_level: info
 | `cloudbeds_api_key` | Your Cloudbeds API key | Required |
 | `timezone` | IANA timezone identifier | `UTC` |
 | `log_level` | Logging verbosity | `info` |
+| `guesty_reservations_api` | Guesty API used to read reservations: `v3` or `legacy` | `v3` |
 
 The `log_level` option accepts `debug`, `info`, `warning`, `error` or
 `critical` and is passed to the application as the `LOG_LEVEL` environment
@@ -66,6 +67,95 @@ This is a best-effort guarantee covering the add-on's own logging. Logs can
 still contain property names, listing slugs and provider error messages
 returned verbatim by your PMS. Always skim a log before pasting it into a
 public GitHub issue and redact anything you would not want published.
+
+#### Guesty Reservations API
+
+Guesty retires its legacy reservations API (`/v1/reservations`) on
+2027-03-01. Upgrade the add-on before that date. The
+`guesty_reservations_api` option selects which API the add-on reads
+reservations from; Cloudbeds ignores it.
+
+- `v3` (default) uses Guesty Reservations V3: one combined, listing-filtered
+  search per sync cycle, plus a by-IDs lookup only when a stored reservation
+  disappears from the search. A reservation that changes room or spans
+  several units of a multi-unit property is exported as one event per room
+  interval, in each room's own feed.
+- `legacy` restores the previous behaviour. It is for rollback only and is
+  removed in a release after 2027-03-01.
+
+The startup log shows the selected value, for example
+`Guesty reservations API: v3`. Changing the option takes effect when the
+add-on restarts; there is no database change in either direction.
+
+V3 also lowers the Guesty request budget. Measured against a synthetic
+reference account, the first sync cycle used 122 requests instead of 237,
+and each later cycle 17 instead of 31. Every cycle logs its request
+counts by resource at INFO, for example
+`Guesty requests this cycle: search=1 by_ids=0 guests=2 custom_fields=0`.
+
+##### Retired payment description fields
+
+Reservations V3 no longer carries payment totals, so the `money_totalPaid`,
+`money_balanceDue` and `money_currency` description fields render empty
+on `v3`. Their configuration is kept, and switching back to `legacy`
+renders them again. The admin UI marks them with a **Retired** badge, and
+the add-on logs one WARNING per enabled retired field, once per add-on
+start, naming the listings that use it. Remove or disable these fields to
+silence the warning.
+
+##### Validating V3 before the stable release (pre-release)
+
+On a pre-release, check V3 against your own account before relying on it:
+
+1. Set `log_level: debug`, keep `guesty_reservations_api: v3` and restart.
+2. Let three or more sync cycles run, then check the log and feeds:
+   - **Identity.** The first sync's INFO line reports that every stored
+     reservation ID was matched, and no identity-mismatch error appears.
+   - **Feeds.** For every single-segment reservation, the event UID,
+     `SUMMARY` and `Booking ID:` line match the last legacy feed. Save
+     copies of each feed before upgrading and compare them with `diff`.
+     Multi-segment reservations are expected to differ: V3 adds
+     room-specific and `#n` events that legacy never produced.
+   - **Codes.** Door codes are unchanged for every current and upcoming
+     stay.
+   - **Multi-segment stays.** Each room interval's event appears in exactly
+     that room's feed, with the room and dates assigned in Guesty.
+   - **Health.** No completeness-guard or rate-limit warnings appear, and
+     the per-cycle request counts stay at or below the legacy level.
+3. Report the results, or anything unexpected, on
+   [issue #145](https://github.com/tykeal/homeassistant-rentalsync-bridge/issues/145).
+
+At `debug`, V3 logs the search's filter-ID and chunk counts, each page's
+`hasMore`, status and segment-count histograms, every reservation's
+segment listing IDs, per-listing counts and the outcome of each absence
+check. Like the other `debug` diagnostics, these lines carry identifiers,
+counts and statuses only, never guest details, door codes or notes.
+
+##### Rolling back to legacy
+
+1. On the **Configuration** tab set **Guesty reservations API** to
+   `legacy`, then restart the add-on. No add-on downgrade is needed.
+2. Single-segment bookings keep their UIDs.
+3. A multi-segment reservation collapses back to one booking in its first
+   unit; its extra `#n` room intervals are retired at the next sync.
+4. Legacy works only until Guesty retires `/v1/reservations` on
+   2027-03-01. After that, legacy syncs fail with an error naming the HTTP
+   status and asking you to switch to `v3`; the last good feeds are kept.
+
+##### Known V3 limitations
+
+- Guesty's listing filter matches only a reservation's first stay segment.
+  A reservation that starts in a property the add-on does not track, and
+  was never captured before, is not discovered even when a later segment
+  moves into a tracked listing. The legacy API has the same gap. The
+  `debug` log lists every reservation's segment listing IDs so you can
+  spot it.
+- If Guesty re-arranges a stored reservation so it starts in an untracked
+  property, the add-on keeps its existing room bookings through the by-IDs
+  lookup and logs the re-attribution at INFO. A tracked room the
+  reservation occupies for the first time is logged rather than published.
+- A guest record that Guesty keeps answering with HTTP 404 costs one
+  lookup on every sync cycle.
 
 ### 4. Start the Add-on
 
@@ -133,6 +223,11 @@ Check the logs for error messages:
 - Database permission issues
 - Port conflicts (default 8099)
 - Invalid configuration
+
+### Guesty Sync Fails After 2027-03-01
+
+If the log reports that the Guesty legacy reservations API returned HTTP
+404 or 410, set `guesty_reservations_api` to `v3` and restart the add-on.
 
 ### No Properties Syncing
 
