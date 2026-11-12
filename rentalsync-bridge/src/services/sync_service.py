@@ -14,6 +14,7 @@ from src.database import get_session_factory
 from src.models.booking import OLD_BOOKING_RETENTION_DAYS, Booking
 from src.models.listing import Listing
 from src.providers.base import (
+    HOLD_STATUSES,
     RECOGNISED_NON_EXPORT_STATUSES,
     AbsenceResult,
     AbsenceVerdict,
@@ -211,6 +212,7 @@ class SyncService:
             )
             self._log_reservation_snapshot(listing, reservations)
             await self._verify_identity(listing, reservations)
+            reservations = await self._drop_unstored_holds(listing, reservations)
 
             # Ask the provider about stored reservations missing from the
             # snapshot before anything is written, so an inconsistent
@@ -397,6 +399,49 @@ class SyncService:
             matched,
         )
 
+    @staticmethod
+    def _is_held(reservation: PMSReservation) -> bool:
+        """Report whether a reservation is in a transient hold status."""
+        return str(reservation.status or "").strip().lower() in HOLD_STATUSES
+
+    async def _drop_unstored_holds(
+        self,
+        listing: Listing,
+        reservations: list[PMSReservation],
+    ) -> list[PMSReservation]:
+        """Withhold held reservations that have no stored booking (FR-023).
+
+        Nothing was ever exported for them, so there is nothing to protect,
+        and their in-flight data must not be stored or published.  Dropping
+        them before enrichment also spends no request on them.
+
+        Args:
+            listing: Listing being synced.
+            reservations: Retention-filtered snapshot.
+
+        Returns:
+            The snapshot without first-seen held reservations.
+        """
+        if not any(self._is_held(r) for r in reservations):
+            return reservations
+        stored = {
+            self._extract_base_reservation_id(booking.pms_booking_id)
+            for booking in await self._booking_repo.get_for_listing(listing.id)
+        }
+        kept: list[PMSReservation] = []
+        for reservation in reservations:
+            if self._is_held(reservation) and reservation.pms_booking_id not in stored:
+                logger.debug(
+                    "Reservation %s for listing %s is first seen in status %r; "
+                    "not stored until it leaves that state",
+                    reservation.pms_booking_id,
+                    listing.pms_id,
+                    reservation.status,
+                )
+                continue
+            kept.append(reservation)
+        return kept
+
     async def _confirm_absences(
         self,
         provider: PMSProvider,
@@ -552,6 +597,15 @@ class SyncService:
 
             seen_reservation_ids.add(reservation.pms_booking_id)
 
+            if self._is_held(reservation):
+                counts["updated"] += await self._hold_reservation(
+                    listing,
+                    reservation,
+                    (enrichment or {}).get(reservation.pms_booking_id),
+                    seen_booking_ids,
+                )
+                continue
+
             booking_data = self._extract_booking_data_from_dto(
                 reservation,
                 (enrichment or {}).get(reservation.pms_booking_id),
@@ -692,6 +746,62 @@ class SyncService:
             cancelled += 1
 
         return cancelled
+
+    async def _hold_reservation(
+        self,
+        listing: Listing,
+        reservation: PMSReservation,
+        enrichment_data: dict | None,
+        seen_booking_ids: set[str],
+    ) -> int:
+        """Keep a held reservation's stored rows, refreshing enrichment only.
+
+        Every stored row of the reservation (each interval) is marked seen
+        and keeps its status, dates and room: the in-flight data is never
+        published and no row is created or retired (FR-023).  Door-code
+        enrichment keeps following the normal freshness rules, so live
+        rows take the freshly enriched guest and custom data.  Retired
+        rows are not touched, keeping their cancellation age.
+
+        Args:
+            listing: Listing being synced.
+            reservation: The enriched held reservation.
+            enrichment_data: Enrichment-owned values behind its custom data.
+            seen_booking_ids: Booking IDs to keep; extended in place.
+
+        Returns:
+            The number of rows refreshed.
+        """
+        rid = reservation.pms_booking_id
+        rows = [
+            booking
+            for booking in await self._booking_repo.get_for_listing(listing.id)
+            if self._extract_base_reservation_id(booking.pms_booking_id) == rid
+        ]
+        custom_data = self._base_custom_data(reservation)
+        refreshed = 0
+        for booking in rows:
+            seen_booking_ids.add(booking.pms_booking_id)
+            if booking.status == "cancelled":
+                continue
+            booking.guest_name = reservation.guest_name
+            booking.guest_phone_last4 = custom_data.get("guest_phone_last4")
+            booking.custom_data = custom_data or None
+            booking.pms_updated_at = reservation.updated_at
+            booking.enrichment_data = enrichment_data
+            booking.last_fetched_at = datetime.now(UTC)
+            await self._booking_repo.update(booking)
+            refreshed += 1
+        logger.debug(
+            "Holding %d stored booking(s) of reservation %s for listing %s "
+            "while it is in status %r; enrichment refreshed on %d",
+            len(rows),
+            rid,
+            listing.pms_id,
+            reservation.status,
+            refreshed,
+        )
+        return refreshed
 
     async def _apply_reattributions(
         self,
@@ -1131,19 +1241,7 @@ class SyncService:
         status = SyncService._normalize_booking_status(
             reservation.status, reservation.pms_booking_id
         )
-
-        # Build base custom data — include phone_last4 if available
-        base_custom_data: dict = {}
-        if reservation.custom_data:
-            for key, value in reservation.custom_data.items():
-                if value is None or value == "":
-                    continue
-                if isinstance(value, (dict, list)):
-                    continue
-                if should_exclude_field(key):
-                    continue
-                base_custom_data[key] = str(value)
-
+        base_custom_data = SyncService._base_custom_data(reservation)
         phone_last4 = base_custom_data.get("guest_phone_last4")
 
         return {
@@ -1159,6 +1257,30 @@ class SyncService:
             # must stay distinguishable from NULL ("never stored").
             "enrichment_data": enrichment_data,
         }
+
+    @staticmethod
+    def _base_custom_data(reservation: PMSReservation) -> dict:
+        """Return a reservation's storable custom data, as strings.
+
+        Empty, nested and excluded values are dropped; ``guest_phone_last4``
+        is kept when enrichment supplied it.
+
+        Args:
+            reservation: Normalized reservation DTO from provider.
+
+        Returns:
+            The custom data to store on its bookings.
+        """
+        base_custom_data: dict = {}
+        for key, value in (reservation.custom_data or {}).items():
+            if value is None or value == "":
+                continue
+            if isinstance(value, (dict, list)):
+                continue
+            if should_exclude_field(key):
+                continue
+            base_custom_data[key] = str(value)
+        return base_custom_data
 
     @staticmethod
     def extract_phone_last4(phone: str | None) -> str | None:
