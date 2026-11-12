@@ -17,7 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -35,10 +35,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers are intentionally left for `/speckit.clarify`; they are owner decisions with materially different door-code, budget or user-visible consequences and no safe default:
-  1. FR-041 — cutover strategy (hard switch, user toggle, or shadow comparison).
-  2. FR-023 — exact treatment of the new `alteration` and `completed` statuses (the invariant — never retire or withhold a live stay during `alteration` — is already fixed).
-  3. FR-036 — handling of description fields V3 no longer supplies (`nightsCount`, `money_totalPaid`, `money_balanceDue`, `money_currency`); the non-silent handling in FR-037/FR-038 is already fixed.
+- The three [NEEDS CLARIFICATION] markers left for `/speckit.clarify` (FR-041 cutover strategy, FR-023 `alteration`/`completed` treatment, FR-036 removed description fields) were resolved by the owner in the 2026-11-10 clarification session and encoded in the spec (see its Clarifications section).
 - All other items passed on first validation.
-- Spec covers 7 user stories (two P1, two P2, three P3), 16 edge cases, 44 functional requirements (FR-001–FR-043 plus FR-011a) and 10 success criteria.
+- Spec covers 7 user stories (two P1, two P2, three P3), 19 edge cases, 44 functional requirements (FR-001–FR-043 plus FR-011a) and 11 success criteria.
 - Several facts require live confirmation because there is no Guesty test account; they are captured as requirements (FR-006, FR-015, FR-042) rather than assumed.
