@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 # Data Model: Guesty Reservations V3 Migration
 
 **Feature Branch**: `004-guesty-reservations-v3`
-**Date**: 2026-11-11
+**Date**: 2026-11-11 (revised 2026-11-12: combined listing search, by-IDs re-attribution)
 
 **No database schema change and no Alembic migration** (research R13). Every change in this document is one of:
 
@@ -46,8 +46,9 @@ V3 mode populates the existing fields as follows:
 |---|---|---|
 | `room_id` | `str` | the segment `listingId`: a sub-unit ID, a single-unit listing ID, or the parent unit type when unassigned (FR-019) |
 | `ordinal` | `int` (≥ 1) | 1 for the first interval in this room within the reservation, 2 for the next, and so on |
-| `check_in` | `datetime` (UTC) | first merged segment's `checkIn` |
-| `check_out` | `datetime` (UTC) | last merged segment's `checkOut` |
+| `check_in` | `datetime` (UTC) \| `None` | first merged segment's `checkIn`; `None` only in a by-IDs re-attribution (§2.3) |
+| `check_out` | `datetime` (UTC) \| `None` | last merged segment's `checkOut`; `None` only in a by-IDs re-attribution |
+| `local_dates` | `tuple[date, date] \| None` | the interval's listing-localized check-in and check-out dates. Always set; for a by-IDs re-attribution (R5) it is the **only** date source, and `check_in`/`check_out` are re-anchored from the stored row by the sync |
 | `guests_count` | `int \| None` | the **maximum** of the merged segments' `guestsCount` (non-additive: adjacent segments describe the same guests over time). It equals the common value when they agree. `None` when no merged segment has a count |
 
 **Derived booking ID**: `f"{rid}::{room_id}"` if `ordinal == 1`, otherwise `f"{rid}::{room_id}#{ordinal}"`.
@@ -61,15 +62,22 @@ V3 mode populates the existing fields as follows:
 | `state` | `Literal["present", "absent", "malformed"]` | see R8 |
 | `values` | `Mapping[str, Any]` | `{fieldId: value}` when `present`, otherwise empty |
 
-### 1.4 `AbsenceVerdict` (**new**, `StrEnum`)
+### 1.4 `AbsenceVerdict` (**new**, `StrEnum`) and `AbsenceResult` (**new**, frozen dataclass)
 
-`CONFIRMED_ABSENT`, `PRESENT` and `UNCONFIRMED`, with semantics as in research R5.
+`AbsenceVerdict`: `CONFIRMED_ABSENT`, `UNCONFIRMED`, `REATTRIBUTED` and `INCONSISTENT`, with semantics as in research R5.
+
+| `AbsenceResult` field | Type | Meaning |
+|---|---|---|
+| `verdict` | `AbsenceVerdict` | the per-candidate outcome |
+| `reservation` | `PMSReservation \| None` | set only for `REATTRIBUTED`: the reservation rebuilt from the normalised by-IDs item (§2.3), with `intervals` computed by the same R6 code as a search result, interval dates as **localized dates only** (see `PMSOccupancyInterval.local_dates`), `inline_custom_fields=None`, `change_key=None`, `guest_name=None` and `guest_id` from the item's top-level `guestId` (or `None`), which the sync compares with the stored `_guest_source_id` (R5). Its reservation-level `check_in`/`check_out` are the localized dates at 00:00 in the listing timezone, used for logging only; the sync never writes them (R5) |
+| `detail` | `str` | non-PII reason for logs (for example "no control", "unrequested _id") |
 
 ### 1.5 `PMSProvider` interface additions
 
 | Member | Default (base class) | Guesty V3 | Guesty legacy | Cloudbeds |
 |---|---|---|---|---|
-| `async confirm_absent(listing_pms_id, reservation_ids) -> dict[str, AbsenceVerdict]` | every ID → `CONFIRMED_ABSENT` (today's behaviour: absence retires) | by-IDs plus control (R5) | base default (unchanged legacy behaviour) | base default |
+| `begin_cycle(listing_pms_ids: Sequence[str]) -> None` | no-op | records the cycle's tracked listings for the combined search (R2) | no-op | no-op |
+| `async confirm_absent(listing_pms_id, reservation_ids) -> dict[str, AbsenceResult]` | every ID → `CONFIRMED_ABSENT` (today's behaviour: absence retires) | by-IDs plus control, with re-attribution (R5) | base default (unchanged legacy behaviour) | base default |
 | `retired_description_fields` (property) | `{}` | `RETIRED_DESCRIPTION_FIELDS` | `{}` | `{}` |
 
 **Note**: The base default reproduces current pruning exactly, so Cloudbeds and legacy Guesty behaviour do not change. Only V3 mode, the path whose paging cannot prove completeness, requires positive confirmation.
@@ -96,33 +104,57 @@ V3 mode populates the existing fields as follows:
   canceled ──────────────────► stored row → cancelled (retired)
   absent from snapshot ─► FR-011a confirm ─► CONFIRMED_ABSENT → cancelled
                                           ├► UNCONFIRMED → unchanged
-                                          └► PRESENT → abort listing sync,
-                                             mark cycle sweep failed
+                                          ├► REATTRIBUTED → rows in a still-occupied
+                                          │   room kept (status + re-anchored dates);
+                                          │   other rows retired (room change)
+                                          └► INCONSISTENT → abort this listing's
+                                             sync (no other listing affected)
 ```
 
 ---
 
 ## 2. Snapshot (provider-internal, `guesty/reservations_v3.py`)
 
-### 2.1 `V3Sweep` (per provider instance, which means per sync cycle)
+### 2.1 `V3CombinedSearch` (per provider instance, which means per sync cycle)
 
 | Field | Type | Meaning |
 |---|---|---|
+| `tracked` | `frozenset[str]` | listing PMS IDs declared by `begin_cycle`, plus any listing requested outside that set |
+| `filter_ids` | `tuple[str, ...]` | sorted union of the tracked listings' fetch scopes (§2.2) |
+| `chunks` | `tuple[tuple[str, ...], ...]` | `filter_ids` packed by family into chunks of at most `MAX_LISTING_IDS_PER_SEARCH = 50` (R2) |
 | `window` | `(date, date)` | the `D_start` and `D_end` sent to Guesty (R3) |
-| `items` | `tuple[dict, ...]` | validated raw search items in ascending `reservationId` order |
-| `pages` | `int` | pages fetched (diagnostics, SC-007) |
-| `error` | `PMSProviderError \| None` | set when the completeness guard failed. Every listing in the cycle re-raises it |
+| `items` | `tuple[dict, ...]` | validated raw search items, de-duplicated by `reservationId` across chunks |
+| `pages` | `int` | pages fetched over all chunks (diagnostics, SC-007) |
+| `error` | `PMSProviderError \| None` | set when any chunk failed its completeness guard, or two chunks returned conflicting copies of one reservation. Every listing in the cycle re-raises it |
 
-**Validation**: research R4 checks 1–9. Any failure sets `error`, and no partial `items` are kept.
+**Validation**: research R4 checks 1–9 **per chunk**, then the cross-chunk de-duplication rule (R2). Any failure sets `error`, and no partial `items` are kept.
 
 ### 2.2 Listing scope (unchanged semantics)
 
 | Name | Members | Used for |
 |---|---|---|
-| ownership scope | listing ID ∪ child sub-unit IDs | which segments the listing owns (FR-017, FR-020) |
+| fetch scope | listing ID ∪ child sub-unit IDs ∪ parent unit type (imported child) | contributes to the combined search's `filter_ids` (R2) |
+| ownership scope | listing ID ∪ child sub-unit IDs | which segments the listing owns (FR-017, FR-020), for search and by-IDs results alike |
 | parent IDs | `mtl.p` / parent keys of the listing doc | recognising an unassigned segment of a multi-unit parent (FR-019) |
+| timezone | listing doc `timezone` | re-anchoring re-attributed dates (R5) |
 
-V3 mode no longer sends a server-side listing filter (R2). The fetch scope survives only as the parent-ID set.
+### 2.3 By-IDs item normalisation (`normalise_by_ids_item`, pure function)
+
+The by-IDs resource returns a different shape from search. Before attribution, each item is normalised to the search shape so the same R6 code computes intervals and identities (FR-005: byte-identical `pms_booking_id`, UID and `Booking ID:` line whichever endpoint supplied the data):
+
+| Search shape | By-IDs shape | Normalisation |
+|---|---|---|
+| `reservationId` | `_id` | copied |
+| `status` | `status` | copied (R7 mapping applies afterwards) |
+| `stay[].listingId` | `stay[].unitId`, `stay[].unitTypeId` | `unitId ?? unitTypeId` |
+| `stay[].parentListingId` | — | `unitTypeId` when `unitId` is present and differs from it, else absent |
+| `stay[].checkIn`/`checkOut` (UTC) | — | absent; intervals carry `local_dates` only |
+| `stay[].check*DateLocalized` | same | copied |
+| reservation-level window test | `stay[0].checkInDateLocalized`, `stay[-1].checkOutDateLocalized` | compared with the padded R3 window, the same bounds the search filter used |
+
+A missing `_id`, an empty `stay[]`, or a segment with neither `unitId` nor `unitTypeId` makes the item invalid, and the whole batch `UNCONFIRMED` (R5 whole-response validation).
+
+Two consecutive segments in the same normalised room whose `checkOutDateLocalized` equals the next `checkInDateLocalized` are **ambiguous**: without UTC instants, R6 cannot tell adjacency (merge) from a same-day gap (`#2`). Such a candidate's verdict is `UNCONFIRMED`, never `REATTRIBUTED`, so no `#n` row is retired on a guess (R5).
 
 ---
 
@@ -205,6 +237,6 @@ Cloudbeds ignores the setting.
 
 | Item | Scope | Purpose |
 |---|---|---|
-| `V3Sweep` | provider instance | one sweep per cycle (R2) |
+| `V3CombinedSearch` | provider instance | one combined (possibly chunked) search per cycle (R2) |
 | request counter by resource | provider instance | FR-043 per-cycle INFO line, and SC-006 test assertions |
 | retired-field warning emitted | process | one-time notice (FR-037) |

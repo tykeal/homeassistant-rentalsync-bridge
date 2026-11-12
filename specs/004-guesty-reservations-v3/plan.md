@@ -20,8 +20,8 @@ The legacy path stays behind an add-on toggle for rollback until a release after
 
 The approach, from [research.md](research.md):
 
-- **One stay-window sweep per cycle.** Each sync cycle runs one account-wide, stay-window-filtered V3 search, sorted by `_id`. It is attributed to listings client-side through every `stay[]` segment, which solves V3's first-segment-only listing filter.
-- **Completeness and absence.** A strict completeness guard checks every page. No booking is retired on absence without a by-IDs confirmation.
+- **One combined listing search per cycle.** Each sync cycle runs one V3 search filtered to the tracked listings (with multi-unit parents and sub-units) and the stay window, sorted by `_id`, split into chunks of at most 50 listing IDs when needed. Results are attributed to listings client-side through every `stay[]` segment. Cost scales with the tracked listings' bookings. A reservation whose first segment is in an untracked property and that was never stored is not discovered (the accepted FR-016 residual gap).
+- **Completeness and absence.** A strict completeness guard checks every page of every chunk. No booking is retired on absence without a by-IDs confirmation, and a stored reservation the search no longer finds (for example, re-arranged so its first segment is untracked) is re-attributed from the by-IDs result instead of aborting the sync.
 - **Inline custom fields.** They remove the per-reservation custom-field call.
 - **Guest lookups.** These move to the non-retiring `guests-crud` resource.
 - **Change key.** A content-hash change key replaces `lastUpdatedAt` for enrichment reuse.
@@ -36,7 +36,7 @@ There is no database migration.
 **Testing**: pytest with pytest-asyncio (auto), using the existing `tests/{unit,integration,contract}` layout. Fixtures are synthetic and built from the documented V3 schema, and are checked by the `check-fixture-pii` hook.
 **Target Platform**: Home Assistant add-on (Alpine container, s6-overlay), plus standalone uvicorn for development
 **Project Type**: Single project: a FastAPI backend with an embedded admin SPA
-**Performance Goals**: Per steady-state cycle, Guesty requests stay at or below the previous release (FR-027, SC-006). On the reference account (3 listings, ~101 retained, 5-minute interval) that is **~15–20 V3 vs ~26–39 legacy**, about 180–240 per hour against the 5,000/h limit. Reservation pages per cycle scale with the account's in-window reservations, not with total history (SC-007).
+**Performance Goals**: Per steady-state cycle, Guesty requests stay at or below the previous release (FR-027, SC-006). On the reference account (3 listings, ~101 retained, 5-minute interval) that is **~15–20 V3 vs ~26–39 legacy**, about 180–240 per hour against the 5,000/h limit. Reservation pages per cycle scale with the tracked listings' in-window reservations, not with total history or account size (SC-007).
 **Constraints**:
 
 - Guesty limits: 15/s, 120/min and 5,000/h, shared with the user's other integrations.
@@ -81,10 +81,10 @@ Verify feature design compliance with `.specify/memory/constitution.md`:
 | # | Decision | Research |
 |---|---|---|
 | D1 | V3 calls: `/v1/reservations-v3/search`, `/v1/reservations-v3?reservationIds=` and `/v1/guests-crud/{id}?fields=fullName phone email`. Listings, token and the V3 custom-fields endpoint are unchanged. Legacy mode is byte-for-byte unchanged. | R1 |
-| D2 | **First-segment problem**: no server listing filter. One account-wide stay-window sweep per cycle, cached on the provider instance, including a cached failure. Each listing claims the reservations that have any `stay[]` segment whose `listingId` is in its ownership scope, or which are unassigned on its parent unit type. This catches moves whose first segment is in another or untracked property. Cost is `ceil(R_in_window/100)` pages per cycle, which is 2 for the reference account. | R2, R6 |
+| D2 | **First-segment problem (owner decision 2026-11-12)**: one combined search per cycle with `filter[listingId][in]` = the union of every tracked listing's fetch scope (listing, sub-units, parent unit type), declared through `begin_cycle`. Chunks of at most **50 IDs**, packed by multi-unit family; each chunk fully guarded; any chunk failure fails the cycle; results de-duplicated by `reservationId` (conflicting copies abort). Cached on the provider instance, including a cached failure. Each listing claims the reservations that have any `stay[]` segment in its ownership scope, or which are unassigned on its parent unit type. Moves within a multi-unit property and from another tracked listing are caught; a never-stored reservation starting in an untracked property is the accepted residual gap (logged per-reservation segment IDs make it detectable). Cost is `Σ_chunks ceil(R_chunk_in_window/100)` pages, which is 2 for the reference account. | R2, R6 |
 | D3 | Window: `filter[checkOut][gte]` = UTC date(now−91d)−1d and `filter[checkIn][lte]` = UTC date(now+365d)+1d. In-progress stays are always included (checkOut ≥ today). Client-side `_overlaps_window` stays authoritative. A test pins lookback ≥ retention (90d)+1. | R3 |
-| D4 | Paging: `sort=_id`, `limit=100`, `skip`, cap 500. Nine guard checks: shape, skip echo, empty `hasMore` page, short `hasMore` page, missing ID, duplicate, non-ascending ID, cap, retries. Any failure aborts every listing in the cycle, keeping last-good. | R4 |
-| D5 | FR-011a: rows the prune would retire are confirmed by by-IDs (9 candidates + 1 control per call). They retire only on canceled, out-of-scope, out-of-window, excluded or omitted-with-control. alteration, an unverifiable result, or a response containing unrequested or duplicate IDs keeps the row. An in-scope live result (`PRESENT`) aborts the listing and marks the cycle's sweep failed, so later listings abort too; earlier listings' retirements were each individually confirmed. This costs 0 calls in the steady state. | R5 |
+| D4 | Paging: `sort=_id`, `limit=100`, `skip`, cap 500 per chunk. Nine guard checks per chunk: shape, skip echo, empty `hasMore` page, short `hasMore` page, missing ID, duplicate, non-ascending ID, cap, retries. Any failure aborts every listing in the cycle, keeping last-good. | R4 |
+| D5 | FR-011a: rows the prune would retire are confirmed by by-IDs (9 candidates + 1 control per call). They retire only on canceled, out-of-scope, out-of-window, excluded or omitted-with-control. alteration, an unverifiable result, or a response containing unrequested or duplicate IDs keeps the row. A returned live, in-scope candidate whose first segment is **outside** the searched filter IDs is `REATTRIBUTED`: the by-IDs item is normalised to the search shape (`_id`, `unitId ?? unitTypeId`, localized dates) and run through the same R6 attribution, so identities are byte-identical; rows in still-occupied rooms are kept with the mapped status and re-anchored dates, other rows retire as room changes, and the sync does not abort. Ambiguous same-room date boundaries or an invalid re-anchored row make the candidate `UNCONFIRMED` (validated before any write); guest-owned enrichment is kept only while the by-IDs `guestId` matches the stored guest. Only when the first segment **is** in the filter IDs (the search should have found it) is it `INCONSISTENT`, aborting that one listing. This costs 0 calls in the steady state. | R5 |
 | D6 | Intervals: segments merge per room when adjacent. The first interval is `{rid}::{room}`, identical to legacy for single-segment reservations; later non-adjacent ones are `{rid}::{room}#{n}`. Rooms resolve from the interval, not by parsing the ID. | R6 |
 | D7 | Status: `completed`→`checked_out`. `alteration` is a hold status: stored rows freeze status, dates and room, and enrichment refreshes. If first seen in `alteration`, the reservation is not stored, logged at DEBUG, and never retired (**PM to confirm**). Health guard thresholds are unchanged, and `inquiry`/`reserved` stay excluded. | R7 |
 | D8 | Inline `customFields` (present/absent/malformed). Absent with stored values costs one confirmation call. Malformed keeps last-good. | R8 |
@@ -106,12 +106,13 @@ Verify feature design compliance with `.specify/memory/constitution.md`:
 | By-IDs confirmations | — | 0 (steady state) |
 | **Total** | **~26–39** | **~15–20** |
 
-## Owner Decisions Before Implement
+## Owner Decisions
 
-1. **First-seen `alteration` (D7).** The proposal is to withhold the reservation quietly and never retire it; it would not appear in the withheld-reservations panel. The alternative is to show it in the panel.
-2. **Enrichment during the alteration freeze (D7).** Status, dates and room are frozen, but door-code enrichment keeps refreshing. This refines the clarify answer "keep status and data", and was adopted in review of PR #197.
-3. **Sweep vs scoped search (D2).** The sweep satisfies FR-016, but it can exceed legacy request counts for an account that tracks only a small part of a large portfolio (FR-027 is measured on the reference account). The fallback is a per-listing scoped search, which misses cross-property first-segment moves. The recommendation is the sweep, with the page count logged.
-4. **`notes` / `guestsCount` mapping (D10).** `keyCode` is excluded from `notes` because it is a door secret.
+1. **First-seen `alteration` (D7).** Accepted 2026-11-12: withheld quietly, never retired, not in the withheld-reservations panel.
+2. **Enrichment during the alteration freeze (D7).** Accepted 2026-11-12: status, dates and room are frozen, but door-code enrichment keeps refreshing.
+3. **Fetch strategy (D2).** Decided 2026-11-12: the combined listing search, not the account-wide sweep, with the FR-016 residual gap documented in the spec. FR-011a re-attribution (D5) replaces the earlier abort-on-`PRESENT` so a re-arranged reservation cannot cause a permanent outage.
+4. **`notes` / `guestsCount` mapping (D10).** Accepted 2026-11-12: `keyCode` is excluded from `notes` because it is a door secret, and `guestsCount` is the maximum over merged segments.
+5. **Enrichment of re-attributed reservations (D5).** Open, low impact, not blocking implement (FR-011a specifies the behaviour): a reservation kept only through by-IDs re-attribution keeps its last-good custom fields (never blanked) until the search finds it again; its guest details stay last-good only while the by-IDs `guestId` matches the stored guest (a changed guest is looked up, an unverifiable one publishes no contact). Refreshing them from the by-IDs payload is a possible refinement once live validation confirms that payload's shape (R15 item 12).
 
 ## Release Gate
 
@@ -157,17 +158,21 @@ rentalsync-bridge/
 │   │   ├── base.py                               # + PMSOccupancyInterval, InlineCustomFields,
 │   │   │                                         #   AbsenceVerdict, HOLD_STATUSES,
 │   │   │                                         #   PMSReservation.intervals/change_key/
-│   │   │                                         #   inline_custom_fields, confirm_absent(),
+│   │   │                                         #   inline_custom_fields, begin_cycle(),
+│   │   │                                         #   confirm_absent() -> AbsenceResult,
 │   │   │                                         #   retired_description_fields
 │   │   ├── factory.py                            # pass reservations_api to Guesty
 │   │   └── guesty/
 │   │       ├── service.py                        # GuestyProvider: delegates to a ReservationSource
 │   │       ├── legacy_reservations.py            # NEW: verbatim move of the legacy fetch/map
-│   │       ├── reservations_v3.py                # NEW: sweep, guard, attribution, mapping,
-│   │       │                                     #   by-IDs confirmation, change key
+│   │       ├── reservations_v3.py                # NEW: combined search, chunking, guard,
+│   │       │                                     #   attribution, mapping, by-IDs
+│   │       │                                     #   confirmation/re-attribution, change key
 │   │       └── description_fields.py             # NEW: RETIRED_DESCRIPTION_FIELDS
 │   ├── services/
-│   │   └── sync_service.py                       # intervals, hold status, FR-011a confirm,
+│   │   ├── scheduler.py                          # begin_cycle(tracked listings)
+│   │   └── sync_service.py                       # intervals, hold status, FR-011a confirm
+│   │                                             #   + re-attribution (re-anchored dates),
 │   │                                             #   identity check, change-key reuse,
 │   │                                             #   bookkeeping keys, request-count log
 │   ├── api/custom_fields.py                      # + retired / retired_reason
@@ -192,14 +197,18 @@ rentalsync-bridge/
 - **Fixtures.** They are synthetic V3 payloads written from the documented schema (search item, by-IDs item, guests-crud) and include:
   - single-unit and multi-unit (assigned and unassigned) reservations
   - a same-room re-entry (`#2`)
-  - a cross-property move whose first segment is untracked
+  - a cross-listing move whose first segment is in another tracked listing
+  - a stored reservation re-arranged so its first segment is untracked (by-IDs re-attribution, including a by-IDs fixture in the documented `_id`/`unitId`/`unitTypeId`/localized-dates shape)
+  - a never-stored reservation whose first segment is untracked (the FR-016 residual gap: absent from the fake server's filtered result)
+  - enough tracked listing IDs to force two chunks
   - long in-progress stays
   - every status, including `alteration` and `completed`
   - absent and malformed `customFields`
 - **Transport.** A fake transport (`httpx.MockTransport`) records every request, for:
   - contract assertions on the exact query
-  - call-count assertions (SC-006, reuse, one sweep per cycle, zero custom-field calls)
-- **Guard and absence.** Every R4 guard condition and every R5 verdict has a test. The SC-003 test asserts that no booking is retired after any abort.
+  - the fake server applies `filter[listingId][in]` with Guesty's documented first-segment `unitId`/`unitTypeId` semantics, so the residual gap and the re-arranged case arise naturally
+  - call-count assertions (SC-006, SC-007 with untracked listings, reuse, one combined search per cycle, zero custom-field calls)
+- **Guard and absence.** Every R4 guard condition (per chunk), the cross-chunk de-duplication rule and every R5 verdict, including `REATTRIBUTED` and `INCONSISTENT`, has a test. A repeat-cycle test proves a re-arranged reservation never aborts and stays published across several cycles. The SC-003 test asserts that no booking is retired after any abort.
 - **Legacy parity.**
   - Existing Guesty tests run in legacy mode unchanged.
   - A parametrised identity test asserts single-segment UIDs are equal across modes (SC-002, SC-011).

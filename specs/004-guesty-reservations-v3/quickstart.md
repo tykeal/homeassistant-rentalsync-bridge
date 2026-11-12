@@ -22,14 +22,14 @@ uv run ruff check src/ tests/
 | Home Assistant add-on | Configuration tab → **Guesty reservations API** → `v3` (default) or `legacy`. Then restart the add-on |
 | Standalone / dev | `export GUESTY_RESERVATIONS_API=v3` (or `legacy`) before `uv run uvicorn src.main:app` |
 
-The startup log prints `Guesty reservations API: v3`. Each cycle's INFO line reports the request count by resource, for example `search=2 by_ids=0 guests=12 custom_fields=0`.
+The startup log prints `Guesty reservations API: v3`. Each cycle's INFO line reports the request count by resource, for example `search=2 by_ids=0 guests=12 custom_fields=0`. A DEBUG line reports the filter-ID count and chunks, for example `filter_ids=5 chunks=1`.
 
 ## 3. Targeted tests
 
 ```bash
 cd rentalsync-bridge
 uv run pytest tests/contract/test_guesty_v3_contract.py -q        # request/response contracts
-uv run pytest tests/unit/test_guesty_v3_source.py -q              # sweep, guard, mapping, intervals
+uv run pytest tests/unit/test_guesty_v3_source.py -q              # combined search, chunks, guard, mapping, intervals
 uv run pytest tests/unit/test_guesty_service.py -q                # legacy path + provider surface
 uv run pytest tests/integration/test_guesty_v3_sync.py -q         # end-to-end sync, FR-011a, alteration
 uv run pytest tests/integration/test_guesty_v3_toggle.py -q       # SC-011 identity across switch
@@ -48,7 +48,8 @@ Run this on the owner's live installation, with the pre-release installed and `v
    - **Identity.** The first-sync INFO line reports that every stored reservation ID was matched. No `SyncServiceError` for an identity mismatch appears.
    - **Feeds.** For every **single-segment** reservation, the event UID, `SUMMARY` and `Booking ID:` line are identical to the last legacy feed. Diff saved copies with `diff`. Multi-segment reservations are excluded from this diff, because V3 intentionally adds room-specific and `#n` events that legacy never produced.
    - **Codes.** The door-code (last-4) values are unchanged for every current and upcoming stay.
-   - **Narrowing.** The DEBUG line shows that the search window narrowed the result. Its count must be below the account's total reservation count.
+   - **Narrowing.** The DEBUG line shows that the listing and stay-window filters narrowed the result. Its count must be below the account's total reservation count, and every returned reservation must have a segment in a tracked listing or its multi-unit property.
+   - **Residual gap.** Search the per-reservation DEBUG lines for segment `listingId`s outside the tracked set, and for INFO lines about re-attributed reservations or intervals that could not be created. Report any to #145; they show how often the FR-016 residual gap matters in practice.
    - **Multi-segment.** For any multi-unit or room-move reservation, the DEBUG shape line lists its segments and the resulting intervals. Check each interval's event against the room and dates assigned in Guesty: it appears in exactly that room's feed, and in no other.
    - **Statuses.** The DEBUG status histogram contains only documented values.
    - **Paging.** No completeness-guard warnings appear, and there is no short `hasMore` page.
