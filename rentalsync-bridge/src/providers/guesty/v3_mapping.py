@@ -6,9 +6,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+from collections import Counter
+from datetime import date
 from typing import Any
 
 from src.providers.base import (
+    RECOGNISED_NON_EXPORT_STATUSES,
+    InlineCustomFields,
+    PMSOccupancyInterval,
     PMSProviderError,
     PMSReservation,
 )
@@ -17,6 +23,8 @@ from src.providers.guesty.legacy_reservations import (
     _STATUS_MAP,
     _parse_date,
 )
+
+logger = logging.getLogger(__name__)
 
 # Reservation-level keys carried into ``custom_data`` unchanged (FR-034).
 _CUSTOM_KEYS = ("source", "confirmationCode")
@@ -139,6 +147,27 @@ def change_key(item: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
+def inline_custom_fields(item: dict[str, Any]) -> InlineCustomFields:
+    """Parse a search item's ``customFields`` (research R8).
+
+    Args:
+        item: Raw search item.
+
+    Returns:
+        ``present`` with ``{fieldId: value}``, ``absent`` when the key is
+        missing, or ``malformed`` when it is not a list of well-formed
+        ``{fieldId, value}`` objects.
+    """
+    if "customFields" not in item:
+        return InlineCustomFields("absent")
+    fields = item["customFields"]
+    if not isinstance(fields, list) or not all(
+        isinstance(f, dict) and isinstance(f.get("fieldId"), str) for f in fields
+    ):
+        return InlineCustomFields("malformed")
+    return InlineCustomFields("present", {f["fieldId"]: f.get("value") for f in fields})
+
+
 def _status(item: dict[str, Any], rid: str) -> str | None:
     """Normalise a search item's status like the legacy source.
 
@@ -147,8 +176,8 @@ def _status(item: dict[str, Any], rid: str) -> str | None:
         rid: Its reservation ID, for messages.
 
     Returns:
-        The normalised (or raw, unrecognised) status, or None for an
-        excluded status.
+        The normalised status, the raw status for an unrecognised one
+        (withheld from export), or None for an excluded status.
 
     Raises:
         PMSProviderError: If the item carries no ``status`` key.
@@ -163,13 +192,79 @@ def _status(item: dict[str, Any], rid: str) -> str | None:
     raw = str(item.get("status") or "").lower()
     if raw in _EXCLUDED_STATUSES:
         return None
-    return _STATUS_MAP.get(raw, raw)
+    status = _STATUS_MAP.get(raw)
+    if status is not None:
+        return status
+    if raw in RECOGNISED_NON_EXPORT_STATUSES:
+        logger.debug(
+            "Guesty reservation %s reports status %r, a known non-stay "
+            "state; booking withheld from calendar export as expected",
+            rid,
+            raw,
+        )
+    else:
+        logger.warning(
+            "Guesty reservation %s reports status %r, which is present but "
+            "unrecognised; booking withheld from calendar export",
+            rid,
+            raw,
+        )
+    return raw
+
+
+def _local_date(value: Any) -> date | None:
+    """Parse a listing-localized ``YYYY-MM-DD`` date, or None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return date.fromisoformat(value[:10])
+    except ValueError:
+        return None
+
+
+def _intervals(
+    segments: list[dict[str, Any]], scope_ids: frozenset[str]
+) -> tuple[PMSOccupancyInterval, ...]:
+    """Build the occupancy intervals of the segments a listing owns.
+
+    Args:
+        segments: Validated stay segments.
+        scope_ids: Listing IDs owned by the listing being synced.
+
+    Returns:
+        One interval per owned segment; ordinals count repeats per room.
+    """
+    seen: Counter[str] = Counter()
+    intervals: list[PMSOccupancyInterval] = []
+    for segment in segments:
+        room = segment["listingId"]
+        if room not in scope_ids:
+            continue
+        seen[room] += 1
+        check_in_local = _local_date(segment.get("checkInDateLocalized"))
+        check_out_local = _local_date(segment.get("checkOutDateLocalized"))
+        guests = segment.get("guestsCount")
+        intervals.append(
+            PMSOccupancyInterval(
+                room_id=room,
+                ordinal=seen[room],
+                check_in=_parse_date(segment.get("checkIn")),
+                check_out=_parse_date(segment.get("checkOut")),
+                local_dates=(check_in_local, check_out_local)
+                if check_in_local and check_out_local
+                else None,
+                guests_count=guests
+                if isinstance(guests, int) and not isinstance(guests, bool)
+                else None,
+            )
+        )
+    return tuple(intervals)
 
 
 def map_search_item(
     item: dict[str, Any],
     listing_pms_id: str,
-    scope_ids: frozenset[str],  # noqa: ARG001
+    scope_ids: frozenset[str],
 ) -> PMSReservation | None:
     """Convert one owned search item to a ``PMSReservation``.
 
@@ -191,7 +286,7 @@ def map_search_item(
     status = _status(item, rid)
     if status is None:
         return None
-    room = segments[0]["listingId"]
+    intervals = _intervals(segments, scope_ids)
     guest_id = item.get("guestId")
     return PMSReservation(
         pms_booking_id=rid,
@@ -201,7 +296,9 @@ def map_search_item(
         check_in=_parse_date(item.get("checkIn") or segments[0].get("checkIn")),
         check_out=_parse_date(item.get("checkOut") or segments[-1].get("checkOut")),
         status=status,
-        room_ids=(room,),
+        room_ids=tuple(dict.fromkeys(i.room_id for i in intervals)),
         custom_data={k: item[k] for k in _CUSTOM_KEYS if item.get(k) is not None},
+        intervals=intervals,
         change_key=change_key(item),
+        inline_custom_fields=inline_custom_fields(item),
     )
