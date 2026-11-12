@@ -404,7 +404,7 @@ Follow constitution Principle V:
 
 ### Tests for User Story 5 (write first, confirm they fail)
 
-- [ ] T048 [P] [US5] Write unit tests in tests/unit/test_guesty_v3_source.py for `change_key` (research R9):
+- [x] T048 [P] [US5] Write unit tests in tests/unit/test_guesty_v3_source.py for `change_key` (research R9):
   - it is deterministic across key order
   - it changes on each included field: status, guestId, dates, stay segments, customFields, notes, source, confirmationCode
   - it is unchanged by ignored fields such as financial blocks
