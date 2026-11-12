@@ -252,7 +252,7 @@ Follow constitution Principle V:
   - (10) any of these in the second chunk, after the first chunk succeeded
 
   Each must raise `PMSProviderError` with no partial items, and the failure must be cached so a second listing in the same cycle raises without new requests (call-count assertion).
-- [ ] T030 [US2] Write unit tests in tests/unit/test_guesty_v3_source.py:
+- [x] T030 [US2] Write unit tests in tests/unit/test_guesty_v3_source.py:
   - HTTP 400 on search → `PMSProviderError` naming the status and an excerpt (FR-021), never an empty result
   - a missing `status` key → abort (FR-026)
 - [ ] T031 [P] [US2] Write contract tests in tests/contract/test_guesty_v3_contract.py for by-IDs (contracts/guesty-v3-by-ids.md):
