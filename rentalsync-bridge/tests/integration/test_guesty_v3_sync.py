@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
-"""Integration tests for syncing through the Guesty V3 source (spec 004 US1-US2)."""
+"""Integration tests for syncing through the Guesty V3 source (spec 004 US1-US3)."""
 
 from __future__ import annotations
 
@@ -1012,3 +1012,222 @@ class TestUpgradeContinuity:
             for request in transport.requests[v3_start:]
             if request.resource in retiring
         ]
+
+
+def _segment_span(segment: dict[str, Any]) -> tuple[datetime, datetime]:
+    """Return a search segment's UTC ``(checkIn, checkOut)`` instants."""
+    return (
+        datetime.fromisoformat(segment["checkIn"]),
+        datetime.fromisoformat(segment["checkOut"]),
+    )
+
+
+class TestMultiSegmentIntervals:
+    """Each owned interval is its own booking in its own room (T040, R6)."""
+
+    async def _property(self, v3: _Fixture) -> tuple[Listing, str, str]:
+        """Create a tracked multi-unit listing with sub-units A and B."""
+        p = v3.transport.payloads
+        unit_a, unit_b = p.new_id("lst"), p.new_id("lst")
+        listing = await v3.add_tracked(children=[unit_a, unit_b])
+        return listing, unit_a, unit_b
+
+    @staticmethod
+    async def _room_feed(
+        v3: _Fixture, listing: Listing, pms_room_id: str
+    ) -> dict[str, dict[str, Any]]:
+        """Render one room's feed and index its events by UID."""
+        from src.services.calendar_service import CalendarService
+
+        repo = BookingRepository(v3.session)
+        rows = list(
+            await repo.get_confirmed_for_listing(
+                listing.id, room_id=v3.rooms[pms_room_id]
+            )
+        )
+        for row in rows:
+            await v3.session.refresh(row)
+        return _events(
+            CalendarService(cache=CalendarCache(ttl_seconds=0)).generate_ical(
+                listing, rows
+            )
+        )
+
+    @staticmethod
+    def _spans(events: dict[str, dict[str, Any]]) -> list[tuple[bytes, bytes]]:
+        """Return a feed's sorted ``(DTSTART, DTEND)`` pairs."""
+        return sorted((e["DTSTART"], e["DTEND"]) for e in events.values())
+
+    async def test_round_trip_books_each_interval_in_its_room(
+        self, v3: _Fixture
+    ) -> None:
+        """A → B → A: three rows; each room feed holds only its dates."""
+        listing, unit_a, unit_b = await self._property(v3)
+        p = v3.transport.payloads
+        item = p.round_trip_move(listing.pms_id, unit_a, unit_b)
+        v3.transport.v3_items = [item]
+        rid = item["reservationId"]
+
+        await v3.sync(listing)
+
+        rows = await v3.bookings(listing)
+        first, middle, last = item["stay"]
+        assert {
+            key: (row.room_id, _as_utc(row.check_in_date), _as_utc(row.check_out_date))
+            for key, row in rows.items()
+        } == {
+            f"{rid}::{unit_a}": (v3.rooms[unit_a], *_segment_span(first)),
+            f"{rid}::{unit_b}": (v3.rooms[unit_b], *_segment_span(middle)),
+            f"{rid}::{unit_a}#2": (v3.rooms[unit_a], *_segment_span(last)),
+        }
+        feed_a = await self._room_feed(v3, listing, unit_a)
+        feed_b = await self._room_feed(v3, listing, unit_b)
+        assert len(feed_a) == 2
+        assert len(feed_b) == 1
+        assert all(
+            e["Booking ID"] == [f"Booking ID: {rid}"]
+            for e in [*feed_a.values(), *feed_b.values()]
+        )
+        assert set(feed_a).isdisjoint(feed_b)
+        # A's door is never scheduled while the guest is in B.
+        (event_b,) = feed_b.values()
+        assert all(
+            e["DTEND"] <= event_b["DTSTART"] or e["DTSTART"] >= event_b["DTEND"]
+            for e in feed_a.values()
+        )
+
+    async def test_move_from_another_tracked_listing(self, v3: _Fixture) -> None:
+        """Each tracked listing books only its own segment (US3-3)."""
+        p = v3.transport.payloads
+        first = await v3.add_tracked()
+        second = await v3.add_tracked()
+        item = p.tracked_listing_move(first.pms_id, second.pms_id)
+        v3.transport.v3_items = [item]
+        rid = item["reservationId"]
+        provider = v3.transport.provider(reservations_api="v3")
+        provider.begin_cycle([first.pms_id, second.pms_id])
+
+        (owned,) = await provider.get_reservations(second.pms_id)
+        await v3.sync_with(provider, first)
+        await v3.sync_with(provider, second)
+
+        segment_x, segment_y = item["stay"]
+        assert (owned.check_in, owned.check_out) == _segment_span(segment_y)
+        for listing, segment in ((first, segment_x), (second, segment_y)):
+            ((key, row),) = (await v3.bookings(listing)).items()
+            assert key == f"{rid}::{listing.pms_id}"
+            assert row.room_id == v3.rooms[listing.pms_id]
+            assert (
+                _as_utc(row.check_in_date),
+                _as_utc(row.check_out_date),
+            ) == _segment_span(segment)
+        assert v3.transport.counts["v3_search"] == 1
+
+    async def test_adjacent_same_room_segments_are_one_booking(
+        self, v3: _Fixture
+    ) -> None:
+        """No ``#2`` row for a stay split into adjacent same-room segments."""
+        listing, unit_a, _unit_b = await self._property(v3)
+        p = v3.transport.payloads
+        item = p.search_item(
+            stay=[
+                p.stay_segment(
+                    unit_a,
+                    p.check_in_at(3),
+                    p.check_in_at(5),
+                    parent_listing_id=listing.pms_id,
+                ),
+                p.stay_segment(
+                    unit_a,
+                    p.check_in_at(5),
+                    p.check_out_at(8),
+                    parent_listing_id=listing.pms_id,
+                ),
+            ]
+        )
+        v3.transport.v3_items = [item]
+        rid = item["reservationId"]
+
+        await v3.sync(listing)
+
+        ((key, row),) = (await v3.bookings(listing)).items()
+        assert key == f"{rid}::{unit_a}"
+        assert (_as_utc(row.check_in_date), _as_utc(row.check_out_date)) == (
+            p.check_in_at(3),
+            p.check_out_at(8),
+        )
+
+    async def test_dropped_return_interval_retires_its_row(self, v3: _Fixture) -> None:
+        """A → B → A becoming A → B retires ``A#2`` as a room change."""
+        listing, unit_a, unit_b = await self._property(v3)
+        p = v3.transport.payloads
+        item = p.round_trip_move(listing.pms_id, unit_a, unit_b)
+        v3.transport.v3_items = [item]
+        rid = item["reservationId"]
+        await v3.sync(listing)
+
+        item["stay"] = item["stay"][:2]
+        item["checkOut"] = item["stay"][-1]["checkOut"]
+        item["checkOutDateLocalized"] = item["stay"][-1]["checkOutDateLocalized"]
+        counts = await v3.sync(listing)
+
+        assert {k: b.status for k, b in (await v3.bookings(listing)).items()} == {
+            f"{rid}::{unit_a}": "confirmed",
+            f"{rid}::{unit_b}": "confirmed",
+            f"{rid}::{unit_a}#2": "cancelled",
+        }
+        assert counts["cancelled"] == 1
+        assert v3.transport.counts["v3_by_ids"] == 0
+
+    async def test_cancelled_round_trip_retires_every_interval(
+        self, v3: _Fixture
+    ) -> None:
+        """A cancelled multi-interval stay leaves no door scheduled."""
+        listing, unit_a, unit_b = await self._property(v3)
+        p = v3.transport.payloads
+        item = p.round_trip_move(listing.pms_id, unit_a, unit_b)
+        v3.transport.v3_items = [item]
+        await v3.sync(listing)
+
+        item["status"] = "canceled"
+        counts = await v3.sync(listing)
+
+        rows = await v3.bookings(listing)
+        assert len(rows) == 3
+        assert {b.status for b in rows.values()} == {"cancelled"}
+        assert counts["cancelled"] == 3
+
+    async def test_unassigned_stay_is_listing_level(
+        self, v3: _Fixture, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """No room row, and the #116 informational log is kept (FR-019)."""
+        listing, _unit_a, _unit_b = await self._property(v3)
+        p = v3.transport.payloads
+        item = p.unassigned_parent(listing.pms_id)
+        v3.transport.v3_items = [item]
+        rid = item["reservationId"]
+
+        with caplog.at_level(logging.INFO, logger="src.services.sync_service"):
+            await v3.sync(listing)
+
+        ((key, row),) = (await v3.bookings(listing)).items()
+        assert key == f"{rid}::{listing.pms_id}"
+        assert row.room_id is None
+        (record,) = [
+            r for r in caplog.records if "not assigned to a specific unit" in r.message
+        ]
+        assert record.levelno == logging.INFO
+        assert rid in record.message
+
+    @pytest.mark.parametrize(
+        ("booking_id", "expected"),
+        [
+            ("6650a", "6650a"),
+            ("6650a::6640b", "6650a"),
+            ("6650a::6640b#2", "6650a"),
+            ("6650a::6640b#12", "6650a"),
+        ],
+    )
+    def test_base_reservation_id(self, booking_id: str, expected: str) -> None:
+        """``#n`` interval IDs map back to the reservation."""
+        assert SyncService._extract_base_reservation_id(booking_id) == expected
