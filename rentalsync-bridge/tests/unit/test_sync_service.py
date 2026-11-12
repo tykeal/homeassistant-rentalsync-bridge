@@ -3889,3 +3889,341 @@ class TestCustomFieldLabels:
         repo = CustomFieldRepository(sync_session)
         field = await repo.get_by_field_name(listing.id, self.OBJECT_ID)
         assert field.display_label == self.LABEL
+
+
+# --- Spec 004 provider-agnostic seams (T011) ---------------------------------
+
+
+def _confirm_all(listing_pms_id, reservation_ids):
+    """Delegate to the base ``confirm_absent`` default (``self`` is unused)."""
+    return PMSProvider.confirm_absent(None, listing_pms_id, reservation_ids)  # type: ignore[arg-type]
+
+
+def _verdicts(verdict, *, reservation=None):
+    """Build a ``confirm_absent`` side effect answering *verdict* for every ID."""
+    from src.providers.base import AbsenceResult
+
+    async def answer(listing_pms_id, reservation_ids):
+        """Answer *verdict* for every requested ID."""
+        return {
+            rid: AbsenceResult(verdict, reservation=reservation)
+            for rid in reservation_ids
+        }
+
+    return answer
+
+
+async def _seed(session, listing, *bookings):
+    """Persist *listing* and ``(pms_booking_id, check_in_offset)`` bookings."""
+    session.add(listing)
+    await session.commit()
+    await session.refresh(listing)
+    for pms_booking_id, offset in bookings:
+        session.add(
+            Booking(
+                listing_id=listing.id,
+                pms_booking_id=pms_booking_id,
+                guest_name="Synthetic Guest",
+                check_in_date=_test_date(offset),
+                check_out_date=_test_date(offset + 3),
+                status="confirmed",
+            )
+        )
+    await session.commit()
+
+
+async def _statuses(session, listing):
+    """Return ``{pms_booking_id: status}`` for *listing*."""
+    rows = await session.execute(
+        select(Booking.pms_booking_id, Booking.status).where(
+            Booking.listing_id == listing.id
+        )
+    )
+    return dict(rows.all())
+
+
+class TestAbsenceConfirmationSeam:
+    """The prune loop asks the provider before retiring absent bookings."""
+
+    @pytest.mark.asyncio
+    async def test_default_confirm_absent_keeps_prune_behaviour(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Base default: absent rows retire exactly as before spec 004."""
+        await _seed(
+            sync_session,
+            test_listing,
+            ("GONE::A", 30),
+            ("GONE::B", 30),
+            ("KEPT", 40),
+        )
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[_make_reservation(pms_booking_id="KEPT")]
+        )
+        mock_provider.confirm_absent = AsyncMock(side_effect=_confirm_all)
+
+        result = await SyncService(sync_session).sync_listing(
+            test_listing, mock_provider
+        )
+
+        assert result["cancelled"] == 2
+        assert await _statuses(sync_session, test_listing) == {
+            "GONE::A": "cancelled",
+            "GONE::B": "cancelled",
+            "KEPT": "confirmed",
+        }
+        # One call per listing, with de-duplicated base reservation IDs.
+        mock_provider.confirm_absent.assert_awaited_once_with("PROP123", ["GONE"])
+
+    @pytest.mark.asyncio
+    async def test_no_candidates_no_call(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """Seen, cancelled, in-progress and past-retention rows are not asked."""
+        await _seed(
+            sync_session,
+            test_listing,
+            ("SEEN", 40),
+            ("IN_PROGRESS", -1),
+            ("ANCIENT", -(OLD_BOOKING_RETENTION_DAYS + 30)),
+        )
+        sync_session.add(
+            Booking(
+                listing_id=test_listing.id,
+                pms_booking_id="ALREADY",
+                check_in_date=_test_date(20),
+                check_out_date=_test_date(22),
+                status="cancelled",
+            )
+        )
+        await sync_session.commit()
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[_make_reservation(pms_booking_id="SEEN")]
+        )
+        mock_provider.confirm_absent = AsyncMock(side_effect=_confirm_all)
+
+        await SyncService(sync_session).sync_listing(test_listing, mock_provider)
+
+        mock_provider.confirm_absent.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("verdict", ["UNCONFIRMED", "REATTRIBUTED"])
+    async def test_only_confirmed_absent_retires(
+        self, sync_session, test_listing, mock_provider, verdict
+    ):
+        """UNCONFIRMED and (until US2) REATTRIBUTED keep the stored row."""
+        from src.providers.base import AbsenceVerdict
+
+        await _seed(sync_session, test_listing, ("MAYBE", 30))
+        mock_provider.get_reservations = AsyncMock(return_value=[])
+        reservation = (
+            _make_reservation(pms_booking_id="MAYBE")
+            if verdict == "REATTRIBUTED"
+            else None
+        )
+        mock_provider.confirm_absent = AsyncMock(
+            side_effect=_verdicts(AbsenceVerdict[verdict], reservation=reservation)
+        )
+
+        result = await SyncService(sync_session).sync_listing(
+            test_listing, mock_provider
+        )
+
+        assert result["cancelled"] == 0
+        assert await _statuses(sync_session, test_listing) == {"MAYBE": "confirmed"}
+
+    @pytest.mark.asyncio
+    async def test_missing_verdict_keeps_row(
+        self, sync_session, test_listing, mock_provider
+    ):
+        """An ID the provider did not answer for is never retired."""
+        await _seed(sync_session, test_listing, ("A", 30), ("B", 31))
+        mock_provider.get_reservations = AsyncMock(return_value=[])
+
+        async def only_a(listing_pms_id, reservation_ids):
+            """Answer for A only."""
+            return await _confirm_all(listing_pms_id, ["A"])
+
+        mock_provider.confirm_absent = AsyncMock(side_effect=only_a)
+
+        await SyncService(sync_session).sync_listing(test_listing, mock_provider)
+
+        assert await _statuses(sync_session, test_listing) == {
+            "A": "cancelled",
+            "B": "confirmed",
+        }
+
+    @pytest.mark.asyncio
+    async def test_inconsistent_aborts_listing_without_writes(
+        self, sync_session, sync_session_factory, test_listing, mock_provider
+    ):
+        """INCONSISTENT fails the listing before anything is written."""
+        from src.providers.base import AbsenceVerdict
+
+        await _seed(sync_session, test_listing, ("GONE", 30), ("UPDATED", 40))
+        mock_provider.get_reservations = AsyncMock(
+            return_value=[
+                _make_reservation(pms_booking_id="NEW"),
+                _make_reservation(pms_booking_id="UPDATED", status="cancelled"),
+            ]
+        )
+        mock_provider.confirm_absent = AsyncMock(
+            side_effect=_verdicts(AbsenceVerdict.INCONSISTENT)
+        )
+        service = SyncService(sync_session, session_factory=sync_session_factory)
+
+        with pytest.raises(SyncServiceError):
+            await service.sync_listing(test_listing, mock_provider)
+
+        await sync_session.commit()
+        assert await _statuses(sync_session, test_listing) == {
+            "GONE": "confirmed",
+            "UPDATED": "confirmed",
+        }
+        await sync_session.refresh(test_listing)
+        assert test_listing.last_sync_error
+
+    @pytest.mark.asyncio
+    async def test_legacy_guesty_prunes_unchanged(
+        self, sync_session, guesty_transport, guesty_v3_payloads
+    ):
+        """A real legacy GuestyProvider still retires absent reservations."""
+        guesty_transport.add_listing("LST1")
+        kept = guesty_v3_payloads.search_item("LST1", check_in=30, check_out=33)
+        guesty_transport.legacy_reservations = [guesty_v3_payloads.as_legacy(kept)]
+        listing = Listing(
+            pms_id="LST1",
+            name="Synthetic",
+            ical_url_slug="synthetic",
+            enabled=True,
+            sync_enabled=True,
+            timezone="UTC",
+        )
+        await _seed(sync_session, listing, ("GONE", 30))
+        provider = guesty_transport.provider(reservations_api="legacy")
+
+        result = await SyncService(sync_session).sync_listing(listing, provider)
+
+        statuses = await _statuses(sync_session, listing)
+        assert statuses.pop("GONE") == "cancelled"
+        assert set(statuses.values()) == {"confirmed"}
+        assert result["cancelled"] == 1
+
+
+class TestOccupancyIntervalBookings:
+    """Interval-carrying reservations store one booking per interval."""
+
+    @staticmethod
+    async def _listing_with_rooms(session, *room_ids):
+        """Persist a listing with one room per ID; return it and room PKs."""
+        from src.models.room import Room
+
+        listing = Listing(
+            pms_id="PARENT",
+            name="Parent",
+            ical_url_slug="parent",
+            enabled=True,
+            sync_enabled=True,
+        )
+        session.add(listing)
+        await session.commit()
+        await session.refresh(listing)
+        rooms = {}
+        for pms_room_id in room_ids:
+            room = Room(
+                listing_id=listing.id,
+                pms_room_id=pms_room_id,
+                room_name=pms_room_id,
+                ical_url_slug=f"room-{pms_room_id.lower()}",
+                enabled=True,
+            )
+            session.add(room)
+            rooms[pms_room_id] = room
+        await session.commit()
+        return listing, {k: v.id for k, v in rooms.items()}
+
+    @pytest.mark.asyncio
+    async def test_empty_intervals_keep_room_ids_path(
+        self, sync_session, mock_provider
+    ):
+        """No intervals: one ``{rid}::{room}`` booking per room_ids entry."""
+        listing, rooms = await self._listing_with_rooms(sync_session, "U1", "U2")
+        reservation = _make_reservation(
+            pms_booking_id="RES", listing_pms_id="PARENT", room_ids=("U1", "U2")
+        )
+        assert reservation.intervals == ()
+        mock_provider.get_reservations = AsyncMock(return_value=[reservation])
+
+        await SyncService(sync_session).sync_listing(listing, mock_provider)
+
+        rows = (
+            await sync_session.execute(
+                select(Booking.pms_booking_id, Booking.room_id).where(
+                    Booking.listing_id == listing.id
+                )
+            )
+        ).all()
+        assert dict(rows) == {"RES::U1": rooms["U1"], "RES::U2": rooms["U2"]}
+
+    @pytest.mark.asyncio
+    async def test_intervals_create_one_booking_each(self, sync_session, mock_provider):
+        """Intervals win over room_ids; ordinal >= 2 adds ``#n``."""
+        from dataclasses import replace
+
+        from src.providers.base import PMSOccupancyInterval
+
+        listing, rooms = await self._listing_with_rooms(sync_session, "U1", "U2")
+
+        def interval(room_id, ordinal, start, end):
+            """Build an interval between two day offsets."""
+            return PMSOccupancyInterval(
+                room_id=room_id,
+                ordinal=ordinal,
+                check_in=_test_date(start),
+                check_out=_test_date(end),
+                local_dates=(_test_date(start).date(), _test_date(end).date()),
+                guests_count=2,
+            )
+
+        reservation = replace(
+            _make_reservation(
+                pms_booking_id="RES",
+                listing_pms_id="PARENT",
+                check_in=_test_date(10),
+                check_out=_test_date(19),
+                room_ids=("IGNORED",),
+            ),
+            intervals=(
+                interval("U1", 1, 10, 13),
+                interval("U2", 1, 13, 16),
+                interval("U1", 2, 16, 19),
+            ),
+        )
+        mock_provider.get_reservations = AsyncMock(return_value=[reservation])
+
+        result = await SyncService(sync_session).sync_listing(listing, mock_provider)
+
+        assert result["inserted"] == 3
+        rows = (
+            await sync_session.execute(
+                select(
+                    Booking.pms_booking_id,
+                    Booking.room_id,
+                    Booking.check_in_date,
+                    Booking.check_out_date,
+                ).where(Booking.listing_id == listing.id)
+            )
+        ).all()
+        stored = {
+            r.pms_booking_id: (
+                r.room_id,
+                r.check_in_date.date(),
+                r.check_out_date.date(),
+            )
+            for r in rows
+        }
+        assert stored == {
+            "RES::U1": (rooms["U1"], _test_date(10).date(), _test_date(13).date()),
+            "RES::U2": (rooms["U2"], _test_date(13).date(), _test_date(16).date()),
+            "RES::U1#2": (rooms["U1"], _test_date(16).date(), _test_date(19).date()),
+        }
