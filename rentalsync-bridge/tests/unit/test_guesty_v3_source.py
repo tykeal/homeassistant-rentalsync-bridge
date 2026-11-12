@@ -11,6 +11,7 @@ from src.providers.base import (
     PMSOccupancyInterval,
     PMSProviderError,
 )
+from src.providers.guesty import reservations_v3, v3_search
 from src.providers.guesty.legacy_reservations import _resolve_room_id
 
 from tests.conftest import GuestyFakeTransport
@@ -424,3 +425,95 @@ class TestChunking:
         with pytest.raises(PMSProviderError):
             await provider.get_reservations(oversized["parent"])
         assert guesty_transport.counts["v3_search"] == 2
+
+
+# Research R4 page faults, each injected on the second page of a chunk.
+R4_PAGE_FAULTS = (
+    "malformed_results",
+    "missing_pagination",
+    "has_more_not_bool",
+    "skip_mismatch",
+    "over_limit",
+    "empty_has_more",
+    "short_has_more",
+    "missing_reservation_id",
+    "duplicate",
+    "duplicate_across_pages",
+    "out_of_order",
+)
+
+
+class TestCompletenessGuard:
+    """Every R4 guard check aborts the whole cycle (T029, FR-008-FR-011)."""
+
+    @pytest.fixture
+    def paged(
+        self, guesty_transport: GuestyFakeTransport, monkeypatch: pytest.MonkeyPatch
+    ) -> dict[str, Any]:
+        """Two listings in separate chunks, five stays each, two per page."""
+        monkeypatch.setattr(v3_search, "DEFAULT_PAGE_LIMIT", 2)
+        monkeypatch.setattr(
+            reservations_v3,
+            "pack_chunks",
+            lambda families: v3_search.pack_chunks(families, limit=1),
+        )
+        p = guesty_transport.payloads
+        a, b = p.new_id("lst"), p.new_id("lst")
+        guesty_transport.add_listing(a)
+        guesty_transport.add_listing(b)
+        guesty_transport.v3_items = [
+            p.search_item(listing, check_in=n, check_out=n + 2)
+            for listing in (a, b)
+            for n in range(5)
+        ]
+        return {"a": a, "b": b}
+
+    @staticmethod
+    async def _assert_cycle_aborts(
+        transport: GuestyFakeTransport, paged: dict[str, Any]
+    ) -> None:
+        """Both listings raise; the second without a single new request."""
+        provider = transport.provider(reservations_api="v3")
+        provider.begin_cycle([paged["a"], paged["b"]])
+
+        with pytest.raises(PMSProviderError):
+            await provider.get_reservations(paged["a"])
+        requests = len(transport.requests)
+        with pytest.raises(PMSProviderError):
+            await provider.get_reservations(paged["b"])
+        assert len(transport.requests) == requests
+
+    @pytest.mark.parametrize("chunk", ["a", "b"], ids=["first", "second"])
+    @pytest.mark.parametrize("kind", R4_PAGE_FAULTS)
+    async def test_page_fault_aborts_the_cycle(
+        self,
+        guesty_transport: GuestyFakeTransport,
+        paged: dict[str, Any],
+        kind: str,
+        chunk: str,
+    ) -> None:
+        """A faulty page in either chunk raises; nothing partial is returned."""
+        guesty_transport.fault_search_page(1, kind, listing_id=paged[chunk])
+
+        await self._assert_cycle_aborts(guesty_transport, paged)
+
+    async def test_page_cap_aborts(
+        self,
+        guesty_transport: GuestyFakeTransport,
+        paged: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Still ``hasMore`` after the last allowed page (check 8)."""
+        monkeypatch.setattr(v3_search, "MAX_RESERVATION_PAGES", 2)
+
+        await self._assert_cycle_aborts(guesty_transport, paged)
+        assert guesty_transport.counts["v3_search"] == 2
+
+    async def test_rate_limit_after_retries_aborts(
+        self, guesty_transport: GuestyFakeTransport, paged: dict[str, Any]
+    ) -> None:
+        """A page still rate-limited after the retries (check 9, FR-033)."""
+        guesty_transport.fail("v3_search", 429, times=4)
+
+        await self._assert_cycle_aborts(guesty_transport, paged)
+        assert guesty_transport.counts["v3_search"] == 4

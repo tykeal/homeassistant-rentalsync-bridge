@@ -794,12 +794,21 @@ GUESTY_RESOURCES: tuple[str, ...] = (
     "custom_field_definitions",
 )
 
-# Search-page faults applied to the Nth page (0-based) of any search.
+# Search-page faults applied to the Nth page (0-based) of any search
+# (research R4 guard checks).
 SEARCH_PAGE_FAULTS: tuple[str, ...] = (
     "empty_has_more",
     "short_has_more",
     "duplicate",
     "out_of_order",
+    "malformed_results",
+    "missing_pagination",
+    "has_more_not_bool",
+    "skip_mismatch",
+    "over_limit",
+    "missing_reservation_id",
+    "missing_status",
+    "duplicate_across_pages",
 )
 
 
@@ -863,7 +872,7 @@ class GuestyFakeTransport:
         self.requests: list[RecordedRequest] = []
         self.counts: Counter[str] = Counter()
         self._status_faults: dict[str, list[_StatusFault]] = {}
-        self._page_faults: dict[int, str] = {}
+        self._page_faults: dict[int, tuple[str, str | None]] = {}
 
     # -- setup ---------------------------------------------------------------
 
@@ -919,12 +928,18 @@ class GuestyFakeTransport:
             _StatusFault(status, times, body, retry_after)
         )
 
-    def fault_search_page(self, page: int, kind: str) -> None:
-        """Corrupt the *page*-th (0-based) page of every search sequence."""
+    def fault_search_page(
+        self, page: int, kind: str, *, listing_id: str | None = None
+    ) -> None:
+        """Corrupt the *page*-th (0-based) page of every search sequence.
+
+        With *listing_id*, only sequences whose listing filter names that
+        listing are corrupted (one chunk of a split search).
+        """
         if kind not in SEARCH_PAGE_FAULTS:
             msg = f"unknown search fault {kind!r}"
             raise ValueError(msg)
-        self._page_faults[page] = kind
+        self._page_faults[page] = (kind, listing_id)
 
     def requests_for(self, resource: str) -> list[RecordedRequest]:
         """Return the recorded requests for one resource."""
@@ -1079,18 +1094,52 @@ class GuestyFakeTransport:
         limit = self._int(params, "limit", 100)
         page = items[skip : skip + limit]
         has_more = skip + limit < len(items)
-        fault = self._page_faults.get(skip // limit if limit else 0)
-        if fault == "empty_has_more":
-            page, has_more = [], True
-        elif fault == "short_has_more" and page:
-            page, has_more = page[:-1], True
-        elif fault == "duplicate" and page:
-            page = [*page, page[-1]]
-        elif fault == "out_of_order" and len(page) > 1:
-            page = [page[1], page[0], *page[2:]]
-        return httpx.Response(
-            200, json=self.payloads.search_page(page, skip, limit, has_more)
+        body = self.payloads.search_page(page, skip, limit, has_more)
+        kind, listing_id = self._page_faults.get(
+            skip // limit if limit else 0, (None, None)
         )
+        if kind is not None and (
+            listing_id is None
+            or listing_id in str(params.get("filter[listingId][in]", "")).split(",")
+        ):
+            self._corrupt_page(body, kind, items, skip, limit)
+        return httpx.Response(200, json=body)
+
+    @staticmethod
+    def _corrupt_page(
+        body: dict[str, Any],
+        kind: str,
+        items: list[dict[str, Any]],
+        skip: int,
+        limit: int,
+    ) -> None:
+        """Apply one ``SEARCH_PAGE_FAULTS`` fault to a search page body."""
+        page: list[dict[str, Any]] = body["results"]
+        pagination: dict[str, Any] = body["pagination"]
+        if kind == "empty_has_more":
+            body["results"], pagination["hasMore"] = [], True
+        elif kind == "short_has_more" and page:
+            body["results"], pagination["hasMore"] = page[:-1], True
+        elif kind == "duplicate" and page:
+            body["results"] = [*page, page[-1]]
+        elif kind == "out_of_order" and len(page) > 1:
+            body["results"] = [page[1], page[0], *page[2:]]
+        elif kind == "malformed_results":
+            body["results"] = {"items": page}
+        elif kind == "missing_pagination":
+            del body["pagination"]
+        elif kind == "has_more_not_bool":
+            pagination["hasMore"] = "true"
+        elif kind == "skip_mismatch":
+            pagination["skip"] = skip + 1
+        elif kind == "over_limit":
+            body["results"] = items[skip : skip + limit + 1]
+        elif kind in ("missing_reservation_id", "missing_status") and page:
+            key = "reservationId" if kind == "missing_reservation_id" else "status"
+            first = {k: v for k, v in page[0].items() if k != key}
+            body["results"] = [first, *page[1:]]
+        elif kind == "duplicate_across_pages" and skip:
+            body["results"] = [items[skip - 1], *page[:-1]]
 
     def by_ids_view(self) -> dict[str, dict[str, Any]]:
         """Return every account reservation in the by-IDs shape."""
