@@ -987,7 +987,7 @@ class GuestyFakeTransport:
             base_url=GUESTY_BASE_URL,
         )
 
-    def provider(self, **kwargs: Any) -> Any:
+    def provider(self, token_manager: Any = None, **kwargs: Any) -> Any:
         """Return a ``GuestyProvider`` wired to this fake.
 
         Requests to a legacy resource from a V3-mode provider are also
@@ -1008,8 +1008,9 @@ class GuestyFakeTransport:
                 V3_FORBIDDEN_REQUESTS.append(recorded)
             return response
 
-        token_manager = AsyncMock()
-        token_manager.get_token = AsyncMock(return_value="synthetic-token")
+        if token_manager is None:
+            token_manager = AsyncMock()
+            token_manager.get_token = AsyncMock(return_value="synthetic-token")
         provider = GuestyProvider(
             token_manager=token_manager, http_client=self.client(handle), **kwargs
         )
@@ -1247,6 +1248,19 @@ class GuestyFakeTransport:
     ) -> httpx.Response:
         """Serve the account's custom-field definitions (default: none)."""
         return httpx.Response(200, json=self.custom_field_definitions)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def no_legacy_requests_in_v3_mode():
+    """Fail the session if a V3-mode provider used a legacy resource (T077).
+
+    ``GuestyFakeTransport.provider`` tags every request a V3-mode
+    ``GuestyProvider`` sends to ``/v1/reservations`` or ``/v1/guests/{id}``;
+    this teardown runs once, after every selected test (FR-001, FR-040).
+    """
+    yield
+    forbidden = [(r.method, r.path) for r in V3_FORBIDDEN_REQUESTS]
+    assert not forbidden, f"V3 mode sent legacy requests: {forbidden}"
 
 
 @pytest.fixture

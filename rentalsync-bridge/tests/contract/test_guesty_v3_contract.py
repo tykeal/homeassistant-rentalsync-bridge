@@ -34,19 +34,6 @@ EXPECTED_CHECKOUT_GTE = "2026-08-12"
 EXPECTED_CHECKIN_LTE = "2027-11-13"
 
 
-@pytest.fixture(scope="session", autouse=True)
-def no_legacy_requests_in_v3_mode():
-    """Fail the session if a V3-mode provider used a legacy resource (T077).
-
-    The fake transport tags every request a V3-mode ``GuestyProvider``
-    sends to ``/v1/reservations`` or ``/v1/guests/{id}``; this teardown
-    runs once, after the whole suite (FR-001, FR-040).
-    """
-    yield
-    forbidden = [(r.method, r.path) for r in conftest.V3_FORBIDDEN_REQUESTS]
-    assert not forbidden, f"V3 mode sent legacy requests: {forbidden}"
-
-
 class TestV3LegacyRequestTagging:
     """The fake transport records legacy requests made in V3 mode."""
 
