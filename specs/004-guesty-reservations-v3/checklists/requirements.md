@@ -40,5 +40,5 @@ SPDX-License-Identifier: Apache-2.0
   2. FR-023 — exact treatment of the new `alteration` and `completed` statuses (the invariant — never retire or withhold a live stay during `alteration` — is already fixed).
   3. FR-036 — handling of description fields V3 no longer supplies (`nightsCount`, `money_totalPaid`, `money_balanceDue`, `money_currency`); the non-silent handling in FR-037/FR-038 is already fixed.
 - All other items passed on first validation.
-- Spec covers 7 user stories (two P1, two P2, three P3), 16 edge cases, 43 functional requirements and 10 success criteria.
+- Spec covers 7 user stories (two P1, two P2, three P3), 16 edge cases, 44 functional requirements (FR-001–FR-043 plus FR-011a) and 10 success criteria.
 - Several facts require live confirmation because there is no Guesty test account; they are captured as requirements (FR-006, FR-015, FR-042) rather than assumed.
