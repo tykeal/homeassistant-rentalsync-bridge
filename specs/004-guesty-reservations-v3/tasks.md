@@ -459,7 +459,7 @@ Follow constitution Principle V:
   - `notes` joins other, guest and specialRequests with `"; "` and excludes `cleaning` and `keyCode`; when all are empty the key is omitted
   - `nightsCount` is computed from the localized reservation dates and equals legacy; unparsable dates omit it
   - no `money_*` keys are produced
-- [ ] T056 [P] [US6] Write integration tests in tests/integration/test_custom_fields_api.py (contracts/admin-custom-fields.md):
+- [x] T056 [P] [US6] Write integration tests in tests/integration/test_custom_fields_api.py (contracts/admin-custom-fields.md):
   - GET custom-fields, GET available-custom-fields and the PUT response carry `retired`/`retired_reason` for `money_*` in V3 mode
   - the flags are false in legacy mode and for Cloudbeds
   - PUT round-trips a retired field, and its configuration is never deleted
