@@ -175,7 +175,7 @@ Follow constitution Principle V:
   - 50 filter IDs make one chunk and 51 make two
   - a multi-unit family is never split unless it alone exceeds 50 IDs
   - a reservation returned by two chunks with the same change key is kept once; with differing change keys the combined result fails (FR-011)
-- [ ] T020 [P] [US1] Write integration tests in tests/integration/test_guesty_v3_sync.py (new) for custom-field enrichment (research R8):
+- [x] T020 [P] [US1] Write integration tests in tests/integration/test_guesty_v3_sync.py (new) for custom-field enrichment (research R8):
   - PRESENT makes no custom-field call
   - ABSENT with non-NULL `{}`-shaped enrichment makes no call
   - ABSENT with stored non-empty values makes exactly one confirmation call. On success its values are used; on failure the last-good values are kept
