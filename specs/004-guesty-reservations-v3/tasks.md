@@ -107,7 +107,7 @@ Follow constitution Principle V:
   - Existing Guesty tests construct the provider with `reservations_api="legacy"`.
 
   This depends on T004, T006 and T007.
-- [ ] T009 [P] Write failing unit tests in tests/unit/test_pms_provider_base.py (existing; see the deviation note above):
+- [x] T009 [P] Write failing unit tests in tests/unit/test_pms_provider_base.py (existing; see the deviation note above):
   - `PMSOccupancyInterval.booking_suffix` for ordinal 1 vs ≥ 2
   - the defaults of `PMSReservation.intervals`, `change_key` and `inline_custom_fields`
   - `InlineCustomFields` states
