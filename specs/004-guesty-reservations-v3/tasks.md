@@ -171,7 +171,7 @@ Follow constitution Principle V:
   - a `get_reservations` for a listing outside the declared set adds it and starts a fresh combined search
   - the filter ID set is the union of fetch scopes: a tracked multi-unit parent contributes its sub-unit IDs, and an imported child contributes its parent unit type
   - a fetch-scope resolution failure aborts only that listing, whose own ID is still filtered
-- [ ] T019 [US1] Write unit tests in tests/unit/test_guesty_v3_source.py for chunking (FR-016a):
+- [x] T019 [US1] Write unit tests in tests/unit/test_guesty_v3_source.py for chunking (FR-016a):
   - 50 filter IDs make one chunk and 51 make two
   - a multi-unit family is never split unless it alone exceeds 50 IDs
   - a reservation returned by two chunks with the same change key is kept once; with differing change keys the combined result fails (FR-011)
