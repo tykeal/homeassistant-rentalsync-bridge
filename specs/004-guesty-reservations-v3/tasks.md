@@ -513,7 +513,7 @@ Follow constitution Principle V:
 
 ## Phase 10: Polish & Cross-Cutting Concerns
 
-- [ ] T073 [P] Add a reno release note in releasenotes/notes/ (FR-004):
+- [x] T073 [P] Add a reno release note in releasenotes/notes/ (FR-004):
   - upgrade before 2027-03-01
   - the new option and the rollback path
   - the retired `money_*` fields
