@@ -239,7 +239,7 @@ Follow constitution Principle V:
 
 ### Tests for User Story 2 (write first, confirm they fail)
 
-- [ ] T029 [P] [US2] Write unit tests in tests/unit/test_guesty_v3_source.py for each research R4 guard check:
+- [x] T029 [P] [US2] Write unit tests in tests/unit/test_guesty_v3_source.py for each research R4 guard check:
   - (1) missing or malformed `results`/`pagination`/`hasMore`
   - (2) skip echo mismatch or `len > limit`
   - (3) empty `hasMore` page
@@ -252,10 +252,10 @@ Follow constitution Principle V:
   - (10) any of these in the second chunk, after the first chunk succeeded
 
   Each must raise `PMSProviderError` with no partial items, and the failure must be cached so a second listing in the same cycle raises without new requests (call-count assertion).
-- [ ] T030 [US2] Write unit tests in tests/unit/test_guesty_v3_source.py:
+- [x] T030 [US2] Write unit tests in tests/unit/test_guesty_v3_source.py:
   - HTTP 400 on search → `PMSProviderError` naming the status and an excerpt (FR-021), never an empty result
   - a missing `status` key → abort (FR-026)
-- [ ] T031 [P] [US2] Write contract tests in tests/contract/test_guesty_v3_contract.py for by-IDs (contracts/guesty-v3-by-ids.md):
+- [x] T031 [P] [US2] Write contract tests in tests/contract/test_guesty_v3_contract.py for by-IDs (contracts/guesty-v3-by-ids.md):
   - form-exploded `reservationIds`
   - ≤ 10 IDs per call, the control always included, and 9 candidates per batch
   - no request when there are no candidates
@@ -264,13 +264,13 @@ Follow constitution Principle V:
   - the ignored-parameter fixture retires nothing
   - control missing → `UNCONFIRMED` with ERROR
   - HTTP 400 → `UNCONFIRMED` with ERROR
-- [ ] T032 [P] [US2] Write unit tests in tests/unit/test_guesty_v3_source.py for `normalise_by_ids_item` (data-model.md §2.3, FR-005):
+- [x] T032 [P] [US2] Write unit tests in tests/unit/test_guesty_v3_source.py for `normalise_by_ids_item` (data-model.md §2.3, FR-005):
   - for a single-segment stay, an assigned multi-unit stay, an unassigned parent and A→B→A, the same reservation from `search_item` and from `as_by_ids` yields byte-identical `pms_booking_id`s and interval rooms
   - `_id` → `reservationId`; `listingId = unitId ?? unitTypeId`; `parentListingId` only when `unitId` differs from `unitTypeId`
   - intervals carry `local_dates` only, with no UTC instants
   - two same-room segments whose localized boundary dates are equal are reported as ambiguous, whether UTC-adjacent or separated by a same-day gap
   - an item with no `_id`, no `stay[]`, or a segment with neither `unitId` nor `unitTypeId` is invalid
-- [ ] T033 [P] [US2] Write integration tests in tests/integration/test_guesty_v3_sync.py for FR-011a:
+- [x] T033 [P] [US2] Write integration tests in tests/integration/test_guesty_v3_sync.py for FR-011a:
   - a reservation vanishing mid-search (US2-5) whose first segment is in the searched filter IDs is not retired when by-IDs returns it live; the verdict is `INCONSISTENT`, that listing aborts with last-good kept and an error naming the `guesty_reservations_api` setting, and the other listings in the cycle sync normally
   - a stored reservation re-arranged so its first segment is in an untracked property (US3-6) is `REATTRIBUTED`: the row in the still-occupied room is kept with its mapped status, its dates are re-anchored (unchanged local dates keep the stored instants byte-for-byte; a changed local date keeps the stored local time of day in the listing timezone), its custom fields and guest details stay last-good, and its UID and `Booking ID:` line are unchanged
   - the same re-arranged reservation over three consecutive cycles never aborts a sync, stays exported and costs one by-IDs call per cycle (call-count assertion)
@@ -284,22 +284,22 @@ Follow constitution Principle V:
   - an omitted candidate with the control returned retires
   - an unverifiable result keeps the row
   - the steady state makes 0 by-IDs calls
-- [ ] T034 [P] [US2] Write integration tests in tests/integration/test_in_progress_reservations.py, extended to V3 mode (SC-004, US2-3):
+- [x] T034 [P] [US2] Write integration tests in tests/integration/test_in_progress_reservations.py, extended to V3 mode (SC-004, US2-3):
   - a stay that checked in 400 days ago and checks out in the future is in the snapshot and stays exported across syncs
   - a test pins `V3_LOOKBACK_DAYS >= OLD_BOOKING_RETENTION_DAYS + 1`
-- [ ] T035 [US2] Write an integration test in tests/integration/test_guesty_v3_sync.py for SC-003: for every R4 fault injected mid-search, in either chunk, no booking is retired and the cached feed is unchanged.
+- [x] T035 [US2] Write an integration test in tests/integration/test_guesty_v3_sync.py for SC-003: for every R4 fault injected mid-search, in either chunk, no booking is retired and the cached feed is unchanged.
 
 ### Implementation for User Story 2
 
-- [ ] T036 [US2] Implement the full research R4 completeness guard per chunk and the cached combined-search failure in src/providers/guesty/reservations_v3.py, plus 400 surfacing and missing-status abort. This makes T029, T030 and T035 pass.
-- [ ] T037 [US2] Implement `GuestyProvider.confirm_absent()` for V3 mode in src/providers/guesty/reservations_v3.py (with delegation in service.py), per research R5:
+- [x] T036 [US2] Implement the full research R4 completeness guard per chunk and the cached combined-search failure in src/providers/guesty/reservations_v3.py, plus 400 surfacing and missing-status abort. This makes T029, T030 and T035 pass.
+- [x] T037 [US2] Implement `GuestyProvider.confirm_absent()` for V3 mode in src/providers/guesty/reservations_v3.py (with delegation in service.py), per research R5:
   - batching and control selection
   - whole-response validation
   - `normalise_by_ids_item` and per-candidate verdicts against scope, window and the searched filter IDs
   - `REATTRIBUTED` results carrying the normalised reservation, with intervals from the same R6 code
 
   `INCONSISTENT` never poisons the cached search. Legacy mode keeps the base default. This makes T031 and T032 pass.
-- [ ] T038 [US2] Finish FR-011a integration in the src/services/sync_service.py prune path:
+- [x] T038 [US2] Finish FR-011a integration in the src/services/sync_service.py prune path:
   - group candidates by base ID
   - an `INCONSISTENT` verdict raises before commit for this listing only
   - `REATTRIBUTED`: keep and mark seen the rows whose `pms_booking_id` matches an interval, apply the mapped status and re-anchored dates (stored instants, listing timezone), retire other rows as room changes, keep `custom_data` last-good, guard guest-owned enrichment by `guestId` vs `_guest_source_id` (research R5), downgrade the candidate to `UNCONFIRMED` when any re-anchored row is invalid (validated before any write), and exclude the result from the health guard

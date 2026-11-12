@@ -1,21 +1,24 @@
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
-"""Integration tests for syncing through the Guesty V3 source (spec 004 US1)."""
+"""Integration tests for syncing through the Guesty V3 source (spec 004 US1-US2)."""
 
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from src.models.booking import Booking
 from src.models.listing import Listing
+from src.providers.guesty import reservations_v3, v3_search
 from src.repositories.booking_repository import BookingRepository
 from src.services.calendar_service import CalendarCache
 from src.services.sync_service import SyncService, SyncServiceError
 
 from tests.conftest import (
+    SEARCH_PAGE_FAULTS,
     GuestyFakeTransport,
     make_booking,
     make_listing,
@@ -26,7 +29,7 @@ DOOR_CODE = "door_code"
 
 
 class _Fixture:
-    """One tracked single-unit listing, its room and one stay."""
+    """Tracked listings with rooms, and one stay in the first listing."""
 
     def __init__(
         self,
@@ -40,26 +43,35 @@ class _Fixture:
         self.transport = transport
         self.listing: Listing
         self.room_id: int
+        self.rooms: dict[str, int] = {}
         self.item: dict[str, Any]
+
+    async def add_tracked(self, *, children: list[str] | None = None) -> Listing:
+        """Create a tracked listing with one room per unit (or itself)."""
+        pms_id = self.transport.payloads.new_id("lst")
+        self.transport.add_listing(pms_id, children=children)
+        listing = make_listing(pms_id=pms_id, slug=f"v3-{pms_id[-6:]}", timezone="UTC")
+        self.session.add(listing)
+        await self.session.commit()
+        await self.session.refresh(listing)
+        for room_pms_id in children or [pms_id]:
+            room = make_room(
+                listing_id=listing.id,
+                pms_room_id=room_pms_id,
+                slug=f"r-{room_pms_id[-6:]}",
+            )
+            self.session.add(room)
+            await self.session.commit()
+            await self.session.refresh(room)
+            self.rooms[room_pms_id] = room.id
+        return listing
 
     async def setup(self, *, custom_fields: Any = None, **item: Any) -> None:
         """Create the listing, its room and the account's single stay."""
         p = self.transport.payloads
-        pms_id = p.new_id("lst")
-        self.transport.add_listing(pms_id)
-        self.listing = make_listing(
-            pms_id=pms_id, slug=f"v3-{pms_id[-6:]}", timezone="UTC"
-        )
-        self.session.add(self.listing)
-        await self.session.commit()
-        await self.session.refresh(self.listing)
-        room = make_room(
-            listing_id=self.listing.id, pms_room_id=pms_id, slug=f"r-{pms_id[-6:]}"
-        )
-        self.session.add(room)
-        await self.session.commit()
-        await self.session.refresh(room)
-        self.room_id = room.id
+        self.listing = await self.add_tracked()
+        pms_id = self.listing.pms_id
+        self.room_id = self.rooms[pms_id]
         item.setdefault("check_in", 2)
         item.setdefault("check_out", 5)
         self.item = p.search_item(pms_id, custom_fields=custom_fields, **item)
@@ -78,16 +90,23 @@ class _Fixture:
         pms_booking_id: str | None = None,
         custom_data: dict[str, Any] | None = None,
         enrichment_data: dict[str, Any] | None = None,
+        listing: Listing | None = None,
+        room: str | None = None,
+        check_in: int = 2,
+        check_out: int = 5,
+        guest_phone_last4: str | None = None,
     ) -> Booking:
-        """Store a previously synced booking for the stay."""
+        """Store a previously synced booking (default: the stay's)."""
         p = self.transport.payloads
+        listing = listing or self.listing
         booking = make_booking(
-            listing_id=self.listing.id,
-            room_id=self.room_id,
+            listing_id=listing.id,
+            room_id=self.rooms[room or listing.pms_id],
             pms_booking_id=pms_booking_id or self.booking_id,
             guest_name="Synthetic Guest",
-            check_in_date=p.check_in_at(2),
-            check_out_date=p.check_out_at(5),
+            guest_phone_last4=guest_phone_last4,
+            check_in_date=p.check_in_at(check_in),
+            check_out_date=p.check_out_at(check_out),
             custom_data=custom_data,
         )
         booking.enrichment_data = enrichment_data
@@ -96,23 +115,43 @@ class _Fixture:
         await self.session.refresh(booking)
         return booking
 
-    async def sync(self) -> dict[str, int]:
-        """Run one V3 sync of the listing."""
-        provider = self.transport.provider(reservations_api="v3")
-        provider.begin_cycle([self.listing.pms_id])
+    async def sync_with(self, provider: Any, listing: Listing) -> dict[str, int]:
+        """Sync one listing through an already-begun provider cycle."""
         service = SyncService(
             self.session,
             calendar_cache=CalendarCache(ttl_seconds=0),
             session_factory=self.factory,
         )
-        return await service.sync_listing(self.listing, provider)
+        return await service.sync_listing(listing, provider)
 
-    async def bookings(self) -> dict[str, Booking]:
-        """Return the listing's stored bookings by booking ID, refreshed."""
-        rows = await BookingRepository(self.session).get_for_listing(self.listing.id)
+    async def sync(self, listing: Listing | None = None) -> dict[str, int]:
+        """Run one V3 sync cycle of a single listing (default: the first)."""
+        listing = listing or self.listing
+        provider = self.transport.provider(reservations_api="v3")
+        provider.begin_cycle([listing.pms_id])
+        return await self.sync_with(provider, listing)
+
+    async def bookings(self, listing: Listing | None = None) -> dict[str, Booking]:
+        """Return a listing's stored bookings by booking ID, refreshed."""
+        listing = listing or self.listing
+        rows = await BookingRepository(self.session).get_for_listing(listing.id)
         for row in rows:
             await self.session.refresh(row)
         return {row.pms_booking_id: row for row in rows}
+
+    async def feed(self) -> dict[str, dict[str, Any]]:
+        """Render the first listing's feed and index its events by UID."""
+        from src.services.calendar_service import CalendarService
+
+        repo = BookingRepository(self.session)
+        bookings = list(await repo.get_confirmed_for_listing(self.listing.id))
+        for booking in bookings:
+            await self.session.refresh(booking)
+        return _events(
+            CalendarService(cache=CalendarCache(ttl_seconds=0)).generate_ical(
+                self.listing, bookings
+            )
+        )
 
 
 @pytest.fixture
@@ -312,22 +351,524 @@ class TestIdentityVerification:
         assert (await v3.bookings())[v3.booking_id].status == "confirmed"
 
 
-class TestInterimAbsence:
-    """Absent reservations are never retired before US2's by-ID check."""
+def _calls(transport: GuestyFakeTransport, identifier: str) -> int:
+    """Count the requests whose path names *identifier*."""
+    return sum(identifier in request.path for request in transport.requests)
 
-    async def test_absent_reservation_is_kept(
+
+def _as_utc(value: datetime) -> datetime:
+    """Return a stored (SQLite-naive UTC) datetime as aware UTC."""
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+class _Moved:
+    """A stored stay of the first listing, re-arranged by the tests."""
+
+    def __init__(self, v3: _Fixture) -> None:
+        """Register an untracked property and reserve a reservation ID."""
+        self.v3 = v3
+        self.p = v3.transport.payloads
+        self.untracked = self.p.new_id("lst")
+        v3.transport.add_listing(self.untracked)
+        self.rid = self.p.new_id("res")
+        self.guest_id = self.p.new_id("gst")
+
+    @property
+    def booking_id(self) -> str:
+        """Return the stored row's booking ID."""
+        return f"{self.rid}::{self.v3.listing.pms_id}"
+
+    async def store(self, **kwargs: Any) -> Booking:
+        """Store the row as last synced (days 2-5 in the first listing)."""
+        kwargs.setdefault(
+            "custom_data",
+            {
+                DOOR_CODE: "4321",
+                "guest_phone": "+15555550100",
+                "guest_phone_last4": "0100",
+            },
+        )
+        kwargs.setdefault(
+            "enrichment_data",
+            {
+                DOOR_CODE: "4321",
+                "guest_phone": "+15555550100",
+                "guest_phone_last4": "0100",
+                "_guest_source_id": self.guest_id,
+            },
+        )
+        kwargs.setdefault("guest_phone_last4", "0100")
+        kwargs.setdefault("pms_booking_id", self.booking_id)
+        return await self.v3.store(**kwargs)
+
+    def rearrange(self, *, start: int = 0, **kwargs: Any) -> dict[str, Any]:
+        """Move the first segment to the untracked property (by-IDs only)."""
+        kwargs.setdefault("guest_id", self.guest_id)
+        item = self.p.rearranged_into_untracked(
+            self.untracked,
+            self.v3.listing.pms_id,
+            start=start,
+            reservation_id=self.rid,
+            **kwargs,
+        )
+        self.v3.transport.v3_items.append(item)
+        return item
+
+    def by_ids_only(self, stay: list[dict[str, Any]], **kwargs: Any) -> None:
+        """Serve an explicit by-IDs item the search never returns."""
+        kwargs.setdefault("guest_id", self.guest_id)
+        self.v3.transport.by_ids_overrides[self.rid] = self.p.by_ids_item(
+            self.rid, stay, **kwargs
+        )
+
+    def local(self, offset: int) -> str:
+        """Return the local date *offset* days from today."""
+        return self.p.day(offset).date().isoformat()
+
+
+@pytest.fixture
+async def moved(v3: _Fixture) -> _Moved:
+    """The V3 harness plus a stored stay ready to be re-arranged."""
+    await v3.setup()
+    return _Moved(v3)
+
+
+class TestInconsistentAbsence:
+    """A live stay the search should have returned aborts (T033, US2-5)."""
+
+    async def test_vanished_live_stay_aborts_only_its_listing(
         self, v3: _Fixture, guesty_transport: GuestyFakeTransport
     ) -> None:
-        """A stored stay missing from the search stays published."""
+        """Last-good kept, actionable error; the other listing syncs."""
+        p = guesty_transport.payloads
         await v3.setup()
-        missing = guesty_transport.payloads.new_id("res")
-        await v3.store(pms_booking_id=f"{missing}::{v3.listing.pms_id}")
+        await v3.store()
+        vanished = p.search_item(v3.listing.pms_id, check_in=3, check_out=6)
+        rid = vanished["reservationId"]
+        guesty_transport.by_ids_overrides[rid] = p.as_by_ids(vanished)
+        vanished_id = f"{rid}::{v3.listing.pms_id}"
+        await v3.store(pms_booking_id=vanished_id, check_in=3, check_out=6)
+        other = await v3.add_tracked()
+        guesty_transport.v3_items.append(p.search_item(other.pms_id))
+        provider = guesty_transport.provider(reservations_api="v3")
+        provider.begin_cycle([v3.listing.pms_id, other.pms_id])
 
-        await v3.sync()
+        with pytest.raises(SyncServiceError) as excinfo:
+            await v3.sync_with(provider, v3.listing)
+        await v3.sync_with(provider, other)
+
+        message = str(excinfo.value)
+        assert rid in message
+        assert "guesty_reservations_api" in message
+        bookings = await v3.bookings()
+        assert {k: b.status for k, b in bookings.items()} == {
+            v3.booking_id: "confirmed",
+            vanished_id: "confirmed",
+        }
+        await v3.session.refresh(v3.listing)
+        assert v3.listing.last_sync_error
+        assert len(await v3.bookings(other)) == 1
+        await v3.session.refresh(other)
+        assert other.last_sync_error is None
+        assert guesty_transport.counts["v3_search"] == 1
+
+
+class TestReattribution:
+    """A stay re-arranged to start elsewhere keeps its room (T033, US3-6)."""
+
+    async def test_unchanged_dates_keep_everything(
+        self, moved: _Moved, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """Instants, custom fields, guest details, UID and Booking ID stay."""
+        stored = await moved.store()
+        stored_dates = (stored.check_in_date, stored.check_out_date)
+        moved.rearrange()
+        before = await moved.v3.feed()
+
+        await moved.v3.sync()
+
+        booking = (await moved.v3.bookings())[moved.booking_id]
+        assert booking.status == "confirmed"
+        assert (booking.check_in_date, booking.check_out_date) == stored_dates
+        assert booking.custom_data[DOOR_CODE] == "4321"
+        assert booking.guest_phone_last4 == "0100"
+        assert booking.guest_name == "Synthetic Guest"
+        after = await moved.v3.feed()
+        (uid,) = [u for u, e in before.items() if moved.rid in str(e["Booking ID"])]
+        assert after[uid] == before[uid]
+        assert _calls(guesty_transport, moved.rid) == 0
+        assert _calls(guesty_transport, moved.guest_id) == 0
+
+    async def test_changed_dates_reanchor_at_the_stored_time_of_day(
+        self, moved: _Moved
+    ) -> None:
+        """A moved local date keeps the stored local check-in/out times."""
+        await moved.store()
+        moved.rearrange(start=1, status="checked_in")
+
+        await moved.v3.sync()
+
+        booking = (await moved.v3.bookings())[moved.booking_id]
+        assert booking.status == "checked_in"
+        assert _as_utc(booking.check_in_date) == moved.p.check_in_at(3)
+        assert _as_utc(booking.check_out_date) == moved.p.check_out_at(6)
+        assert booking.custom_data[DOOR_CODE] == "4321"
+
+    async def test_three_cycles_never_abort(
+        self, moved: _Moved, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """Stays exported; one by-IDs call per cycle."""
+        await moved.store()
+        moved.rearrange()
+
+        for _ in range(3):
+            await moved.v3.sync()
+            assert moved.booking_id in {
+                b.pms_booking_id
+                for b in await BookingRepository(
+                    moved.v3.session
+                ).get_confirmed_for_listing(moved.v3.listing.id)
+            }
+
+        assert guesty_transport.counts["v3_by_ids"] == 3
+
+    async def test_no_tracked_segment_left_retires(self, moved: _Moved) -> None:
+        """Re-arranged wholly into untracked properties: gone."""
+        await moved.store()
+        moved.v3.transport.v3_items.append(
+            moved.p.search_item(moved.untracked, reservation_id=moved.rid)
+        )
+
+        await moved.v3.sync()
+
+        assert (await moved.v3.bookings())[moved.booking_id].status == "cancelled"
+
+    async def test_residual_gap_retires_old_room_and_logs_new(
+        self,
+        v3: _Fixture,
+        guesty_transport: GuestyFakeTransport,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """U → B: A's row retires, B is not created, INFO names it."""
+        p = guesty_transport.payloads
+        unit_a, unit_b, untracked = p.new_id("lst"), p.new_id("lst"), p.new_id("lst")
+        guesty_transport.add_listing(untracked)
+        v3.listing = await v3.add_tracked(children=[unit_a, unit_b])
+        parent = v3.listing.pms_id
+        guesty_transport.v3_items = [p.search_item(unit_a, parent_listing_id=parent)]
+        rid = p.new_id("res")
+        await v3.store(pms_booking_id=f"{rid}::{unit_a}", room=unit_a)
+        guesty_transport.v3_items.append(
+            p.rearranged_into_untracked(untracked, unit_b, reservation_id=rid)
+        )
+
+        with caplog.at_level(logging.INFO):
+            await v3.sync()
 
         bookings = await v3.bookings()
-        assert bookings[f"{missing}::{v3.listing.pms_id}"].status == "confirmed"
-        assert bookings[v3.booking_id].status == "confirmed"
+        assert bookings[f"{rid}::{unit_a}"].status == "cancelled"
+        assert f"{rid}::{unit_b}" not in bookings
+        assert any(
+            record.levelno == logging.INFO
+            and rid in record.getMessage()
+            and unit_b in record.getMessage()
+            for record in caplog.records
+        )
+
+    @pytest.mark.parametrize("gap", [False, True], ids=["utc_adjacent", "same_day_gap"])
+    async def test_ambiguous_same_room_boundary_keeps_rows(
+        self, moved: _Moved, gap: bool
+    ) -> None:
+        """Same-room segments meeting on one local date retire no #n row."""
+        p, room = moved.p, moved.v3.listing.pms_id
+        await moved.store(check_in=2, check_out=4)
+        await moved.store(
+            pms_booking_id=f"{moved.booking_id}#2", check_in=4, check_out=6
+        )
+        second_in = p.check_in_at(4) if gap else p.check_out_at(4)
+        moved.v3.transport.v3_items.append(
+            p.search_item(
+                reservation_id=moved.rid,
+                guest_id=moved.guest_id,
+                stay=[
+                    p.stay_segment(
+                        moved.untracked, p.check_in_at(1), p.check_out_at(2)
+                    ),
+                    p.stay_segment(room, p.check_out_at(2), p.check_out_at(4)),
+                    p.stay_segment(room, second_in, p.check_out_at(6)),
+                ],
+            )
+        )
+
+        await moved.v3.sync()
+
+        bookings = await moved.v3.bookings()
+        assert bookings[moved.booking_id].status == "confirmed"
+        assert bookings[f"{moved.booking_id}#2"].status == "confirmed"
+
+    async def test_invalid_reanchored_row_changes_nothing(self, moved: _Moved) -> None:
+        """A same-day assignment cannot be re-anchored: nothing is written."""
+        stored = await moved.store()
+        stored_dates = (stored.check_in_date, stored.check_out_date)
+        room = moved.v3.listing.pms_id
+        moved.by_ids_only(
+            [
+                moved.p.by_ids_segment(
+                    moved.untracked,
+                    moved.local(3),
+                    moved.local(5),
+                    unit_id=moved.untracked,
+                ),
+                moved.p.by_ids_segment(
+                    room, moved.local(5), moved.local(5), unit_id=room
+                ),
+            ]
+        )
+
+        await moved.v3.sync()
+
+        booking = (await moved.v3.bookings())[moved.booking_id]
+        assert booking.status == "confirmed"
+        assert (booking.check_in_date, booking.check_out_date) == stored_dates
+
+    async def test_reassigned_guest_publishes_only_the_new_guest(
+        self, moved: _Moved, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """No previous-guest contact or last-4; one lookup (FR-031)."""
+        await moved.store()
+        new_guest = moved.p.new_id("gst")
+        guesty_transport.guests[new_guest] = moved.p.guests_crud_body(
+            new_guest, full_name="Synthetic Other", phone="+15555550199"
+        )
+        moved.rearrange(guest_id=new_guest)
+
+        await moved.v3.sync()
+
+        booking = (await moved.v3.bookings())[moved.booking_id]
+        assert booking.guest_phone_last4 == "0199"
+        assert booking.guest_name == "Synthetic Other"
+        assert booking.custom_data[DOOR_CODE] == "4321"
+        assert "0100" not in str(booking.custom_data)
+        assert "0100" not in str(booking.enrichment_data)
+        assert booking.enrichment_data["_guest_source_id"] == new_guest
+        assert _calls(guesty_transport, new_guest) == 1
+
+    async def test_reassigned_guest_lookup_failure_publishes_nothing(
+        self, moved: _Moved, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """A failed lookup never falls back to the previous guest."""
+        await moved.store()
+        guesty_transport.fail("guests_crud", 503, times=5)
+        moved.rearrange(guest_id=moved.p.new_id("gst"))
+
+        await moved.v3.sync()
+
+        booking = (await moved.v3.bookings())[moved.booking_id]
+        assert booking.status == "confirmed"
+        assert booking.guest_phone_last4 is None
+        assert "0100" not in str(booking.custom_data)
+        assert booking.custom_data[DOOR_CODE] == "4321"
+
+    async def test_no_guest_id_publishes_no_contact(
+        self, moved: _Moved, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """Without a guestId the contact is withheld; custom fields stay."""
+        await moved.store()
+        item = moved.rearrange()
+        del item["guestId"]
+
+        await moved.v3.sync()
+
+        booking = (await moved.v3.bookings())[moved.booking_id]
+        assert booking.status == "confirmed"
+        assert booking.guest_phone_last4 is None
+        assert "guest_phone" not in booking.custom_data
+        assert "guest_phone_last4" not in booking.custom_data
+        assert booking.custom_data[DOOR_CODE] == "4321"
+        assert _calls(guesty_transport, moved.rid) == 0
+        assert _calls(guesty_transport, moved.guest_id) == 0
+
+    async def test_alteration_is_held(self, moved: _Moved) -> None:
+        """A re-arranged stay under alteration keeps its last-good row."""
+        stored = await moved.store()
+        moved.rearrange(start=1, status="alteration")
+
+        await moved.v3.sync()
+
+        booking = (await moved.v3.bookings())[moved.booking_id]
+        assert booking.status == "confirmed"
+        assert booking.check_in_date == stored.check_in_date
+
+
+class TestConfirmedAbsence:
+    """Absence retires only with by-IDs confirmation (T033, FR-011a)."""
+
+    async def test_cancelled_reservation_retires(self, moved: _Moved) -> None:
+        """Cancelled and absent from the window: retired."""
+        await moved.store()
+        room = moved.v3.listing.pms_id
+        moved.by_ids_only(
+            [
+                moved.p.by_ids_segment(
+                    room, moved.local(2), moved.local(5), unit_id=room
+                )
+            ],
+            status="canceled",
+        )
+
+        await moved.v3.sync()
+
+        assert (await moved.v3.bookings())[moved.booking_id].status == "cancelled"
+
+    async def test_omitted_with_control_returned_retires(self, moved: _Moved) -> None:
+        """The control came back, so the omission is real absence."""
+        await moved.store()
+
+        await moved.v3.sync()
+
+        bookings = await moved.v3.bookings()
+        assert bookings[moved.booking_id].status == "cancelled"
+        assert moved.v3.booking_id in bookings
+
+    async def test_unverifiable_result_keeps_the_row(
+        self, moved: _Moved, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """A failed lookup is never absence."""
+        await moved.store()
+        guesty_transport.fail("v3_by_ids", 503)
+
+        await moved.v3.sync()
+
+        assert (await moved.v3.bookings())[moved.booking_id].status == "confirmed"
+
+    async def test_steady_state_makes_no_by_ids_call(
+        self, v3: _Fixture, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """Nothing absent, nothing asked."""
+        await v3.setup()
+        await v3.store()
+
+        await v3.sync()
+        await v3.sync()
+
+        assert guesty_transport.counts["v3_by_ids"] == 0
+
+
+class TestFaultedSearchRetiresNothing:
+    """SC-003: a faulty search page never retires a booking (T035)."""
+
+    @pytest.fixture
+    async def two_chunks(
+        self,
+        v3: _Fixture,
+        guesty_transport: GuestyFakeTransport,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> tuple[Listing, Listing]:
+        """Two synced listings in separate chunks, five stays each, 2 per page."""
+        monkeypatch.setattr(v3_search, "DEFAULT_PAGE_LIMIT", 2)
+        monkeypatch.setattr(
+            reservations_v3,
+            "pack_chunks",
+            lambda families: v3_search.pack_chunks(families, limit=1),
+        )
+        p = guesty_transport.payloads
+        first, second = await v3.add_tracked(), await v3.add_tracked()
+        guesty_transport.v3_items = [
+            p.search_item(listing.pms_id, check_in=n + 1, check_out=n + 3)
+            for listing in (first, second)
+            for n in range(5)
+        ]
+        await self._cycle(v3, guesty_transport, first, second)
+        return first, second
+
+    @staticmethod
+    async def _cycle(
+        v3: _Fixture,
+        transport: GuestyFakeTransport,
+        *listings: Listing,
+        cache: CalendarCache | None = None,
+    ) -> list[Exception | None]:
+        """Sync every listing through one cycle; return each one's error."""
+        provider = transport.provider(reservations_api="v3")
+        provider.begin_cycle([listing.pms_id for listing in listings])
+        service = SyncService(
+            v3.session,
+            calendar_cache=cache or CalendarCache(ttl_seconds=0),
+            session_factory=v3.factory,
+        )
+        errors: list[Exception | None] = []
+        for listing in listings:
+            try:
+                await service.sync_listing(listing, provider)
+                errors.append(None)
+            except SyncServiceError as exc:
+                errors.append(exc)
+        return errors
+
+    async def _assert_nothing_retired(
+        self,
+        v3: _Fixture,
+        transport: GuestyFakeTransport,
+        listings: tuple[Listing, Listing],
+    ) -> None:
+        """Both listings fail; rows and the cached feeds are unchanged."""
+        before = {
+            listing.id: {k: b.status for k, b in (await v3.bookings(listing)).items()}
+            for listing in listings
+        }
+        assert all(
+            set(statuses.values()) == {"confirmed"} and len(statuses) == 5
+            for statuses in before.values()
+        )
+        cache = CalendarCache(ttl_seconds=3600)
+        for listing in listings:
+            cache.set(listing.ical_url_slug, f"feed-{listing.pms_id}")
+
+        errors = await self._cycle(v3, transport, *listings, cache=cache)
+
+        assert all(isinstance(error, SyncServiceError) for error in errors)
+        for listing in listings:
+            statuses = {k: b.status for k, b in (await v3.bookings(listing)).items()}
+            assert statuses == before[listing.id]
+            assert cache.get(listing.ical_url_slug) == f"feed-{listing.pms_id}"
+
+    @pytest.mark.parametrize("chunk", [0, 1], ids=["first", "second"])
+    @pytest.mark.parametrize("kind", SEARCH_PAGE_FAULTS)
+    async def test_page_fault(
+        self,
+        v3: _Fixture,
+        guesty_transport: GuestyFakeTransport,
+        two_chunks: tuple[Listing, Listing],
+        kind: str,
+        chunk: int,
+    ) -> None:
+        """Any faulty page, in either chunk, retires nothing anywhere."""
+        guesty_transport.fault_search_page(1, kind, listing_id=two_chunks[chunk].pms_id)
+
+        await self._assert_nothing_retired(v3, guesty_transport, two_chunks)
+
+    async def test_page_cap(
+        self,
+        v3: _Fixture,
+        guesty_transport: GuestyFakeTransport,
+        two_chunks: tuple[Listing, Listing],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A search still paging at the cap retires nothing."""
+        monkeypatch.setattr(v3_search, "MAX_RESERVATION_PAGES", 2)
+
+        await self._assert_nothing_retired(v3, guesty_transport, two_chunks)
+
+    async def test_rate_limited(
+        self,
+        v3: _Fixture,
+        guesty_transport: GuestyFakeTransport,
+        two_chunks: tuple[Listing, Listing],
+    ) -> None:
+        """A page still rate-limited after the retries retires nothing."""
+        guesty_transport.fail("v3_search", 429, times=4)
+
+        await self._assert_nothing_retired(v3, guesty_transport, two_chunks)
 
 
 def _events(feed: str) -> dict[str, dict[str, Any]]:

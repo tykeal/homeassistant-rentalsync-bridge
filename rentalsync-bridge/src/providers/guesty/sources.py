@@ -10,13 +10,29 @@ from typing import Protocol
 
 import httpx
 
-from src.providers.base import PMSReservation
+from src.providers.base import PMSProviderError, PMSReservation
 
 # ``GuestyProvider._request``: authenticated, rate-limit aware HTTP call.
 RequestFn = Callable[..., Awaitable[httpx.Response]]
 
 # ``GuestyProvider._listing_scopes``: ``(fetch_ids, scope_ids)`` for a listing.
 ListingScopesFn = Callable[[str], Awaitable[tuple[frozenset[str], frozenset[str]]]]
+
+
+class GuestyHTTPError(PMSProviderError):
+    """A Guesty API error response (other than 401, 403 and 429)."""
+
+    def __init__(self, message: str, *, status_code: int, body: str) -> None:
+        """Initialize the error.
+
+        Args:
+            message: Human-readable message.
+            status_code: The HTTP status code.
+            body: The response body text.
+        """
+        super().__init__(message)
+        self.status_code = status_code
+        self.body = body
 
 
 class ReservationSource(Protocol):

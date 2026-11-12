@@ -11,7 +11,8 @@ from src.providers.guesty.legacy_reservations import (
     DEFAULT_PAGE_LIMIT,
     MAX_RESERVATION_PAGES,
 )
-from src.providers.guesty.v3_mapping import change_key, reservation_id
+from src.providers.guesty.sources import GuestyHTTPError
+from src.providers.guesty.v3_mapping import change_key, reservation_id, stay_segments
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -23,6 +24,11 @@ SEARCH_PATH = "/v1/reservations-v3/search"
 
 # Listing IDs per search request, keeping the query well under 2 KB (FR-016a).
 MAX_LISTING_IDS_PER_SEARCH = 50
+
+# Characters of a rejected search's response body quoted in the error.
+_EXCERPT_CHARS = 200
+
+_PARTIAL = "refusing to return a partial snapshot"
 
 
 def pack_chunks(
@@ -70,12 +76,91 @@ def pack_chunks(
     return [tuple(sorted(chunk)) for chunk in chunks]
 
 
+def _page_items(
+    data: Any, page: int, skip: int, limit: int
+) -> tuple[list[dict[str, Any]], bool]:
+    """Validate one page's envelope (research R4 checks 1-4).
+
+    Args:
+        data: The decoded response body.
+        page: Zero-based page number, for messages.
+        skip: The ``skip`` the page was requested with.
+        limit: The ``limit`` the page was requested with.
+
+    Returns:
+        The page's items and its ``hasMore`` flag.
+
+    Raises:
+        PMSProviderError: If any envelope check fails.
+    """
+    results = data.get("results") if isinstance(data, dict) else None
+    pagination = data.get("pagination") if isinstance(data, dict) else None
+    has_more = pagination.get("hasMore") if isinstance(pagination, dict) else None
+    if (
+        not isinstance(results, list)
+        or not all(isinstance(item, dict) for item in results)
+        or not isinstance(has_more, bool)
+    ):
+        problem = "a malformed page"
+    elif isinstance(pagination, dict) and pagination.get("skip", skip) != skip:
+        problem = f"skip {pagination.get('skip')!r} for requested skip {skip}"
+    elif len(results) > limit:
+        problem = f"{len(results)} results for a limit of {limit}"
+    elif has_more and len(results) < limit:
+        problem = f"{len(results)} results with more pages to come"
+    else:
+        return results, has_more
+    msg = (
+        f"Guesty Reservations V3 search returned {problem} on page "
+        f"{page + 1}; {_PARTIAL}"
+    )
+    raise PMSProviderError(msg)
+
+
+def _check_items(items: list[dict[str, Any]], seen: list[str], page: int) -> None:
+    """Check items' identity, order and status (research R4 checks 5-7).
+
+    Args:
+        items: One page's items.
+        seen: IDs of the chunk's earlier items, ascending; extended in place.
+        page: Zero-based page number, for messages.
+
+    Raises:
+        PMSProviderError: On a missing ID, status or stay, a repeated ID,
+            or an ID not strictly after the previous one.
+    """
+    known = set(seen)
+    for item in items:
+        rid = reservation_id(item)
+        stay_segments(item)
+        if "status" not in item:
+            msg = (
+                f"Guesty reservation {rid} carries no 'status' field; refusing "
+                f"to classify reservations without it — the existing calendar "
+                f"data is kept instead of being replaced by an unsafe snapshot"
+            )
+            raise PMSProviderError(msg)
+        if rid in known:
+            problem = f"reservation {rid} twice"
+        elif seen and rid <= seen[-1]:
+            problem = f"reservation {rid} out of _id order"
+        else:
+            known.add(rid)
+            seen.append(rid)
+            continue
+        msg = (
+            f"Guesty Reservations V3 search returned {problem} on page "
+            f"{page + 1}; the result set shifted mid-search, {_PARTIAL}"
+        )
+        raise PMSProviderError(msg)
+
+
 async def _search_chunk(
     request: RequestFn,
     chunk: tuple[str, ...],
     window: tuple[date, date],
 ) -> tuple[list[dict[str, Any]], int]:
-    """Page one chunk's search to completion.
+    """Page one chunk's search to completion behind the R4 guard.
 
     Args:
         request: The provider's authenticated request method.
@@ -86,40 +171,45 @@ async def _search_chunk(
         The chunk's raw items and the number of pages fetched.
 
     Raises:
-        PMSProviderError: On API failure, a malformed page, or paging that
-            does not end within ``MAX_RESERVATION_PAGES``.
+        PMSProviderError: On API failure (after the request's own 429
+            retries), any failed guard check, or paging that does not end
+            within ``MAX_RESERVATION_PAGES``.
     """
+    limit = DEFAULT_PAGE_LIMIT
     items: list[dict[str, Any]] = []
+    seen: list[str] = []
     for page in range(MAX_RESERVATION_PAGES):
+        skip = page * limit
         params: dict[str, Any] = {
             "filter[listingId][in]": ",".join(chunk),
             "filter[checkOut][gte]": window[0].isoformat(),
             "filter[checkIn][lte]": window[1].isoformat(),
             "sort": "_id",
-            "limit": DEFAULT_PAGE_LIMIT,
-            "skip": page * DEFAULT_PAGE_LIMIT,
+            "limit": limit,
+            "skip": skip,
         }
-        response = await request("GET", SEARCH_PATH, params=params)
-        data = response.json()
-        results = data.get("results") if isinstance(data, dict) else None
-        pagination = data.get("pagination") if isinstance(data, dict) else None
-        has_more = pagination.get("hasMore") if isinstance(pagination, dict) else None
-        if (
-            not isinstance(results, list)
-            or not all(isinstance(item, dict) for item in results)
-            or not isinstance(has_more, bool)
-        ):
+        try:
+            response = await request("GET", SEARCH_PATH, params=params)
+        except GuestyHTTPError as exc:
+            if exc.status_code != 400:  # noqa: PLR2004
+                raise
             msg = (
-                f"Guesty Reservations V3 search returned a malformed page "
-                f"{page + 1}; refusing to return a partial snapshot"
+                f"Guesty rejected the reservation search: 400 "
+                f"{exc.body[:_EXCERPT_CHARS]}"
             )
-            raise PMSProviderError(msg)
+            raise PMSProviderError(msg) from exc
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+        results, has_more = _page_items(data, page, skip, limit)
+        _check_items(results, seen, page)
         items.extend(results)
         if not has_more:
             return items, page + 1
     msg = (
         f"Guesty Reservations V3 search exceeded {MAX_RESERVATION_PAGES} "
-        f"pages; refusing to return a partial snapshot"
+        f"pages; {_PARTIAL}"
     )
     raise PMSProviderError(msg)
 

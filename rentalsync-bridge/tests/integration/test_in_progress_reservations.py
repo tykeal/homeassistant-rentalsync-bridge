@@ -16,13 +16,14 @@ import httpx
 import pytest
 from icalendar import Calendar
 from src.providers.cloudbeds.provider import CloudbedsProvider
+from src.providers.guesty import reservations_v3
 from src.providers.guesty.legacy_reservations import LegacyReservationSource
 from src.providers.guesty.service import GUESTY_BASE_URL, GuestyProvider
 from src.repositories.booking_repository import BookingRepository
 from src.services.calendar_service import CalendarCache, CalendarService
 from src.services.sync_service import SyncService
 
-from tests.conftest import make_listing, make_room
+from tests.conftest import GuestyFakeTransport, make_listing, make_room
 
 LISTING_PMS_ID = "PROP001"
 ROOM_PMS_ID = "ROOM001"
@@ -413,3 +414,40 @@ async def test_cloudbeds_http_pipeline(async_session, async_session_factory):
     assert "status" not in params
 
     _assert_scenarios(await _feed_summaries(async_session, listing, room.id))
+
+
+def test_v3_lookback_covers_retention():
+    """The V3 fetch reaches back past the retention cutoff (SC-004)."""
+    from src.models.booking import OLD_BOOKING_RETENTION_DAYS
+
+    assert reservations_v3.V3_LOOKBACK_DAYS >= OLD_BOOKING_RETENTION_DAYS + 1
+
+
+async def test_v3_stay_checked_in_400_days_ago_stays_exported(
+    async_session, async_session_factory, guesty_transport: GuestyFakeTransport
+):
+    """V3: a long stay still underway is fetched and exported (US2-3)."""
+    p = guesty_transport.payloads
+    guesty_transport.add_listing(LISTING_PMS_ID, children=[ROOM_PMS_ID])
+    listing, room = await _setup(async_session)
+    item = p.search_item(
+        ROOM_PMS_ID,
+        parent_listing_id=LISTING_PMS_ID,
+        check_in=-400,
+        check_out=3,
+        confirmation_code="SYN-LONGSTAY",
+    )
+    guesty_transport.v3_items = [item]
+
+    for _ in range(2):
+        provider = guesty_transport.provider(reservations_api="v3")
+        provider.begin_cycle([LISTING_PMS_ID])
+        await _sync(async_session, async_session_factory, listing, provider)
+
+        bookings = await BookingRepository(async_session).get_confirmed_for_listing(
+            listing.id, room_id=room.id
+        )
+        assert [b.pms_booking_id for b in bookings] == [
+            f"{item['reservationId']}::{ROOM_PMS_ID}"
+        ]
+        assert len(await _feed_summaries(async_session, listing, room.id)) == 1

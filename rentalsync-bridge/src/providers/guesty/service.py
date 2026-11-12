@@ -28,6 +28,7 @@ from src.providers.guesty.legacy_reservations import (
     LegacyReservationSource,
 )
 from src.providers.guesty.reservations_v3 import V3ReservationSource
+from src.providers.guesty.sources import GuestyHTTPError
 from src.providers.registry import provider
 from src.utils.field_labels import humanize_label
 
@@ -304,7 +305,9 @@ class GuestyProvider(PMSProvider):
 
             if response.status_code >= 400:  # noqa: PLR2004
                 msg = f"Guesty API error (HTTP {response.status_code}): {response.text}"
-                raise PMSProviderError(msg)
+                raise GuestyHTTPError(
+                    msg, status_code=response.status_code, body=response.text
+                )
 
             return response
 
@@ -403,7 +406,9 @@ class GuestyProvider(PMSProvider):
             One result per requested ID.
         """
         if isinstance(self._reservations, V3ReservationSource):
-            return self._reservations.confirm_absent(listing_pms_id, reservation_ids)
+            return await self._reservations.confirm_absent(
+                listing_pms_id, reservation_ids
+            )
         return await super().confirm_absent(listing_pms_id, reservation_ids)
 
     async def get_reservations(

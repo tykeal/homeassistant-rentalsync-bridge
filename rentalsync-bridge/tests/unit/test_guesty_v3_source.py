@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for the Guesty Reservations V3 source (spec 004, US1)."""
+"""Unit tests for the Guesty Reservations V3 source (spec 004, US1-US2)."""
 
 from datetime import UTC, date, datetime
 from typing import Any
@@ -11,9 +11,16 @@ from src.providers.base import (
     PMSOccupancyInterval,
     PMSProviderError,
 )
+from src.providers.guesty import reservations_v3, v3_search
 from src.providers.guesty.legacy_reservations import _resolve_room_id
+from src.providers.guesty.v3_by_ids import (
+    ambiguous_rooms,
+    map_by_ids_item,
+    normalise_by_ids_item,
+)
+from src.providers.guesty.v3_mapping import map_search_item
 
-from tests.conftest import GuestyFakeTransport
+from tests.conftest import GuestyFakeTransport, GuestyV3Payloads
 
 
 async def _fetch_one(transport: GuestyFakeTransport, listing_id: str) -> Any:
@@ -424,3 +431,292 @@ class TestChunking:
         with pytest.raises(PMSProviderError):
             await provider.get_reservations(oversized["parent"])
         assert guesty_transport.counts["v3_search"] == 2
+
+
+# Research R4 page faults, each injected on the second page of a chunk.
+R4_PAGE_FAULTS = (
+    "malformed_results",
+    "missing_pagination",
+    "has_more_not_bool",
+    "skip_mismatch",
+    "over_limit",
+    "empty_has_more",
+    "short_has_more",
+    "missing_reservation_id",
+    "duplicate",
+    "duplicate_across_pages",
+    "out_of_order",
+)
+
+
+class TestCompletenessGuard:
+    """Every R4 guard check aborts the whole cycle (T029, FR-008-FR-011)."""
+
+    @pytest.fixture
+    def paged(
+        self, guesty_transport: GuestyFakeTransport, monkeypatch: pytest.MonkeyPatch
+    ) -> dict[str, Any]:
+        """Two listings in separate chunks, five stays each, two per page."""
+        monkeypatch.setattr(v3_search, "DEFAULT_PAGE_LIMIT", 2)
+        monkeypatch.setattr(
+            reservations_v3,
+            "pack_chunks",
+            lambda families: v3_search.pack_chunks(families, limit=1),
+        )
+        p = guesty_transport.payloads
+        a, b = p.new_id("lst"), p.new_id("lst")
+        guesty_transport.add_listing(a)
+        guesty_transport.add_listing(b)
+        guesty_transport.v3_items = [
+            p.search_item(listing, check_in=n, check_out=n + 2)
+            for listing in (a, b)
+            for n in range(5)
+        ]
+        return {"a": a, "b": b}
+
+    @staticmethod
+    async def _assert_cycle_aborts(
+        transport: GuestyFakeTransport, paged: dict[str, Any]
+    ) -> None:
+        """Both listings raise; the second without a single new request."""
+        provider = transport.provider(reservations_api="v3")
+        provider.begin_cycle([paged["a"], paged["b"]])
+
+        with pytest.raises(PMSProviderError):
+            await provider.get_reservations(paged["a"])
+        requests = len(transport.requests)
+        with pytest.raises(PMSProviderError):
+            await provider.get_reservations(paged["b"])
+        assert len(transport.requests) == requests
+
+    @pytest.mark.parametrize("chunk", ["a", "b"], ids=["first", "second"])
+    @pytest.mark.parametrize("kind", R4_PAGE_FAULTS)
+    async def test_page_fault_aborts_the_cycle(
+        self,
+        guesty_transport: GuestyFakeTransport,
+        paged: dict[str, Any],
+        kind: str,
+        chunk: str,
+    ) -> None:
+        """A faulty page in either chunk raises; nothing partial is returned."""
+        guesty_transport.fault_search_page(1, kind, listing_id=paged[chunk])
+
+        await self._assert_cycle_aborts(guesty_transport, paged)
+
+    async def test_page_cap_aborts(
+        self,
+        guesty_transport: GuestyFakeTransport,
+        paged: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Still ``hasMore`` after the last allowed page (check 8)."""
+        monkeypatch.setattr(v3_search, "MAX_RESERVATION_PAGES", 2)
+
+        await self._assert_cycle_aborts(guesty_transport, paged)
+        assert guesty_transport.counts["v3_search"] == 2
+
+    async def test_rate_limit_after_retries_aborts(
+        self, guesty_transport: GuestyFakeTransport, paged: dict[str, Any]
+    ) -> None:
+        """A page still rate-limited after the retries (check 9, FR-033)."""
+        guesty_transport.fail("v3_search", 429, times=4)
+
+        await self._assert_cycle_aborts(guesty_transport, paged)
+        assert guesty_transport.counts["v3_search"] == 4
+
+
+class TestRejectedSearch:
+    """A rejected search or a status-less item is a sync error (T030)."""
+
+    async def test_http_400_names_status_and_excerpt(
+        self, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """FR-021: never an empty result, and the cause is named."""
+        p = guesty_transport.payloads
+        listing = p.new_id("lst")
+        guesty_transport.add_listing(listing)
+        guesty_transport.v3_items = [p.search_item(listing)]
+        guesty_transport.fail(
+            "v3_search", 400, body={"message": "Unsupported filter operator"}
+        )
+        provider = guesty_transport.provider(reservations_api="v3")
+        provider.begin_cycle([listing])
+
+        with pytest.raises(PMSProviderError) as excinfo:
+            await provider.get_reservations(listing)
+
+        message = str(excinfo.value)
+        assert message.startswith("Guesty rejected the reservation search: 400")
+        assert "Unsupported filter operator" in message
+
+    async def test_missing_status_aborts_every_listing(
+        self, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """FR-026: a status-less item anywhere in the search aborts it."""
+        p = guesty_transport.payloads
+        a, b = p.new_id("lst"), p.new_id("lst")
+        guesty_transport.add_listing(a)
+        guesty_transport.add_listing(b)
+        guesty_transport.v3_items = [p.search_item(a), p.search_item(b, status=None)]
+        provider = guesty_transport.provider(reservations_api="v3")
+        provider.begin_cycle([a, b])
+
+        with pytest.raises(PMSProviderError, match="status"):
+            await provider.get_reservations(a)
+        with pytest.raises(PMSProviderError, match="status"):
+            await provider.get_reservations(b)
+        assert guesty_transport.counts["v3_search"] == 1
+
+
+def _shape(p: GuestyV3Payloads, kind: str) -> tuple[dict[str, Any], str, set[str]]:
+    """Return a search item, its owning scope root and unassigned parents."""
+    parent, unit_a, unit_b = p.new_id("lst"), p.new_id("lst"), p.new_id("lst")
+    if kind == "single":
+        return p.search_item(unit_a), unit_a, set()
+    if kind == "multi_unit_assigned":
+        return p.same_property_move(parent, unit_a, unit_b), parent, set()
+    if kind == "unassigned_parent":
+        return p.unassigned_parent(parent), parent, {parent}
+    return p.round_trip_move(parent, unit_a, unit_b), parent, set()
+
+
+class TestNormaliseByIds:
+    """By-IDs items normalise to the search shape (T032, FR-005)."""
+
+    @pytest.mark.parametrize(
+        "kind",
+        ["single", "multi_unit_assigned", "unassigned_parent", "round_trip"],
+    )
+    def test_same_identity_from_either_endpoint(
+        self, guesty_v3_payloads: GuestyV3Payloads, kind: str
+    ) -> None:
+        """Byte-identical IDs and rooms; by-IDs intervals carry dates only."""
+        item, root, unassigned = _shape(guesty_v3_payloads, kind)
+        scope = frozenset(
+            {root}
+            | {s["listingId"] for s in item["stay"]}
+            | {s.get("parentListingId") or root for s in item["stay"]}
+        )
+
+        searched = map_search_item(item, root, scope)
+        normalised = normalise_by_ids_item(
+            guesty_v3_payloads.as_by_ids(item, unassigned=unassigned)
+        )
+        assert normalised is not None
+        fetched = map_by_ids_item(normalised, root, scope)
+
+        assert searched is not None
+        assert fetched is not None
+        assert fetched.pms_booking_id == searched.pms_booking_id
+        assert [
+            (i.room_id, i.ordinal, i.booking_suffix, i.local_dates)
+            for i in fetched.intervals
+        ] == [
+            (i.room_id, i.ordinal, i.booking_suffix, i.local_dates)
+            for i in searched.intervals
+        ]
+        assert all(
+            i.check_in is None and i.check_out is None for i in fetched.intervals
+        )
+
+    def test_field_mapping(self, guesty_v3_payloads: GuestyV3Payloads) -> None:
+        """``_id``, ``unitId ?? unitTypeId`` and the parent only when it differs."""
+        p = guesty_v3_payloads
+        rid, parent, unit, single = (
+            p.new_id("res"),
+            p.new_id("lst"),
+            p.new_id("lst"),
+            p.new_id("lst"),
+        )
+        raw = p.by_ids_item(
+            rid,
+            [
+                p.by_ids_segment(single, "2026-01-01", "2026-01-03", unit_id=single),
+                p.by_ids_segment(parent, "2026-01-03", "2026-01-05", unit_id=unit),
+                p.by_ids_segment(parent, "2026-01-05", "2026-01-07"),
+            ],
+            status="confirmed",
+            guest_id="6630synthetic",
+        )
+
+        item = normalise_by_ids_item(raw)
+
+        assert item is not None
+        assert item["reservationId"] == rid
+        assert item["status"] == "confirmed"
+        assert item["guestId"] == "6630synthetic"
+        assert [(s["listingId"], s.get("parentListingId")) for s in item["stay"]] == [
+            (single, None),
+            (unit, parent),
+            (parent, None),
+        ]
+        assert [
+            (s["checkInDateLocalized"], s["checkOutDateLocalized"])
+            for s in item["stay"]
+        ] == [
+            ("2026-01-01", "2026-01-03"),
+            ("2026-01-03", "2026-01-05"),
+            ("2026-01-05", "2026-01-07"),
+        ]
+        assert all("checkIn" not in s and "checkOut" not in s for s in item["stay"])
+
+    @pytest.mark.parametrize("gap", [False, True], ids=["utc_adjacent", "same_day_gap"])
+    def test_equal_same_room_boundary_dates_are_ambiguous(
+        self, guesty_v3_payloads: GuestyV3Payloads, gap: bool
+    ) -> None:
+        """Without instants, one shared local date cannot be resolved."""
+        p = guesty_v3_payloads
+        room, other = p.new_id("lst"), p.new_id("lst")
+        second_in = p.check_in_at(7) if gap else p.check_out_at(7)
+        item = p.search_item(
+            stay=[
+                p.stay_segment(other, p.check_in_at(4), p.check_out_at(5)),
+                p.stay_segment(room, p.check_out_at(5), p.check_out_at(7)),
+                p.stay_segment(room, second_in, p.check_out_at(9)),
+            ]
+        )
+
+        normalised = normalise_by_ids_item(p.as_by_ids(item))
+
+        assert normalised is not None
+        assert ambiguous_rooms(normalised) == {room}
+
+    def test_round_trip_is_not_ambiguous(
+        self, guesty_v3_payloads: GuestyV3Payloads
+    ) -> None:
+        """A → B → A has no consecutive same-room segments."""
+        item, _root, _unassigned = _shape(guesty_v3_payloads, "round_trip")
+
+        normalised = normalise_by_ids_item(guesty_v3_payloads.as_by_ids(item))
+
+        assert normalised is not None
+        assert ambiguous_rooms(normalised) == set()
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "not-an-object",
+            {"status": "confirmed", "stay": [{"unitTypeId": "6640a"}]},
+            {"_id": "", "status": "confirmed", "stay": [{"unitTypeId": "6640a"}]},
+            {"_id": "6650a", "status": "confirmed"},
+            {"_id": "6650a", "status": "confirmed", "stay": []},
+            {"_id": "6650a", "status": "confirmed", "stay": ["6640a"]},
+            {
+                "_id": "6650a",
+                "status": "confirmed",
+                "stay": [{"checkInDateLocalized": "2026-01-01"}],
+            },
+        ],
+        ids=[
+            "not_object",
+            "no_id",
+            "empty_id",
+            "no_stay",
+            "empty_stay",
+            "segment_not_object",
+            "segment_without_unit",
+        ],
+    )
+    def test_invalid_items(self, raw: Any) -> None:
+        """An unattributable item is invalid, never guessed."""
+        assert normalise_by_ids_item(raw) is None
