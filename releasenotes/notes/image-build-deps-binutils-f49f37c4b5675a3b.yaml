@@ -1,0 +1,8 @@
+---
+security:
+  - |
+    The add-on image no longer ships the C compiler toolchain (`gcc`,
+    `musl-dev`, `libffi-dev` and, through `gcc`, `binutils`). It is now
+    installed only while dependencies are installed and removed in the
+    same layer, which drops binutils CVE-2025-69650, CVE-2025-69649,
+    CVE-2026-3442, CVE-2026-3441 and CVE-2026-6846 from the image.

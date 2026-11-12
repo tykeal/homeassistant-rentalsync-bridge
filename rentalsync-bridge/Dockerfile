@@ -19,20 +19,24 @@ COPY --from=ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e
 RUN apk upgrade --no-cache \
     && rm -f /usr/bin/tempio
 
-# Install build dependencies
-RUN apk add --no-cache \
-    jq \
-    gcc \
-    musl-dev \
-    libffi-dev
+# Install runtime dependencies
+RUN apk add --no-cache jq
 
 WORKDIR /app
 
 # Copy dependency files
 COPY pyproject.toml uv.lock ./
 
-# Install dependencies only (no dev dependencies)
-RUN uv sync --frozen --no-dev --no-install-project
+# Install dependencies only (no dev dependencies). The compiler
+# toolchain is only needed if a dependency must build from source, so
+# it lives in a virtual package removed in the same layer; otherwise
+# gcc's binutils dependency ships in the image and its CVEs with it.
+RUN apk add --no-cache --virtual .build-deps \
+        gcc \
+        musl-dev \
+        libffi-dev \
+    && uv sync --frozen --no-dev --no-install-project \
+    && apk del --no-cache .build-deps
 
 # Copy source code
 COPY src/ ./src/
