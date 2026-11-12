@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for the Guesty Reservations V3 source (spec 004, US1-US3)."""
+"""Unit tests for the Guesty Reservations V3 source (spec 004, US1-US4)."""
 
 import itertools
 import logging
@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 from src.providers.base import (
+    HOLD_STATUSES,
     InlineCustomFields,
     PMSOccupancyInterval,
     PMSProviderError,
@@ -1032,3 +1033,131 @@ class TestNormaliseByIds:
     def test_invalid_items(self, raw: Any) -> None:
         """An unattributable item is invalid, never guessed."""
         assert normalise_by_ids_item(raw) is None
+
+
+_V3_LOGGER = "src.providers.guesty.v3_mapping"
+
+
+class TestStatusPolicy:
+    """The full V3 status vocabulary maps per research R7 (T043, US4)."""
+
+    async def _fetch(
+        self, transport: GuestyFakeTransport, *statuses: str
+    ) -> tuple[list[Any], str]:
+        """Sync one listing holding one stay per status; return the DTOs."""
+        p = transport.payloads
+        listing = p.new_id("lst")
+        transport.add_listing(listing)
+        transport.v3_items = [
+            p.search_item(listing, status=status, check_in=2 + n, check_out=4 + n)
+            for n, status in enumerate(statuses)
+        ]
+        provider = transport.provider(reservations_api="v3")
+        provider.begin_cycle([listing])
+        return await provider.get_reservations(listing), listing
+
+    @pytest.mark.parametrize(
+        ("v3_status", "expected"),
+        [
+            ("completed", "checked_out"),
+            ("Completed", "checked_out"),
+            ("canceled", "cancelled"),
+            ("cancelled", "cancelled"),
+            ("CANCELED", "cancelled"),
+            ("Cancelled", "cancelled"),
+            ("CONFIRMED", "confirmed"),
+        ],
+    )
+    async def test_normalised_statuses(
+        self,
+        guesty_transport: GuestyFakeTransport,
+        caplog: pytest.LogCaptureFixture,
+        v3_status: str,
+        expected: str,
+    ) -> None:
+        """``completed`` exports as ``checked_out``; FR-024 is case-blind."""
+        with caplog.at_level(logging.DEBUG, logger=_V3_LOGGER):
+            (reservation,), _ = await self._fetch(guesty_transport, v3_status)
+
+        assert reservation.status == expected
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+    @pytest.mark.parametrize("v3_status", ["inquiry", "reserved", "Inquiry"])
+    async def test_excluded_statuses_are_dropped(
+        self, guesty_transport: GuestyFakeTransport, v3_status: str
+    ) -> None:
+        """``inquiry``/``reserved`` stay out of the snapshot (FR-022)."""
+        reservations, _ = await self._fetch(guesty_transport, v3_status)
+
+        assert reservations == []
+
+    @pytest.mark.parametrize(
+        "v3_status", ["expired", "closed", "declined", "awaiting_payment"]
+    )
+    async def test_recognised_non_export_statuses_are_quiet(
+        self,
+        guesty_transport: GuestyFakeTransport,
+        caplog: pytest.LogCaptureFixture,
+        v3_status: str,
+    ) -> None:
+        """Stored verbatim (withheld) with only a DEBUG log."""
+        with caplog.at_level(logging.DEBUG, logger=_V3_LOGGER):
+            (reservation,), _ = await self._fetch(guesty_transport, v3_status)
+
+        assert reservation.status == v3_status
+        levels = {r.levelno for r in caplog.records if v3_status in r.getMessage()}
+        assert levels == {logging.DEBUG}
+
+    async def test_unknown_status_is_verbatim_with_a_warning(
+        self,
+        guesty_transport: GuestyFakeTransport,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """An unmapped status is withheld, never guessed or dropped."""
+        with caplog.at_level(logging.DEBUG, logger=_V3_LOGGER):
+            (reservation,), _ = await self._fetch(guesty_transport, "synthetic_new")
+
+        assert reservation.status == "synthetic_new"
+        (record,) = [r for r in caplog.records if "synthetic_new" in r.getMessage()]
+        assert record.levelno == logging.WARNING
+        assert reservation.pms_booking_id in record.getMessage()
+
+    @pytest.mark.parametrize("v3_status", ["alteration", "ALTERATION"])
+    async def test_alteration_is_a_quiet_hold_status(
+        self,
+        guesty_transport: GuestyFakeTransport,
+        caplog: pytest.LogCaptureFixture,
+        v3_status: str,
+    ) -> None:
+        """``alteration`` reaches the sync as a hold status, at DEBUG."""
+        with caplog.at_level(logging.DEBUG, logger=_V3_LOGGER):
+            (reservation,), _ = await self._fetch(guesty_transport, v3_status)
+
+        assert reservation.status == "alteration"
+        assert reservation.status in HOLD_STATUSES
+        records = [r for r in caplog.records if "alteration" in r.getMessage()]
+        assert records
+        assert {r.levelno for r in records} == {logging.DEBUG}
+
+    @pytest.mark.parametrize("v3_status", ["alteration", "completed"])
+    async def test_health_guard_counts_them_classified(
+        self, guesty_transport: GuestyFakeTransport, v3_status: str
+    ) -> None:
+        """An all-``alteration``/``completed`` window never trips the guard."""
+        reservations, _ = await self._fetch(guesty_transport, *[v3_status] * 5)
+
+        assert len(reservations) == 5
+
+    async def test_health_guard_thresholds_are_unchanged(
+        self, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """Over half of at least four unclassified aborts (FR-025)."""
+        unknown = "synthetic_new"
+        majority = ["confirmed", unknown, unknown, unknown]
+        half = ["confirmed", "alteration", unknown, unknown]
+        small = [unknown, unknown, unknown]
+
+        with pytest.raises(PMSProviderError, match="unrecognised"):
+            await self._fetch(guesty_transport, *majority)
+        assert len((await self._fetch(guesty_transport, *half))[0]) == 4
+        assert len((await self._fetch(guesty_transport, *small))[0]) == 3
