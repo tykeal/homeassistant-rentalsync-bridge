@@ -154,6 +154,8 @@ The by-IDs resource returns a different shape from search. Before attribution, e
 
 A missing `_id`, an empty `stay[]`, or a segment with neither `unitId` nor `unitTypeId` makes the item invalid, and the whole batch `UNCONFIRMED` (R5 whole-response validation).
 
+Two consecutive segments in the same normalised room whose `checkOutDateLocalized` equals the next `checkInDateLocalized` are **ambiguous**: without UTC instants, R6 cannot tell adjacency (merge) from a same-day gap (`#2`). Such a candidate's verdict is `UNCONFIRMED`, never `REATTRIBUTED`, so no `#n` row is retired on a guess (R5).
+
 ---
 
 ## 3. Persistence (`src/models/booking.py`: schema unchanged)

@@ -261,12 +261,15 @@ Follow constitution Principle V:
   - for a single-segment stay, an assigned multi-unit stay, an unassigned parent and A→B→A, the same reservation from `search_item` and from `as_by_ids` yields byte-identical `pms_booking_id`s and interval rooms
   - `_id` → `reservationId`; `listingId = unitId ?? unitTypeId`; `parentListingId` only when `unitId` differs from `unitTypeId`
   - intervals carry `local_dates` only, with no UTC instants
+  - two same-room segments whose localized boundary dates are equal are reported as ambiguous, whether UTC-adjacent or separated by a same-day gap
   - an item with no `_id`, no `stay[]`, or a segment with neither `unitId` nor `unitTypeId` is invalid
 - [ ] T033 [P] [US2] Write integration tests in tests/integration/test_guesty_v3_sync.py for FR-011a:
   - a reservation vanishing mid-search (US2-5) whose first segment is in the searched filter IDs is not retired when by-IDs returns it live; the verdict is `INCONSISTENT`, that listing aborts with last-good kept and an error naming the `guesty_reservations_api` setting, and the other listings in the cycle sync normally
   - a stored reservation re-arranged so its first segment is in an untracked property (US3-6) is `REATTRIBUTED`: the row in the still-occupied room is kept with its mapped status, its dates are re-anchored (unchanged local dates keep the stored instants byte-for-byte; a changed local date keeps the stored local time of day in the listing timezone), its custom fields and guest details stay last-good, and its UID and `Booking ID:` line are unchanged
   - the same re-arranged reservation over three consecutive cycles never aborts a sync, stays exported and costs one by-IDs call per cycle (call-count assertion)
-  - a re-arranged reservation with no segment left in a tracked listing retires; one whose room changed retires the old room's row only, and an interval with no stored row is not created and is logged at INFO
+  - a re-arranged reservation with no segment left in a tracked listing retires
+  - a stored reservation in room A re-arranged to untracked U → tracked B (residual gap): A's row retires, B is not created, and an INFO line names the reservation and B
+  - same-room segments meeting on one local date give `UNCONFIRMED` and retire no `#n` row
   - a re-attributed `alteration` reservation is held (`UNCONFIRMED`)
   - a canceled reservation absent from the window retires
   - an omitted candidate with the control returned retires

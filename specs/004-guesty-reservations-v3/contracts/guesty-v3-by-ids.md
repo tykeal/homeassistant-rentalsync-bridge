@@ -67,8 +67,9 @@ The whole response is validated first: it is a list, every item has an `_id` and
 | returned, no segment in the ownership scope | `CONFIRMED_ABSENT` |
 | returned, entirely outside the window | `CONFIRMED_ABSENT` |
 | returned, `alteration` | `UNCONFIRMED` (FR-023 hold) |
+| returned, two consecutive same-room segments whose localized boundary dates are equal (adjacency ambiguous without UTC instants) | `UNCONFIRMED` + WARNING; no row retired |
 | returned, any other status, a segment in scope, in window, first segment's `unitId` and `unitTypeId` **not** in the searched filter IDs | `REATTRIBUTED`, carrying the normalised reservation: rows in still-occupied rooms are kept (mapped status, re-anchored dates), other rows retire as room changes; **no abort** |
-| as above, but the first segment's `unitId` or `unitTypeId` **is** in the searched filter IDs | `INCONSISTENT`: this listing's sync aborts (FR-011) with an actionable error; no other listing is affected |
+| as above, but the first segment's `unitId` or `unitTypeId` **is** in the searched filter IDs (checked before the ambiguity rule) | `INCONSISTENT`: this listing's sync aborts (FR-011) with an actionable error; no other listing is affected |
 | not returned, control returned | `CONFIRMED_ABSENT` |
 | not returned, control not returned or no control available | `UNCONFIRMED` + ERROR log |
 | response not a list, invalid item, HTTP error, or 429 after retries | `UNCONFIRMED` for the whole batch + WARNING log |
@@ -84,6 +85,7 @@ The whole response is validated first: it is a list, every item has an `_id` and
 - each outcome row
 - an **ignored-parameter** fixture: the response contains unrelated account reservations, including the control, but omits a still-existing candidate. Every candidate must be `UNCONFIRMED`, and nothing is retired
 - that no request is made when there are no candidates
-- **shape normalisation**: the same reservation as a search item and as a by-IDs item (single-segment, multi-unit assigned, unassigned, and A → B → A) yields identical `pms_booking_id`s
+- **shape normalisation**: the same reservation as a search item and as a by-IDs item (single-segment, multi-unit assigned, unassigned, and A → B → A with unambiguous dates) yields identical `pms_booking_id`s
+- **ambiguous boundary**: same-room segments meeting on one local date give `UNCONFIRMED`, both for a UTC-adjacent pair and for a same-day gap
 - `REATTRIBUTED` vs `INCONSISTENT` on the first segment's `unitId`/`unitTypeId` membership in the filter IDs
 - with no control available, a returned cancelled candidate is still `CONFIRMED_ABSENT` and an omitted one is `UNCONFIRMED`
