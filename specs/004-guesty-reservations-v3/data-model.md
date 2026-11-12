@@ -48,7 +48,7 @@ V3 mode populates the existing fields as follows:
 | `ordinal` | `int` (≥ 1) | 1 for the first interval in this room within the reservation, 2 for the next, and so on |
 | `check_in` | `datetime` (UTC) | first merged segment's `checkIn` |
 | `check_out` | `datetime` (UTC) | last merged segment's `checkOut` |
-| `guests_count` | `int \| None` | sum of the merged segments' `guestsCount` |
+| `guests_count` | `int \| None` | the **maximum** of the merged segments' `guestsCount` (non-additive: adjacent segments describe the same guests over time). It equals the common value when they agree. `None` when no merged segment has a count |
 
 **Derived booking ID**: `f"{rid}::{room_id}"` if `ordinal == 1`, otherwise `f"{rid}::{room_id}#{ordinal}"`.
 
@@ -144,7 +144,7 @@ V3 mode no longer sends a server-side listing filter (R2). The fetch scope survi
 | custom-field `fieldId`s | custom fields | yes | inline `present`, or a successful confirmation call | last-good on failure or malformed (R8) |
 | `guest_phone`, `guest_email`, `guest_phone_last4` | guest | yes (as today) | successful guest lookup | last-good only when `_guest_source_id` matches (FR-031) |
 | `_guest_source_id` | guest (bookkeeping) | **no** | successful guest lookup | — |
-| `_guest_name` | guest (bookkeeping, **new**) | **no** | successful guest lookup with a non-empty name | reused only when `_guest_source_id` matches |
+| `_guest_name` | guest (bookkeeping, **new**) | **no** | successful guest lookup with a non-empty name | reused only when `_guest_source_id` matches. For a row written by the previous release (no `_guest_name`), the stored `Booking.guest_name` is the bootstrap fallback under the same `_guest_source_id` check |
 | `_change_key` | sync (bookkeeping, **new**) | **no** | **only** after a fully successful enrichment of a reservation with `change_key` | never carried forward by a fallback |
 
 The NULL vs `{}` distinction is unchanged. `None` means never stored, so it is not reusable. `{}` means a successful empty read.

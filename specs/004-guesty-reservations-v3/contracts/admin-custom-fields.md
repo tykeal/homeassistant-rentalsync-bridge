@@ -35,7 +35,8 @@ Each `AvailableFieldResponse` entry gains the same `retired` and `retired_reason
 
 ## `PUT /api/listings/{listing_id}/custom-fields`
 
-- Unchanged.
+- The request is unchanged.
+- GET and PUT share `CustomFieldsResponse` (`src/api/custom_fields.py`). The PUT response therefore carries the same `retired` and `retired_reason` values, computed the same way, for every returned field.
 - A retired field can still be saved, disabled or deleted by the user. It is never removed automatically (FR-038).
 
 ## Source of truth
@@ -61,6 +62,6 @@ Each `AvailableFieldResponse` entry gains the same `retired` and `retired_reason
 `tests/integration/test_custom_fields_api.py`:
 
 - the flag is set in V3 mode and absent in legacy mode and for Cloudbeds
-- `PUT` round-trips a retired field
+- `PUT` round-trips a retired field, and its response carries `retired: true` and the reason
 
 A unit test covers the one-time log notice.

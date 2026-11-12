@@ -46,10 +46,10 @@ Run this on the owner's live installation, with the pre-release installed and `v
 1. Set `log_level: debug` and restart.
 2. Let three or more cycles run, then confirm each of the following.
    - **Identity.** The first-sync INFO line reports that every stored reservation ID was matched. No `SyncServiceError` for an identity mismatch appears.
-   - **Feeds.** Every listing's iCal feed has the same event UIDs, `SUMMARY` and `Booking ID:` lines as the last legacy feed. Diff saved copies with `diff`.
+   - **Feeds.** For every **single-segment** reservation, the event UID, `SUMMARY` and `Booking ID:` line are identical to the last legacy feed. Diff saved copies with `diff`. Multi-segment reservations are excluded from this diff, because V3 intentionally adds room-specific and `#n` events that legacy never produced.
    - **Codes.** The door-code (last-4) values are unchanged for every current and upcoming stay.
    - **Narrowing.** The DEBUG line shows that the search window narrowed the result. Its count must be below the account's total reservation count.
-   - **Multi-segment.** For any multi-unit or room-move reservation, the DEBUG shape line lists its segments and the resulting intervals.
+   - **Multi-segment.** For any multi-unit or room-move reservation, the DEBUG shape line lists its segments and the resulting intervals. Check each interval's event against the room and dates assigned in Guesty: it appears in exactly that room's feed, and in no other.
    - **Statuses.** The DEBUG status histogram contains only documented values.
    - **Paging.** No completeness-guard warnings appear, and there is no short `hasMore` page.
    - **Budget.** The per-cycle INFO request totals are at or below the legacy baseline (about 20–40). Rate-limit warnings do not increase.

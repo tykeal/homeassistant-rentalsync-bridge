@@ -288,9 +288,13 @@ The V3 mapper builds `InlineCustomFields(state, values)`:
 
 - **`PRESENT`:** use the values. No call. Success.
 - **`ABSENT`:**
-  - If the stored enrichment holds **no** custom-field-owned values (including `{}`, or never fetched), treat it as a successful empty read. No call.
-  - If it holds **non-empty** custom-field-owned values, make **one confirmation call** to the existing `GET /v1/reservations-v3/{id}/custom-fields`. If that call succeeds, use its values. If it fails, keep the last-good values (FR-032).
-  - This stops a dropped inline block from blanking a published door code, at a cost of one call only when values disappear.
+  - If stored `enrichment_data` is **not NULL** and holds **no** custom-field-owned values (for example `{}`), treat it as a successful empty read. No call.
+  - If stored `enrichment_data` is **NULL** (unknown provenance: a row written before the enrichment column, which may still publish a door code from `custom_data`), or it holds **non-empty** custom-field-owned values, make **one confirmation call** to the existing `GET /v1/reservations-v3/{id}/custom-fields`.
+    - If the call succeeds, use its values.
+    - If it fails and `enrichment_data` is not NULL, keep the last-good values (FR-032).
+    - If it fails and `enrichment_data` is NULL, use `_bootstrap_custom_fields` recovery, exactly as today.
+    - On any failure, `_change_key` is not persisted, so the next sync confirms again.
+  - This stops a dropped inline block, or a first V3 sync over pre-enrichment rows, from blanking a published door code. It costs one call only when values disappear or provenance is unknown.
 - **`MALFORMED`:** keep the last-good values (existing fallback path, including `_bootstrap_custom_fields`). Log at WARNING. No abort (FR-028).
 
 `has_separate_custom_fields` stays `True` for Guesty, so the existing fallback machinery is reused unchanged.
@@ -325,12 +329,14 @@ The V3 mapper builds `InlineCustomFields(state, values)`:
    - `reservation.change_key` is not None and equals `cached.data["_change_key"]`
    - either the reservation has no guest, or `cached.data["_guest_source_id"] == reservation.guest_id` **and** `cached.data["_guest_name"]` is non-empty
    - the reservation is **not** in the freshness window: in progress, checked out ≤ 7 days ago, or starting ≤ 30 days ahead (unchanged constants)
+   - **no stored booking** for the reservation is in the freshness window, judged on its stored dates. This matters during an `alteration` hold, where the published (frozen) dates can be near while the proposed V3 dates are far away. The published stay's door code must keep refreshing (FR-023, FR-030)
 
    On reuse, the guest name comes from `_guest_name` and the guest contact from the stored guest-owned keys. Custom fields still come from the inline block when it is `PRESENT`, which is free and fresh.
 6. **Failure rules (unchanged #129 invariants).**
    - On a failed lookup, `_change_key` is not persisted, so the next sync retries.
    - On guest failure, fall back only if `_guest_source_id` matches the current guest. Otherwise publish no phone, email or last-4, so a reassigned guest never sees the previous guest's details (FR-031).
    - The name falls back to `_guest_name` only on the same source match, else to the existing placeholder. A stored name is never blanked (FR-032).
+   - **Upgrade bootstrap for the name.** Rows written by the previous release have `_guest_source_id` but no `_guest_name`; their `Booking.guest_name` came from the legacy embedded guest. When the first V3 lookup fails and `_guest_source_id` matches, the stored `Booking.guest_name` is used, so the published name is kept (FR-032). `_StoredEnrichment` gains the stored guest name for this. If the source does not match, nothing is reused.
    - On custom-field failure, use the last-good values (R8).
    - `enrichment_data` NULL vs `{}` keeps its meaning.
 7. **Guest resource.** `get_guest` in V3 mode calls `GET /v1/guests-crud/{id}?fields=fullName phone email`. A 404 returns `None`, as today. Lookups are deduplicated per distinct guest per sync, as today (`_resolve_guests`).
@@ -349,7 +355,7 @@ The V3 mapper builds `InlineCustomFields(state, values)`:
 |---|---|---|
 | `source` | `source` | unchanged |
 | `confirmationCode` | `confirmationCode` | unchanged |
-| `guestsCount` | `stay[].guestsCount` | sum over the segments that make up this booking's interval. A single segment gives that segment's count, equal to today's reservation total. Integral numbers render as int strings (`3`, not `3.0`). Missing → key omitted, as today when absent |
+| `guestsCount` | `stay[].guestsCount` | the **maximum** over the segments merged into this booking's interval. This is non-additive, because adjacent same-room segments describe the same guests over time; it equals the common value when the counts agree. A single segment gives that segment's count, equal to today's reservation total. Integral numbers render as int strings (`3`, not `3.0`). Missing → key omitted, as today when absent |
 | `notes` | `notes.other`, `notes.guest`, `notes.specialRequests` | non-empty, stripped strings joined with `"; "` in that order. `cleaning` and `keyCode` are **excluded**. None non-empty → key omitted |
 | `nightsCount` | derived | `(checkOutDateLocalized − checkInDateLocalized).days` at **reservation** level (first segment's in, last segment's out), the same meaning as legacy. Unparsable → omitted |
 | `money_totalPaid`, `money_balanceDue`, `money_currency` | — | **retired** in V3 mode (not supplied; not re-sourced) |
