@@ -337,7 +337,7 @@ Follow constitution Principle V:
 
 ### Implementation for User Story 3
 
-- [ ] T041 [US3] Implement multi-segment attribution in src/providers/guesty/reservations_v3.py:
+- [x] T041 [US3] Implement multi-segment attribution in src/providers/guesty/reservations_v3.py:
   - ownership-scope and parent-ID matching across every `stay[]` segment
   - adjacent same-room merging
   - ordinals and `#n`
