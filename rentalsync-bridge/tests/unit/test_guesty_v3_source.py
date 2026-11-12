@@ -517,3 +517,46 @@ class TestCompletenessGuard:
 
         await self._assert_cycle_aborts(guesty_transport, paged)
         assert guesty_transport.counts["v3_search"] == 4
+
+
+class TestRejectedSearch:
+    """A rejected search or a status-less item is a sync error (T030)."""
+
+    async def test_http_400_names_status_and_excerpt(
+        self, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """FR-021: never an empty result, and the cause is named."""
+        p = guesty_transport.payloads
+        listing = p.new_id("lst")
+        guesty_transport.add_listing(listing)
+        guesty_transport.v3_items = [p.search_item(listing)]
+        guesty_transport.fail(
+            "v3_search", 400, body={"message": "Unsupported filter operator"}
+        )
+        provider = guesty_transport.provider(reservations_api="v3")
+        provider.begin_cycle([listing])
+
+        with pytest.raises(PMSProviderError) as excinfo:
+            await provider.get_reservations(listing)
+
+        message = str(excinfo.value)
+        assert message.startswith("Guesty rejected the reservation search: 400")
+        assert "Unsupported filter operator" in message
+
+    async def test_missing_status_aborts_every_listing(
+        self, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """FR-026: a status-less item anywhere in the search aborts it."""
+        p = guesty_transport.payloads
+        a, b = p.new_id("lst"), p.new_id("lst")
+        guesty_transport.add_listing(a)
+        guesty_transport.add_listing(b)
+        guesty_transport.v3_items = [p.search_item(a), p.search_item(b, status=None)]
+        provider = guesty_transport.provider(reservations_api="v3")
+        provider.begin_cycle([a, b])
+
+        with pytest.raises(PMSProviderError, match="status"):
+            await provider.get_reservations(a)
+        with pytest.raises(PMSProviderError, match="status"):
+            await provider.get_reservations(b)
+        assert guesty_transport.counts["v3_search"] == 1
