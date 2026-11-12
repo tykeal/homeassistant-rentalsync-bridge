@@ -7,13 +7,17 @@ from __future__ import annotations
 import math
 from collections import Counter
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from src.models.booking import Booking
 from src.models.listing import Listing
-from src.providers.guesty.service import clear_custom_field_definitions_cache
+from src.providers.guesty.service import (
+    GuestyProvider,
+    clear_custom_field_definitions_cache,
+)
 from src.services.calendar_service import CalendarCache
 from src.services.sync_service import SyncService
 
@@ -26,6 +30,18 @@ from tests.conftest import (
 
 DOOR_CODE = "door_code"
 PAGE_SIZE = 100
+
+# Fake-transport resource -> request-count log resource (FR-043).
+LOGGED_AS = {
+    "reservations": "search",
+    "v3_search": "search",
+    "v3_by_ids": "by_ids",
+    "guests": "guests",
+    "guests_crud": "guests",
+    "custom_fields": "custom_fields",
+    "listings": "listings",
+    "listing": "listings",
+}
 
 
 class _Budget:
@@ -71,7 +87,16 @@ class _Budget:
         """Run one scheduler-shaped sync cycle; return its request counts."""
         before = Counter(self.transport.counts)
         start = len(self.transport.requests)
-        provider = self.transport.provider(reservations_api=mode)
+        # A real token manager knows its account, so custom-field labels
+        # are cached across cycles as in production.
+        token_manager = AsyncMock()
+        token_manager.get_token = AsyncMock(return_value="synthetic-token")
+        token_manager.account_key = "synthetic-account"
+        provider = GuestyProvider(
+            token_manager=token_manager,
+            http_client=self.transport.client(),
+            reservations_api=mode,
+        )
         provider.begin_cycle([listing.pms_id for listing in self.listings])
         service = SyncService(
             self.session,
@@ -221,3 +246,29 @@ class TestRequestBudget:
             }
             & foreign_guests
         )
+
+    @pytest.mark.parametrize("mode", ["legacy", "v3"])
+    async def test_a_cycle_logs_its_request_counts(
+        self, budget: _Budget, caplog: pytest.LogCaptureFixture, mode: str
+    ) -> None:
+        """One INFO line per cycle reports the requests by resource (FR-043)."""
+        caplog.set_level("INFO", logger="src.providers.guesty.service")
+
+        cycles = await budget.cycles(mode)
+
+        lines = [
+            r.getMessage()
+            for r in caplog.records
+            if r.getMessage().startswith("Guesty requests this cycle:")
+        ]
+        expected = []
+        for counts in cycles:
+            logged: Counter[str] = Counter()
+            for resource, n in counts.items():
+                logged[LOGGED_AS.get(resource, "other")] += n
+            names = ("search", "by_ids", "guests", "custom_fields", "listings")
+            expected.append(
+                "Guesty requests this cycle: "
+                + " ".join(f"{name}={logged[name]}" for name in (*names, "other"))
+            )
+        assert lines == expected
