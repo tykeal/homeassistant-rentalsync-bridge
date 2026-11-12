@@ -8,7 +8,12 @@ import logging
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from src.providers.base import PMSProviderError, PMSReservation
+from src.providers.base import (
+    AbsenceResult,
+    AbsenceVerdict,
+    PMSProviderError,
+    PMSReservation,
+)
 from src.providers.guesty.legacy_reservations import (
     _CLASSIFIED_STATUSES,
     DEFAULT_LOOKAHEAD_DAYS,
@@ -231,3 +236,34 @@ class V3ReservationSource:
             reservations.append(mapped)
         _guard_unclassified(unclassified, len(reservations), listing_pms_id)
         return reservations
+
+    def confirm_absent(
+        self, listing_pms_id: str, reservation_ids: Sequence[str]
+    ) -> dict[str, AbsenceResult]:
+        """Leave every absent reservation unconfirmed (interim, until US2).
+
+        Offset paging can skip a reservation without any detectable page
+        fault, so absence from the search alone must never retire a
+        booking.  Until the by-ID confirmation lookup (research R5)
+        exists, every candidate is kept.
+
+        Args:
+            listing_pms_id: Listing being synced.
+            reservation_ids: Base reservation IDs absent from its snapshot.
+
+        Returns:
+            ``UNCONFIRMED`` for every ID.
+        """
+        if reservation_ids:
+            logger.info(
+                "Guesty V3: keeping %d reservation(s) absent from listing %s's "
+                "search; absence confirmation is not available yet",
+                len(reservation_ids),
+                listing_pms_id,
+            )
+        return {
+            rid: AbsenceResult(
+                AbsenceVerdict.UNCONFIRMED, detail="V3 absence check unavailable"
+            )
+            for rid in reservation_ids
+        }

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from src.providers.base import (
+    AbsenceResult,
     PMSAuthenticationError,
     PMSConnectionError,
     PMSGuest,
@@ -383,6 +384,27 @@ class GuestyProvider(PMSProvider):
         """
         if isinstance(self._reservations, V3ReservationSource):
             self._reservations.begin_cycle(listing_pms_ids)
+
+    async def confirm_absent(
+        self,
+        listing_pms_id: str,
+        reservation_ids: Sequence[str],
+    ) -> dict[str, AbsenceResult]:
+        """Confirm stored reservations missing from a snapshot are gone.
+
+        V3 mode asks the V3 source; legacy mode keeps the base behaviour
+        (every ID confirmed, as before spec 004).
+
+        Args:
+            listing_pms_id: Listing being synced.
+            reservation_ids: Base reservation IDs absent from the snapshot.
+
+        Returns:
+            One result per requested ID.
+        """
+        if isinstance(self._reservations, V3ReservationSource):
+            return self._reservations.confirm_absent(listing_pms_id, reservation_ids)
+        return await super().confirm_absent(listing_pms_id, reservation_ids)
 
     async def get_reservations(
         self,

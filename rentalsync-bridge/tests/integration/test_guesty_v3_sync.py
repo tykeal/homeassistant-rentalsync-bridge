@@ -312,6 +312,24 @@ class TestIdentityVerification:
         assert (await v3.bookings())[v3.booking_id].status == "confirmed"
 
 
+class TestInterimAbsence:
+    """Absent reservations are never retired before US2's by-ID check."""
+
+    async def test_absent_reservation_is_kept(
+        self, v3: _Fixture, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """A stored stay missing from the search stays published."""
+        await v3.setup()
+        missing = guesty_transport.payloads.new_id("res")
+        await v3.store(pms_booking_id=f"{missing}::{v3.listing.pms_id}")
+
+        await v3.sync()
+
+        bookings = await v3.bookings()
+        assert bookings[f"{missing}::{v3.listing.pms_id}"].status == "confirmed"
+        assert bookings[v3.booking_id].status == "confirmed"
+
+
 def _events(feed: str) -> dict[str, dict[str, Any]]:
     """Index a rendered feed's events by UID."""
     from icalendar import Calendar
