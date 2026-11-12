@@ -58,7 +58,7 @@ Follow constitution Principle V:
   - every V3 status
 
   Follow contracts/guesty-v3-search.md, contracts/guesty-v3-by-ids.md and contracts/guesty-guests-crud.md. Values must be synthetic, because the `check-fixture-pii` hook scans them. Helpers live in `conftest.py`, never in a non-`test_*.py` module under `tests/`, because the `name-tests-test --pytest-test-first` hook rejects such modules.
-- [ ] T002 Create a counting fake Guesty transport as a fixture `guesty_transport` in tests/conftest.py.
+- [x] T002 Create a counting fake Guesty transport as a fixture `guesty_transport` in tests/conftest.py.
   - Build it on `httpx.MockTransport`. It routes listings, legacy `/v1/reservations`, `/v1/reservations-v3/search`, `/v1/reservations-v3?reservationIds=`, `/v1/reservations-v3/{id}/custom-fields`, `/v1/guests/{id}` and `/v1/guests-crud/{id}`.
   - It records every request (path and parsed query) and counts per resource.
   - It applies `filter[listingId][in]` (matching the **first** segment's `listingId` or `parentListingId`, as Guesty documents for `unitId`/`unitTypeId`), `filter[checkOut][gte]`/`filter[checkIn][lte]` and `sort=_id`/`skip`/`limit` server-side, so the residual gap and narrowing are observable (FR-015, FR-016).
