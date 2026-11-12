@@ -319,7 +319,7 @@ Follow constitution Principle V:
 
 ### Tests for User Story 3 (write first, confirm they fail)
 
-- [ ] T039 [P] [US3] Write unit tests in tests/unit/test_guesty_v3_source.py for attribution and intervals (research R6):
+- [x] T039 [P] [US3] Write unit tests in tests/unit/test_guesty_v3_source.py for attribution and intervals (research R6):
   - assigned single unit → `{rid}::{unit}` (US3-1)
   - unassigned parent → listing-only (US3-2, FR-019)
   - move from another tracked listing (first segment in tracked listing X, later segment in tracked listing Y) → captured for Y, with only Y's dates (US3-3)
