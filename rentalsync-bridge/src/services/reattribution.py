@@ -35,8 +35,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 GUEST_SOURCE_ID_KEY = "_guest_source_id"
+GUEST_NAME_KEY = "_guest_name"
+CHANGE_KEY_KEY = "_change_key"
 _GUEST_KEYS = frozenset(
-    {"guest_phone", "guest_email", "guest_phone_last4", GUEST_SOURCE_ID_KEY}
+    {
+        "guest_phone",
+        "guest_email",
+        "guest_phone_last4",
+        GUEST_SOURCE_ID_KEY,
+        GUEST_NAME_KEY,
+    }
 )
 _PHONE_LAST_DIGITS = 4
 
@@ -149,6 +157,8 @@ class _Guests:
             data: dict[str, Any] = {}
             if guest is not None:
                 data[GUEST_SOURCE_ID_KEY] = guest_id
+                if guest.full_name:
+                    data[GUEST_NAME_KEY] = guest.full_name
                 last4 = _phone_last4(guest.phone)
                 if last4:
                     data["guest_phone_last4"] = last4
@@ -309,7 +319,11 @@ def apply_row(update: RowUpdate) -> bool:
     booking.status = update.status
     if update.guest is not None:
         guest = update.guest
-        exported = {k: v for k, v in guest.data.items() if k != GUEST_SOURCE_ID_KEY}
+        exported = {
+            k: v
+            for k, v in guest.data.items()
+            if k not in (GUEST_SOURCE_ID_KEY, GUEST_NAME_KEY)
+        }
         custom = {
             k: v for k, v in (booking.custom_data or {}).items() if k not in _GUEST_KEYS
         }
@@ -328,6 +342,12 @@ def apply_row(update: RowUpdate) -> bool:
             }
         booking.guest_name = guest.name
         booking.guest_phone_last4 = guest.data.get("guest_phone_last4")
+    if booking.enrichment_data and CHANGE_KEY_KEY in booking.enrichment_data:
+        # The stored values are carried forward, not a fresh read of this
+        # reservation: the next search must enrich it again (research R9).
+        booking.enrichment_data = {
+            k: v for k, v in booking.enrichment_data.items() if k != CHANGE_KEY_KEY
+        }
     booking.last_fetched_at = datetime.now(UTC)
     after = (
         booking.check_in_date,

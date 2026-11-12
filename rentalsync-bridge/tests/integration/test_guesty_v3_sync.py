@@ -635,8 +635,17 @@ class TestReattribution:
     async def test_reassigned_guest_publishes_only_the_new_guest(
         self, moved: _Moved, guesty_transport: GuestyFakeTransport
     ) -> None:
-        """No previous-guest contact or last-4; one lookup (FR-031)."""
-        await moved.store()
+        """No previous-guest contact, last-4 or name; one lookup (FR-031)."""
+        await moved.store(
+            enrichment_data={
+                DOOR_CODE: "4321",
+                "guest_phone": "+15555550100",
+                "guest_phone_last4": "0100",
+                "_guest_source_id": moved.guest_id,
+                "_guest_name": "Synthetic Guest",
+                "_change_key": "stale",
+            }
+        )
         new_guest = moved.p.new_id("gst")
         guesty_transport.guests[new_guest] = moved.p.guests_crud_body(
             new_guest, full_name="Synthetic Other", phone="+15555550199"
@@ -652,6 +661,8 @@ class TestReattribution:
         assert "0100" not in str(booking.custom_data)
         assert "0100" not in str(booking.enrichment_data)
         assert booking.enrichment_data["_guest_source_id"] == new_guest
+        assert booking.enrichment_data["_guest_name"] == "Synthetic Other"
+        assert "_change_key" not in booking.enrichment_data
         assert _calls(guesty_transport, new_guest) == 1
 
     async def test_reassigned_guest_lookup_failure_publishes_nothing(
@@ -1548,3 +1559,311 @@ class TestUnknownStatus:
         assert await v3.feed() == feed_before
         await v3.session.refresh(v3.listing)
         assert v3.listing.last_sync_error
+
+
+BOOKKEEPING = ("_guest_source_id", "_guest_name", "_change_key")
+
+# A stay wholly outside the freshness window (starts > 30 days ahead).
+FAR = {"check_in": 45, "check_out": 48}
+
+
+class TestEnrichmentReuse:
+    """Change-key reuse of stored enrichment (T049, research R9)."""
+
+    @staticmethod
+    async def _steady(v3: _Fixture, **item: Any) -> None:
+        """Sync a far stay with an inline door code once, then reset counts."""
+        p = v3.transport.payloads
+        item.setdefault("custom_fields", p.custom_fields({DOOR_CODE: "4242"}))
+        await v3.setup(**{**FAR, **item})
+        await v3.sync()
+        v3.transport.counts.clear()
+
+    async def test_unchanged_far_stay_reuses_everything(self, v3: _Fixture) -> None:
+        """No guest or custom-field call; name, contact and code are kept."""
+        await self._steady(v3)
+        stored = (await v3.bookings())[v3.booking_id]
+        assert stored.enrichment_data["_change_key"]
+        assert stored.enrichment_data["_guest_name"] == "Synthetic Guest"
+        assert stored.enrichment_data["_guest_source_id"] == v3.item["guestId"]
+
+        await v3.sync()
+
+        row = (await v3.bookings())[v3.booking_id]
+        assert v3.transport.counts["guests_crud"] == 0
+        assert v3.transport.counts["custom_fields"] == 0
+        assert row.guest_name == "Synthetic Guest"
+        assert row.guest_phone_last4 == "0100"
+        assert row.custom_data[DOOR_CODE] == "4242"
+        assert (
+            row.enrichment_data["_change_key"] == stored.enrichment_data["_change_key"]
+        )
+
+    async def test_far_stay_without_guest_reuses(self, v3: _Fixture) -> None:
+        """A reservation with no guest needs no guest provenance."""
+        await self._steady(v3)
+        _reissue(v3, **FAR, custom_fields=v3.item["customFields"])
+        del v3.transport.v3_items[0]["guestId"]
+        await v3.sync()
+        v3.transport.counts.clear()
+
+        await v3.sync()
+
+        assert v3.transport.counts["guests_crud"] == 0
+        assert v3.transport.counts["custom_fields"] == 0
+
+    @pytest.mark.parametrize(
+        "change",
+        ["guest", "custom_field", "notes", "dates"],
+    )
+    async def test_any_change_refetches(self, v3: _Fixture, change: str) -> None:
+        """A changed change key forces a fresh guest lookup."""
+        p = v3.transport.payloads
+        await self._steady(v3)
+        guest_id = p.new_id("gst") if change == "guest" else v3.item["guestId"]
+        v3.transport.guests[guest_id] = p.guests_crud_body(
+            guest_id, phone="+15555550177"
+        )
+        changes: dict[str, Any] = {
+            **FAR,
+            "guest_id": guest_id,
+            "custom_fields": v3.item["customFields"],
+        }
+        if change == "custom_field":
+            changes["custom_fields"] = p.custom_fields({DOOR_CODE: "5151"})
+        elif change == "notes":
+            changes["notes"] = {"other": "Changed synthetic note"}
+        elif change == "dates":
+            changes.update(check_in=46, check_out=49)
+        _reissue(v3, **changes)
+
+        await v3.sync()
+
+        row = (await v3.bookings())[v3.booking_id]
+        assert v3.transport.counts["guests_crud"] == 1
+        assert row.guest_phone_last4 == "0177"
+        expected = "5151" if change == "custom_field" else "4242"
+        assert row.custom_data[DOOR_CODE] == expected
+
+    async def test_null_enrichment_is_never_reused(self, v3: _Fixture) -> None:
+        """A row with no stored enrichment is enriched, however far away."""
+        await v3.setup(**FAR)
+        await v3.store(check_in=45, check_out=48, enrichment_data=None)
+
+        await v3.sync()
+
+        assert v3.transport.counts["guests_crud"] == 1
+
+    async def test_missing_guest_name_is_not_reused(self, v3: _Fixture) -> None:
+        """Stored contact without a recorded name forces a lookup."""
+        await self._steady(v3)
+        row = (await v3.bookings())[v3.booking_id]
+        data = dict(row.enrichment_data)
+        del data["_guest_name"]
+        row.enrichment_data = data
+        await v3.session.commit()
+
+        await v3.sync()
+
+        assert v3.transport.counts["guests_crud"] == 1
+
+    async def test_stay_in_the_freshness_window_is_never_reused(
+        self, v3: _Fixture
+    ) -> None:
+        """Every sync re-reads a near stay (US5-3, FR-030)."""
+        p = v3.transport.payloads
+        await self._steady(v3, check_in=20, check_out=23)
+
+        for _ in range(2):
+            await v3.sync()
+
+        assert v3.transport.counts["guests_crud"] == 2
+        guest_id = v3.item["guestId"]
+        v3.transport.guests[guest_id] = p.guests_crud_body(
+            guest_id, phone="+15555550188"
+        )
+        await v3.sync()
+        assert (await v3.bookings())[v3.booking_id].guest_phone_last4 == "0188"
+
+    async def test_held_stay_is_judged_on_its_stored_dates(self, v3: _Fixture) -> None:
+        """Frozen near dates keep refreshing while in-flight dates are far."""
+        p = v3.transport.payloads
+        await self._steady(v3, check_in=3, check_out=6)
+        held = {
+            "status": "alteration",
+            "check_in": 60,
+            "check_out": 63,
+            "custom_fields": v3.item["customFields"],
+        }
+        _reissue(v3, **held)
+        await v3.sync()
+        v3.transport.counts.clear()
+        guest_id = v3.item["guestId"]
+        v3.transport.guests[guest_id] = p.guests_crud_body(
+            guest_id, phone="+15555550166"
+        )
+
+        await v3.sync()
+
+        row = (await v3.bookings())[v3.booking_id]
+        assert row.status == "confirmed"
+        assert _as_utc(row.check_in_date) == p.check_in_at(3)
+        assert v3.transport.counts["guests_crud"] == 1
+        assert row.guest_phone_last4 == "0166"
+
+    @pytest.mark.parametrize("failure", ["guest", "custom_field"])
+    async def test_failed_lookup_persists_no_change_key(
+        self, v3: _Fixture, failure: str
+    ) -> None:
+        """The next sync retries a failed enrichment."""
+        await v3.setup(**FAR)
+        await v3.store(
+            check_in=45,
+            check_out=48,
+            custom_data={DOOR_CODE: "1234"},
+            enrichment_data={DOOR_CODE: "1234"},
+        )
+        v3.transport.custom_fields[v3.item["reservationId"]] = [
+            {"fieldId": DOOR_CODE, "value": "1234"}
+        ]
+        resource = "guests_crud" if failure == "guest" else "custom_fields"
+        v3.transport.fail(resource, 503)
+
+        await v3.sync()
+
+        row = (await v3.bookings())[v3.booking_id]
+        assert "_change_key" not in row.enrichment_data
+        assert row.custom_data[DOOR_CODE] == "1234"
+        v3.transport.counts.clear()
+
+        await v3.sync()
+
+        assert v3.transport.counts["guests_crud"] == 1
+        row = (await v3.bookings())[v3.booking_id]
+        assert row.enrichment_data["_change_key"]
+
+    async def test_bookkeeping_keys_never_reach_the_export(self, v3: _Fixture) -> None:
+        """Neither custom data, discovered fields nor descriptions carry them."""
+        from src.models.custom_field import CustomField
+        from src.repositories.available_field_repository import (
+            AvailableFieldRepository,
+        )
+        from src.services.calendar_service import CalendarService
+
+        await self._steady(v3, check_in=2, check_out=5)
+        await v3.sync()
+
+        row = (await v3.bookings())[v3.booking_id]
+        assert set(BOOKKEEPING) <= set(row.enrichment_data)
+        assert not set(BOOKKEEPING) & set(row.custom_data)
+        fields = await AvailableFieldRepository(v3.session).get_for_listing(
+            v3.listing.id
+        )
+        assert not set(BOOKKEEPING) & {f.field_key for f in fields}
+        enabled = [
+            CustomField(
+                listing_id=v3.listing.id,
+                field_name=key,
+                display_label=key,
+                enabled=True,
+                sort_order=n,
+            )
+            for n, key in enumerate((*BOOKKEEPING, DOOR_CODE))
+        ]
+        feed = CalendarService(cache=CalendarCache(ttl_seconds=0)).generate_ical(
+            v3.listing, [row], custom_fields=enabled
+        )
+        assert "4242" in feed
+        for key in BOOKKEEPING:
+            assert key not in feed
+        assert row.enrichment_data["_change_key"] not in feed
+
+
+class TestGuestLookupFailure:
+    """A failed guest lookup outside a hold (T050, FR-031, FR-032)."""
+
+    @staticmethod
+    async def _stored(
+        v3: _Fixture, *, reassigned: bool, status: int = 503, **extra: Any
+    ) -> None:
+        """Store last-good contact and fail the next lookup with ``status``.
+
+        The contact belongs to the stay's guest, or to another guest when
+        ``reassigned``.
+        """
+        await v3.setup()
+        p = v3.transport.payloads
+        contact = {
+            "guest_phone": "+15555550100",
+            "guest_phone_last4": "0100",
+            "_guest_source_id": p.new_id("gst") if reassigned else v3.item["guestId"],
+            **extra,
+        }
+        await v3.store(
+            custom_data={"guest_phone_last4": "0100"},
+            enrichment_data=contact,
+            guest_phone_last4="0100",
+        )
+        v3.transport.fail("guests_crud", status)
+
+    @pytest.mark.parametrize("status", [503, 404])
+    async def test_reassignment_publishes_no_previous_contact(
+        self, v3: _Fixture, status: int
+    ) -> None:
+        """The previous guest's last-4 and name are never published."""
+        await self._stored(
+            v3, reassigned=True, status=status, _guest_name="Stored Name"
+        )
+
+        await v3.sync()
+
+        row = (await v3.bookings())[v3.booking_id]
+        assert row.status == "confirmed"
+        assert row.guest_phone_last4 is None
+        assert row.guest_name is None
+        assert "0100" not in str(row.custom_data)
+        assert "0100" not in str(row.enrichment_data)
+        assert "Stored Name" not in str(row.enrichment_data)
+
+    @pytest.mark.parametrize("status", [503, 404])
+    async def test_same_guest_keeps_contact_and_recorded_name(
+        self, v3: _Fixture, status: int
+    ) -> None:
+        """Last-good contact and ``_guest_name`` survive (US5-4)."""
+        await self._stored(
+            v3, reassigned=False, status=status, _guest_name="Stored Name"
+        )
+        guest_id = v3.item["guestId"]
+
+        await v3.sync()
+
+        row = (await v3.bookings())[v3.booking_id]
+        assert row.guest_phone_last4 == "0100"
+        assert row.guest_name == "Stored Name"
+        assert row.enrichment_data["_guest_name"] == "Stored Name"
+        assert row.enrichment_data["_guest_source_id"] == guest_id
+        assert "_change_key" not in row.enrichment_data
+
+    async def test_previous_release_row_keeps_its_guest_name(
+        self, v3: _Fixture
+    ) -> None:
+        """Without ``_guest_name`` a matching source keeps the stored name."""
+        await self._stored(v3, reassigned=False)
+
+        await v3.sync()
+
+        row = (await v3.bookings())[v3.booking_id]
+        assert row.guest_name == "Synthetic Guest"
+        assert row.guest_phone_last4 == "0100"
+
+    async def test_previous_release_row_without_source_uses_placeholder(
+        self, v3: _Fixture
+    ) -> None:
+        """No matching source: the stored name is not trusted (US5-5)."""
+        await self._stored(v3, reassigned=True)
+
+        await v3.sync()
+
+        row = (await v3.bookings())[v3.booking_id]
+        assert row.guest_name is None
+        assert row.guest_phone_last4 is None

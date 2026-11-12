@@ -404,23 +404,23 @@ Follow constitution Principle V:
 
 ### Tests for User Story 5 (write first, confirm they fail)
 
-- [ ] T048 [P] [US5] Write unit tests in tests/unit/test_guesty_v3_source.py for `change_key` (research R9):
+- [x] T048 [P] [US5] Write unit tests in tests/unit/test_guesty_v3_source.py for `change_key` (research R9):
   - it is deterministic across key order
   - it changes on each included field: status, guestId, dates, stay segments, customFields, notes, source, confirmationCode
   - it is unchanged by ignored fields such as financial blocks
-- [ ] T049 [P] [US5] Write integration tests in tests/integration/test_guesty_v3_sync.py for reuse (research R9):
+- [x] T049 [P] [US5] Write integration tests in tests/integration/test_guesty_v3_sync.py for reuse (research R9):
   - reuse only when all R9 conditions hold
   - no reuse when `enrichment_data` is NULL
   - no reuse inside the freshness window (US5-3)
   - no reuse when any stored booking is inside the freshness window on its frozen dates during an alteration hold
   - `_change_key` is not persisted after a failed lookup
   - the bookkeeping keys `_guest_source_id`, `_guest_name` and `_change_key` never reach `custom_data` or the description
-- [ ] T050 [US5] Write integration tests in tests/integration/test_guesty_v3_sync.py for guest failure (FR-031, FR-032, US5-4, US5-5):
+- [x] T050 [US5] Write integration tests in tests/integration/test_guesty_v3_sync.py for guest failure (FR-031, FR-032, US5-4, US5-5):
   - after a reassignment with a failed lookup, no previous-guest last-4 is published
   - a failed lookup for the same guest keeps last-good contact and `_guest_name`
   - on a first-V3-sync failure for a row written by the previous release (no `_guest_name`), a matching `_guest_source_id` keeps `Booking.guest_name`
   - with a non-matching source, the placeholder is used
-- [ ] T051 [US5] Write the budget integration test in tests/integration/test_guesty_v3_budget.py (new):
+- [x] T051 [US5] Write the budget integration test in tests/integration/test_guesty_v3_budget.py (new):
   - run the reference account in legacy and V3 modes over two cycles and assert `v3_calls ≤ legacy_calls` (SC-006)
   - assert that reservation pages per cycle equal `ceil(in_window/100)`, independent of out-of-window history size (SC-007)
   - assert one combined search per cycle, and one page sequence per chunk
@@ -431,8 +431,8 @@ Follow constitution Principle V:
 
 ### Implementation for User Story 5
 
-- [ ] T052 [US5] Implement `change_key` computation in the V3 mapper in src/providers/guesty/reservations_v3.py. This makes T048 pass.
-- [ ] T053 [US5] Implement change-key reuse in src/services/sync_service.py:
+- [x] T052 [US5] Implement `change_key` computation in the V3 mapper in src/providers/guesty/reservations_v3.py. This makes T048 pass.
+- [x] T053 [US5] Implement change-key reuse in src/services/sync_service.py:
   - `BOOKKEEPING_KEYS` and the `_exportable` filter
   - `_guest_name` persistence
   - `_change_key` persistence, written only on full success
@@ -440,7 +440,7 @@ Follow constitution Principle V:
   - `_StoredEnrichment.guest_name` for the upgrade name bootstrap
 
   This makes T049 and T050 pass.
-- [ ] T054 [US5] Add per-cycle request counters by resource to `GuestyProvider` in src/providers/guesty/service.py. Log one INFO line per cycle (`search=… by_ids=… guests=… custom_fields=… listings=…`) when the provider closes (FR-043). Then make T051 pass, tuning only within the R9 and R12 design.
+- [x] T054 [US5] Add per-cycle request counters by resource to `GuestyProvider` in src/providers/guesty/service.py. Log one INFO line per cycle (`search=… by_ids=… guests=… custom_fields=… listings=…`) when the provider closes (FR-043). Then make T051 pass, tuning only within the R9 and R12 design.
 
 **Checkpoint**: SC-006 and SC-007 are enforced by tests, and the #129 invariants are preserved.
 

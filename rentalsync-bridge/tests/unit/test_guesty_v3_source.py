@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for the Guesty Reservations V3 source (spec 004, US1-US4)."""
+"""Unit tests for the Guesty Reservations V3 source (spec 004, US1-US5)."""
 
+import copy
 import itertools
 import logging
 from datetime import UTC, date, datetime
@@ -21,7 +22,7 @@ from src.providers.guesty.v3_by_ids import (
     map_by_ids_item,
     normalise_by_ids_item,
 )
-from src.providers.guesty.v3_mapping import map_search_item
+from src.providers.guesty.v3_mapping import change_key, map_search_item
 
 from tests.conftest import GuestyFakeTransport, GuestyV3Payloads
 
@@ -1161,3 +1162,132 @@ class TestStatusPolicy:
             await self._fetch(guesty_transport, *majority)
         assert len((await self._fetch(guesty_transport, *half))[0]) == 4
         assert len((await self._fetch(guesty_transport, *small))[0]) == 3
+
+
+def _rebuilt(item: dict[str, Any]) -> dict[str, Any]:
+    """Return *item* with every nested key order reversed."""
+
+    def reverse(value: Any) -> Any:
+        """Rebuild *value* with reversed dict key order."""
+        if isinstance(value, dict):
+            return {k: reverse(value[k]) for k in reversed(list(value))}
+        if isinstance(value, list):
+            return [reverse(v) for v in value]
+        return value
+
+    rebuilt: dict[str, Any] = reverse(item)
+    return rebuilt
+
+
+class TestChangeKey:
+    """The enrichment reuse key (T048, research R9)."""
+
+    @staticmethod
+    def _item(p: GuestyV3Payloads) -> dict[str, Any]:
+        """Build a multi-unit item with two inline custom fields."""
+        unit, parent = p.new_id("lst"), p.new_id("lst")
+        return p.search_item(
+            unit,
+            parent_listing_id=parent,
+            custom_fields=p.custom_fields({"door_code": "1234", "gate": "77"}),
+        )
+
+    def test_is_hex_sha256_and_stable_across_key_order(
+        self, guesty_v3_payloads: GuestyV3Payloads
+    ) -> None:
+        """Canonical JSON: key order, and custom-field order, do not matter."""
+        item = self._item(guesty_v3_payloads)
+        reordered = _rebuilt(item)
+        reordered["customFields"] = list(reversed(reordered["customFields"]))
+
+        key = change_key(item)
+
+        assert len(key) == 64
+        assert int(key, 16) >= 0
+        assert change_key(reordered) == key
+        assert change_key(copy.deepcopy(item)) == key
+
+    @pytest.mark.parametrize(
+        ("field", "mutate"),
+        [
+            ("status", lambda i: i.update(status="canceled")),
+            ("guestId", lambda i: i.update(guestId="6630" + "f" * 20)),
+            ("checkIn", lambda i: i.update(checkIn="2030-01-01T15:00:00.000Z")),
+            ("checkOut", lambda i: i.update(checkOut="2030-01-09T10:00:00.000Z")),
+            (
+                "stay.listingId",
+                lambda i: i["stay"][0].update(listingId="6640" + "e" * 20),
+            ),
+            (
+                "stay.parentListingId",
+                lambda i: i["stay"][0].update(parentListingId="6640" + "d" * 20),
+            ),
+            (
+                "stay.checkIn",
+                lambda i: i["stay"][0].update(checkIn="2030-01-02T15:00:00.000Z"),
+            ),
+            (
+                "stay.checkOut",
+                lambda i: i["stay"][0].update(checkOut="2030-01-08T10:00:00.000Z"),
+            ),
+            ("stay.guestsCount", lambda i: i["stay"][0].update(guestsCount=5)),
+            ("stay.added", lambda i: i["stay"].append(dict(i["stay"][0]))),
+            ("customFields.value", lambda i: i["customFields"][0].update(value="9")),
+            ("customFields.removed", lambda i: i.pop("customFields")),
+            ("notes", lambda i: i["notes"].update(other="Changed synthetic note")),
+            ("source", lambda i: i.update(source="airbnb")),
+            ("confirmationCode", lambda i: i.update(confirmationCode="SYN-OTHER")),
+        ],
+    )
+    def test_changes_with_each_included_field(
+        self, guesty_v3_payloads: GuestyV3Payloads, field: str, mutate: Any
+    ) -> None:
+        """Every field the sync consumes feeds the key."""
+        item = self._item(guesty_v3_payloads)
+        changed = copy.deepcopy(item)
+        mutate(changed)
+
+        assert change_key(changed) != change_key(item), field
+
+    @pytest.mark.parametrize(
+        "mutate",
+        [
+            lambda i: i.update(money={"totalPaid": 100, "currency": "USD"}),
+            lambda i: i.update(financials={"balanceDue": 5}),
+            lambda i: i.update(createdAt="2026-01-01T00:00:00.000Z"),
+            lambda i: i.update(checkInDateLocalized="2030-01-01"),
+            lambda i: i["stay"][0].update(checkInDateLocalized="2030-01-01"),
+            lambda i: i["stay"][0].update(unitTypeName="Synthetic type"),
+        ],
+        ids=[
+            "money",
+            "financials",
+            "createdAt",
+            "localized",
+            "stay-localized",
+            "stay-extra",
+        ],
+    )
+    def test_ignores_other_fields(
+        self, guesty_v3_payloads: GuestyV3Payloads, mutate: Any
+    ) -> None:
+        """Financial blocks and other unconsumed fields do not change it."""
+        item = self._item(guesty_v3_payloads)
+        changed = copy.deepcopy(item)
+        mutate(changed)
+
+        assert change_key(changed) == change_key(item)
+
+    async def test_mapped_reservation_carries_it(
+        self, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """The search mapper sets ``change_key`` from the raw item."""
+        p = guesty_transport.payloads
+        listing = p.new_id("lst")
+        guesty_transport.add_listing(listing)
+        item = p.search_item(listing)
+        guesty_transport.v3_items = [item]
+
+        reservation = await _fetch_one(guesty_transport, listing)
+
+        assert reservation.change_key == change_key(item)

@@ -4,6 +4,8 @@
 
 import asyncio
 import logging
+import re
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -63,6 +65,18 @@ MAX_BACKOFF = 30.0
 ACCOUNT_URL = "/v1/accounts/me"
 CUSTOM_FIELD_DEFINITIONS_URL = "/v1/accounts/{account_id}/custom-fields"
 CUSTOM_FIELD_OBJECT_RESERVATION = "reservation"
+
+# Per-cycle request accounting (FR-043): every request attempt, retries
+# included, is counted under the first resource whose path pattern matches;
+# anything unmatched (account lookups, definitions) counts as ``other``.
+REQUEST_RESOURCES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("search", re.compile(r"/v1/reservations(-v3/search)?")),
+    ("by_ids", re.compile(r"/v1/reservations-v3")),
+    ("guests", re.compile(r"/v1/guests(-crud)?/[^/]+")),
+    ("custom_fields", re.compile(r"/v1/reservations-v3/[^/]+/custom-fields")),
+    ("listings", re.compile(r"/v1/listings(/[^/]+)?")),
+)
+REQUEST_RESOURCE_OTHER = "other"
 
 # A definition scoped to ``both`` applies to listings *and* reservations, so
 # it carries a label a reservation value can need.  Dropping it was why some
@@ -144,6 +158,7 @@ class GuestyProvider(PMSProvider):
         """
         self._http_client = http_client
         self._owns_client = http_client is None
+        self._request_counts: Counter[str] = Counter()
 
         self._token_manager: GuestyTokenManager | None
         if token_manager is not None:
@@ -184,7 +199,13 @@ class GuestyProvider(PMSProvider):
         )
 
     async def aclose(self) -> None:
-        """Close the owned httpx client, if any."""
+        """Log this cycle's request counts, then close the owned client.
+
+        The scheduler builds one provider per sync cycle and closes it at
+        the end, so one INFO line summarises each cycle's request budget
+        (FR-043).  The counters restart afterwards.
+        """
+        self.log_request_counts()
         if self._owns_client and self._http_client is not None:
             await self._http_client.aclose()
             self._http_client = None
@@ -196,6 +217,29 @@ class GuestyProvider(PMSProvider):
     async def __aexit__(self, *args: object) -> None:
         """Exit the async context manager."""
         await self.aclose()
+
+    def log_request_counts(self) -> None:
+        """Log the requests made since the last report, then reset them."""
+        if not self._request_counts:
+            return
+        summary = " ".join(
+            f"{name}={self._request_counts[name]}"
+            for name in (
+                *(name for name, _ in REQUEST_RESOURCES),
+                REQUEST_RESOURCE_OTHER,
+            )
+        )
+        logger.info("Guesty requests this cycle: %s", summary)
+        self._request_counts.clear()
+
+    @staticmethod
+    def _request_resource(url: str) -> str:
+        """Classify a request URL into its accounting resource."""
+        path = httpx.URL(url).path
+        for name, pattern in REQUEST_RESOURCES:
+            if pattern.fullmatch(path):
+                return name
+        return REQUEST_RESOURCE_OTHER
 
     # -- helpers ---------------------------------------------------------------
 
@@ -261,7 +305,9 @@ class GuestyProvider(PMSProvider):
         headers = await self._get_auth_headers()
         backoff = INITIAL_BACKOFF
 
+        resource = self._request_resource(url)
         for attempt in range(MAX_RETRIES + 1):
+            self._request_counts[resource] += 1
             try:
                 response = await client.request(
                     method,
