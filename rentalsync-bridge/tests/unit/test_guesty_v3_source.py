@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for the Guesty Reservations V3 source (spec 004, US1-US3)."""
 
+import itertools
 import logging
 from datetime import UTC, date, datetime
 from typing import Any
@@ -778,6 +779,27 @@ class TestAttribution:
             ),
         )
         assert _ids(rid, reservation) == [f"{rid}::{unit}"]
+
+    async def test_chain_of_adjacent_segments_merges(
+        self, guesty_transport: GuestyFakeTransport, property_: dict[str, str]
+    ) -> None:
+        """Every back-to-back segment joins the same interval, not ``#2``."""
+        p = guesty_transport.payloads
+        unit, parent = property_["a"], property_["parent"]
+        bounds = [p.check_in_at(3), p.check_in_at(5), p.check_in_at(7)]
+        item = p.search_item(
+            stay=[
+                p.stay_segment(unit, start, end, parent_listing_id=parent)
+                for start, end in itertools.pairwise([*bounds, p.check_out_at(9)])
+            ]
+        )
+        guesty_transport.v3_items = [item]
+
+        reservation = await _fetch_one(guesty_transport, parent)
+
+        rid = item["reservationId"]
+        assert _ids(rid, reservation) == [f"{rid}::{unit}"]
+        assert _spans(reservation) == [(p.check_in_at(3), p.check_out_at(9))]
 
     async def test_same_room_gap_is_a_second_interval(
         self, guesty_transport: GuestyFakeTransport, property_: dict[str, str]
