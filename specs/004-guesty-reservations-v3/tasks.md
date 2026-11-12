@@ -287,7 +287,7 @@ Follow constitution Principle V:
 - [x] T034 [P] [US2] Write integration tests in tests/integration/test_in_progress_reservations.py, extended to V3 mode (SC-004, US2-3):
   - a stay that checked in 400 days ago and checks out in the future is in the snapshot and stays exported across syncs
   - a test pins `V3_LOOKBACK_DAYS >= OLD_BOOKING_RETENTION_DAYS + 1`
-- [ ] T035 [US2] Write an integration test in tests/integration/test_guesty_v3_sync.py for SC-003: for every R4 fault injected mid-search, in either chunk, no booking is retired and the cached feed is unchanged.
+- [x] T035 [US2] Write an integration test in tests/integration/test_guesty_v3_sync.py for SC-003: for every R4 fault injected mid-search, in either chunk, no booking is retired and the cached feed is unchanged.
 
 ### Implementation for User Story 2
 
