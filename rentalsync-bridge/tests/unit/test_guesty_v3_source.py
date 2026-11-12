@@ -1557,3 +1557,28 @@ class TestRetiredDescriptionFields:
         assert set(retired_fields_for(pms_type, api)) == (
             self.MONEY if retired else set()
         )
+
+
+class TestV3DiagnosticStatuses:
+    """DEBUG diagnostics log only known status values (FR-043)."""
+
+    def test_unknown_or_malformed_status_is_logged_as_unknown(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test a status that is not a known enum value is never echoed."""
+        from src.providers.guesty.v3_diagnostics import log_search_result
+
+        stay = [{"listingId": "lst-1"}]
+        items = [
+            {"reservationId": "r1", "status": "Confirmed", "stay": stay},
+            {"reservationId": "r2", "status": {"guest": "Sentinel Name"}, "stay": stay},
+            {"reservationId": "r3", "status": "sentinel-free-text", "stay": stay},
+        ]
+        with caplog.at_level(logging.DEBUG, logger="src.providers.guesty"):
+            log_search_result(items, 0)
+
+        assert "Sentinel" not in caplog.text
+        assert "sentinel-free-text" not in caplog.text
+        assert "statuses={'confirmed': 1, 'unknown': 2}" in caplog.text
+        assert "Guesty V3 reservation r2: status=unknown" in caplog.text
+        assert "Guesty V3 reservation r1: status=confirmed" in caplog.text
