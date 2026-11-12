@@ -35,6 +35,11 @@ from src.services.identity_check import (
     CONFIRMATION_CODE_KEY,
     verify_reservation_identity,
 )
+from src.services.reattribution import (
+    Reattribution,
+    apply_row,
+    plan_reattributions,
+)
 from src.utils.stay_time import get_timezone, is_stay_in_progress
 
 logger = logging.getLogger(__name__)
@@ -211,6 +216,14 @@ class SyncService:
             # snapshot before anything is written, so an inconsistent
             # answer fails this listing with the stored bookings untouched.
             absence = await self._confirm_absences(provider, listing, reservations)
+            reattributions = await plan_reattributions(
+                rows=await self._booking_repo.get_for_listing(listing.id),
+                absence=absence,
+                tz=get_timezone(listing.timezone),
+                normalise_status=self._normalize_booking_status,
+                get_guest=provider.get_guest,
+                listing_pms_id=listing.pms_id,
+            )
 
             # Resolve guest details and provider custom fields, reusing
             # stored values for unchanged out-of-window reservations.
@@ -224,6 +237,7 @@ class SyncService:
                 enrichment,
                 await self._resolve_field_labels(provider),
                 absence=absence,
+                reattributions=reattributions,
             )
 
             # Update sync status on success.  This has to be committed here
@@ -442,9 +456,15 @@ class SyncService:
             if getattr(result, "verdict", None) is AbsenceVerdict.INCONSISTENT
         )
         if inconsistent:
+            details = "; ".join(
+                f"{rid}: {results[rid].detail}"
+                for rid in inconsistent
+                if getattr(results[rid], "detail", "")
+            )
             msg = (
                 f"Provider reported an inconsistent state for reservation(s) "
                 f"{', '.join(inconsistent)}; no bookings were changed"
+                + (f" ({details})" if details else "")
             )
             raise PMSProviderError(msg)
         return results
@@ -499,6 +519,7 @@ class SyncService:
         field_labels: dict[str, str] | None = None,
         *,
         absence: dict[str, AbsenceResult],
+        reattributions: dict[str, Reattribution] | None = None,
     ) -> dict[str, int]:
         """Process reservations and update local bookings.
 
@@ -510,6 +531,8 @@ class SyncService:
             field_labels: Provider-supplied labels for custom field keys.
             absence: ``confirm_absent`` results by base reservation ID; an
                 absent booking is retired only when confirmed absent.
+            reattributions: Re-attributed reservations by ID; their kept
+                rows are updated and the others retire as room changes.
 
         Returns:
             Dict with counts: inserted, updated, cancelled.
@@ -565,6 +588,10 @@ class SyncService:
             counts["inserted"] += inserted
             counts["updated"] += updated
             seen_booking_ids.update(new_ids)
+
+        counts["updated"] += await self._apply_reattributions(
+            reattributions or {}, seen_booking_ids, seen_reservation_ids
+        )
 
         # Mark cancelled bookings (not in current fetch)
         # A booking is cancelled if neither its exact ID nor its base reservation ID
@@ -640,6 +667,34 @@ class SyncService:
         )
 
         return counts
+
+    async def _apply_reattributions(
+        self,
+        reattributions: dict[str, Reattribution],
+        seen_booking_ids: set[str],
+        seen_reservation_ids: set[str],
+    ) -> int:
+        """Update re-attributed reservations' kept rows and mark them seen.
+
+        The reservation ID is marked seen too, so the prune loop retires
+        its other rows as room changes.
+
+        Args:
+            reattributions: Re-attributed reservations by ID.
+            seen_booking_ids: Booking IDs to keep; extended in place.
+            seen_reservation_ids: Reservation IDs present; extended in place.
+
+        Returns:
+            The number of rows whose stored values changed.
+        """
+        updated = 0
+        for plan in reattributions.values():
+            seen_reservation_ids.add(plan.reservation_id)
+            for row in plan.rows:
+                seen_booking_ids.add(row.booking.pms_booking_id)
+                updated += apply_row(row)
+        await self._session.flush()
+        return updated
 
     async def _apply_cancellation(
         self,
