@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for the Guesty Reservations V3 source (spec 004, US1)."""
+"""Unit tests for the Guesty Reservations V3 source (spec 004, US1-US2)."""
 
 from datetime import UTC, date, datetime
 from typing import Any
@@ -13,8 +13,14 @@ from src.providers.base import (
 )
 from src.providers.guesty import reservations_v3, v3_search
 from src.providers.guesty.legacy_reservations import _resolve_room_id
+from src.providers.guesty.v3_by_ids import (
+    ambiguous_rooms,
+    map_by_ids_item,
+    normalise_by_ids_item,
+)
+from src.providers.guesty.v3_mapping import map_search_item
 
-from tests.conftest import GuestyFakeTransport
+from tests.conftest import GuestyFakeTransport, GuestyV3Payloads
 
 
 async def _fetch_one(transport: GuestyFakeTransport, listing_id: str) -> Any:
@@ -560,3 +566,157 @@ class TestRejectedSearch:
         with pytest.raises(PMSProviderError, match="status"):
             await provider.get_reservations(b)
         assert guesty_transport.counts["v3_search"] == 1
+
+
+def _shape(p: GuestyV3Payloads, kind: str) -> tuple[dict[str, Any], str, set[str]]:
+    """Return a search item, its owning scope root and unassigned parents."""
+    parent, unit_a, unit_b = p.new_id("lst"), p.new_id("lst"), p.new_id("lst")
+    if kind == "single":
+        return p.search_item(unit_a), unit_a, set()
+    if kind == "multi_unit_assigned":
+        return p.same_property_move(parent, unit_a, unit_b), parent, set()
+    if kind == "unassigned_parent":
+        return p.unassigned_parent(parent), parent, {parent}
+    return p.round_trip_move(parent, unit_a, unit_b), parent, set()
+
+
+class TestNormaliseByIds:
+    """By-IDs items normalise to the search shape (T032, FR-005)."""
+
+    @pytest.mark.parametrize(
+        "kind",
+        ["single", "multi_unit_assigned", "unassigned_parent", "round_trip"],
+    )
+    def test_same_identity_from_either_endpoint(
+        self, guesty_v3_payloads: GuestyV3Payloads, kind: str
+    ) -> None:
+        """Byte-identical IDs and rooms; by-IDs intervals carry dates only."""
+        item, root, unassigned = _shape(guesty_v3_payloads, kind)
+        scope = frozenset(
+            {root}
+            | {s["listingId"] for s in item["stay"]}
+            | {s.get("parentListingId") or root for s in item["stay"]}
+        )
+
+        searched = map_search_item(item, root, scope)
+        normalised = normalise_by_ids_item(
+            guesty_v3_payloads.as_by_ids(item, unassigned=unassigned)
+        )
+        assert normalised is not None
+        fetched = map_by_ids_item(normalised, root, scope)
+
+        assert searched is not None
+        assert fetched is not None
+        assert fetched.pms_booking_id == searched.pms_booking_id
+        assert [
+            (i.room_id, i.ordinal, i.booking_suffix, i.local_dates)
+            for i in fetched.intervals
+        ] == [
+            (i.room_id, i.ordinal, i.booking_suffix, i.local_dates)
+            for i in searched.intervals
+        ]
+        assert all(
+            i.check_in is None and i.check_out is None for i in fetched.intervals
+        )
+
+    def test_field_mapping(self, guesty_v3_payloads: GuestyV3Payloads) -> None:
+        """``_id``, ``unitId ?? unitTypeId`` and the parent only when it differs."""
+        p = guesty_v3_payloads
+        rid, parent, unit, single = (
+            p.new_id("res"),
+            p.new_id("lst"),
+            p.new_id("lst"),
+            p.new_id("lst"),
+        )
+        raw = p.by_ids_item(
+            rid,
+            [
+                p.by_ids_segment(single, "2026-01-01", "2026-01-03", unit_id=single),
+                p.by_ids_segment(parent, "2026-01-03", "2026-01-05", unit_id=unit),
+                p.by_ids_segment(parent, "2026-01-05", "2026-01-07"),
+            ],
+            status="confirmed",
+            guest_id="6630synthetic",
+        )
+
+        item = normalise_by_ids_item(raw)
+
+        assert item is not None
+        assert item["reservationId"] == rid
+        assert item["status"] == "confirmed"
+        assert item["guestId"] == "6630synthetic"
+        assert [(s["listingId"], s.get("parentListingId")) for s in item["stay"]] == [
+            (single, None),
+            (unit, parent),
+            (parent, None),
+        ]
+        assert [
+            (s["checkInDateLocalized"], s["checkOutDateLocalized"])
+            for s in item["stay"]
+        ] == [
+            ("2026-01-01", "2026-01-03"),
+            ("2026-01-03", "2026-01-05"),
+            ("2026-01-05", "2026-01-07"),
+        ]
+        assert all("checkIn" not in s and "checkOut" not in s for s in item["stay"])
+
+    @pytest.mark.parametrize("gap", [False, True], ids=["utc_adjacent", "same_day_gap"])
+    def test_equal_same_room_boundary_dates_are_ambiguous(
+        self, guesty_v3_payloads: GuestyV3Payloads, gap: bool
+    ) -> None:
+        """Without instants, one shared local date cannot be resolved."""
+        p = guesty_v3_payloads
+        room, other = p.new_id("lst"), p.new_id("lst")
+        second_in = p.check_in_at(7) if gap else p.check_out_at(7)
+        item = p.search_item(
+            stay=[
+                p.stay_segment(other, p.check_in_at(4), p.check_out_at(5)),
+                p.stay_segment(room, p.check_out_at(5), p.check_out_at(7)),
+                p.stay_segment(room, second_in, p.check_out_at(9)),
+            ]
+        )
+
+        normalised = normalise_by_ids_item(p.as_by_ids(item))
+
+        assert normalised is not None
+        assert ambiguous_rooms(normalised) == {room}
+
+    def test_round_trip_is_not_ambiguous(
+        self, guesty_v3_payloads: GuestyV3Payloads
+    ) -> None:
+        """A → B → A has no consecutive same-room segments."""
+        item, _root, _unassigned = _shape(guesty_v3_payloads, "round_trip")
+
+        normalised = normalise_by_ids_item(guesty_v3_payloads.as_by_ids(item))
+
+        assert normalised is not None
+        assert ambiguous_rooms(normalised) == set()
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "not-an-object",
+            {"status": "confirmed", "stay": [{"unitTypeId": "6640a"}]},
+            {"_id": "", "status": "confirmed", "stay": [{"unitTypeId": "6640a"}]},
+            {"_id": "6650a", "status": "confirmed"},
+            {"_id": "6650a", "status": "confirmed", "stay": []},
+            {"_id": "6650a", "status": "confirmed", "stay": ["6640a"]},
+            {
+                "_id": "6650a",
+                "status": "confirmed",
+                "stay": [{"checkInDateLocalized": "2026-01-01"}],
+            },
+        ],
+        ids=[
+            "not_object",
+            "no_id",
+            "empty_id",
+            "no_stay",
+            "empty_stay",
+            "segment_not_object",
+            "segment_without_unit",
+        ],
+    )
+    def test_invalid_items(self, raw: Any) -> None:
+        """An unattributable item is invalid, never guessed."""
+        assert normalise_by_ids_item(raw) is None
