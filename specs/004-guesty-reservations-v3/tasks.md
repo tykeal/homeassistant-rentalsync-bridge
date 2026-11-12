@@ -264,7 +264,7 @@ Follow constitution Principle V:
   - the ignored-parameter fixture retires nothing
   - control missing → `UNCONFIRMED` with ERROR
   - HTTP 400 → `UNCONFIRMED` with ERROR
-- [ ] T032 [P] [US2] Write unit tests in tests/unit/test_guesty_v3_source.py for `normalise_by_ids_item` (data-model.md §2.3, FR-005):
+- [x] T032 [P] [US2] Write unit tests in tests/unit/test_guesty_v3_source.py for `normalise_by_ids_item` (data-model.md §2.3, FR-005):
   - for a single-segment stay, an assigned multi-unit stay, an unassigned parent and A→B→A, the same reservation from `search_item` and from `as_by_ids` yields byte-identical `pms_booking_id`s and interval rooms
   - `_id` → `reservationId`; `listingId = unitId ?? unitTypeId`; `parentListingId` only when `unitId` differs from `unitTypeId`
   - intervals carry `local_dates` only, with no UTC instants
