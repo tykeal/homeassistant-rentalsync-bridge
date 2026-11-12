@@ -102,7 +102,7 @@ Follow constitution Principle V:
   - `GuestyProvider(reservations_api="legacy")` selects `LegacyReservationSource`
   - `"v3"` selects `V3ReservationSource` (a stub at this point)
   - Cloudbeds ignores the setting
-- [ ] T008 Wire `reservations_api` through src/providers/factory.py into `GuestyProvider.__init__` in src/providers/guesty/service.py.
+- [x] T008 Wire `reservations_api` through src/providers/factory.py into `GuestyProvider.__init__` in src/providers/guesty/service.py.
   - Create src/providers/guesty/reservations_v3.py with a `V3ReservationSource` stub that raises `PMSProviderError` (deviation note above), so V3 is not yet selectable as working code and selecting it fails safely.
   - Existing Guesty tests construct the provider with `reservations_api="legacy"`.
 
