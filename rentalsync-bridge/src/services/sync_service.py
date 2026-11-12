@@ -1479,7 +1479,10 @@ class SyncService:
 
         Returns:
             Tuple of resolved guests by ID and the set of IDs whose lookup
-            failed (as opposed to legitimately returning no guest).
+            failed or found no guest.  A missing guest record is treated
+            like a failed lookup (spec 004, "guest record unavailable"):
+            the same guest's last-good details are kept, and nothing is
+            recorded as a successful read.
         """
         ids_to_resolve: set[str] = set()
         for r in reservations:
@@ -1499,8 +1502,11 @@ class SyncService:
                 )
                 failed.add(gid)
                 continue
-            if guest is not None:
-                guests[gid] = guest
+            if guest is None:
+                logger.warning("Guest %s not found", gid)
+                failed.add(gid)
+                continue
+            guests[gid] = guest
         return guests, failed
 
     def _guest_enrichment(
