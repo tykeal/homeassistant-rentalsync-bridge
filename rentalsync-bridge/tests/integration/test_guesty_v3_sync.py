@@ -12,11 +12,13 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from src.models.booking import Booking
 from src.models.listing import Listing
+from src.providers.guesty import reservations_v3, v3_search
 from src.repositories.booking_repository import BookingRepository
 from src.services.calendar_service import CalendarCache
 from src.services.sync_service import SyncService, SyncServiceError
 
 from tests.conftest import (
+    SEARCH_PAGE_FAULTS,
     GuestyFakeTransport,
     make_booking,
     make_listing,
@@ -750,6 +752,123 @@ class TestConfirmedAbsence:
         await v3.sync()
 
         assert guesty_transport.counts["v3_by_ids"] == 0
+
+
+class TestFaultedSearchRetiresNothing:
+    """SC-003: a faulty search page never retires a booking (T035)."""
+
+    @pytest.fixture
+    async def two_chunks(
+        self,
+        v3: _Fixture,
+        guesty_transport: GuestyFakeTransport,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> tuple[Listing, Listing]:
+        """Two synced listings in separate chunks, five stays each, 2 per page."""
+        monkeypatch.setattr(v3_search, "DEFAULT_PAGE_LIMIT", 2)
+        monkeypatch.setattr(
+            reservations_v3,
+            "pack_chunks",
+            lambda families: v3_search.pack_chunks(families, limit=1),
+        )
+        p = guesty_transport.payloads
+        first, second = await v3.add_tracked(), await v3.add_tracked()
+        guesty_transport.v3_items = [
+            p.search_item(listing.pms_id, check_in=n + 1, check_out=n + 3)
+            for listing in (first, second)
+            for n in range(5)
+        ]
+        await self._cycle(v3, guesty_transport, first, second)
+        return first, second
+
+    @staticmethod
+    async def _cycle(
+        v3: _Fixture,
+        transport: GuestyFakeTransport,
+        *listings: Listing,
+        cache: CalendarCache | None = None,
+    ) -> list[Exception | None]:
+        """Sync every listing through one cycle; return each one's error."""
+        provider = transport.provider(reservations_api="v3")
+        provider.begin_cycle([listing.pms_id for listing in listings])
+        service = SyncService(
+            v3.session,
+            calendar_cache=cache or CalendarCache(ttl_seconds=0),
+            session_factory=v3.factory,
+        )
+        errors: list[Exception | None] = []
+        for listing in listings:
+            try:
+                await service.sync_listing(listing, provider)
+                errors.append(None)
+            except SyncServiceError as exc:
+                errors.append(exc)
+        return errors
+
+    async def _assert_nothing_retired(
+        self,
+        v3: _Fixture,
+        transport: GuestyFakeTransport,
+        listings: tuple[Listing, Listing],
+    ) -> None:
+        """Both listings fail; rows and the cached feeds are unchanged."""
+        before = {
+            listing.id: {k: b.status for k, b in (await v3.bookings(listing)).items()}
+            for listing in listings
+        }
+        assert all(
+            set(statuses.values()) == {"confirmed"} and len(statuses) == 5
+            for statuses in before.values()
+        )
+        cache = CalendarCache(ttl_seconds=3600)
+        for listing in listings:
+            cache.set(listing.ical_url_slug, f"feed-{listing.pms_id}")
+
+        errors = await self._cycle(v3, transport, *listings, cache=cache)
+
+        assert all(isinstance(error, SyncServiceError) for error in errors)
+        for listing in listings:
+            statuses = {k: b.status for k, b in (await v3.bookings(listing)).items()}
+            assert statuses == before[listing.id]
+            assert cache.get(listing.ical_url_slug) == f"feed-{listing.pms_id}"
+
+    @pytest.mark.parametrize("chunk", [0, 1], ids=["first", "second"])
+    @pytest.mark.parametrize("kind", SEARCH_PAGE_FAULTS)
+    async def test_page_fault(
+        self,
+        v3: _Fixture,
+        guesty_transport: GuestyFakeTransport,
+        two_chunks: tuple[Listing, Listing],
+        kind: str,
+        chunk: int,
+    ) -> None:
+        """Any faulty page, in either chunk, retires nothing anywhere."""
+        guesty_transport.fault_search_page(1, kind, listing_id=two_chunks[chunk].pms_id)
+
+        await self._assert_nothing_retired(v3, guesty_transport, two_chunks)
+
+    async def test_page_cap(
+        self,
+        v3: _Fixture,
+        guesty_transport: GuestyFakeTransport,
+        two_chunks: tuple[Listing, Listing],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A search still paging at the cap retires nothing."""
+        monkeypatch.setattr(v3_search, "MAX_RESERVATION_PAGES", 2)
+
+        await self._assert_nothing_retired(v3, guesty_transport, two_chunks)
+
+    async def test_rate_limited(
+        self,
+        v3: _Fixture,
+        guesty_transport: GuestyFakeTransport,
+        two_chunks: tuple[Listing, Listing],
+    ) -> None:
+        """A page still rate-limited after the retries retires nothing."""
+        guesty_transport.fail("v3_search", 429, times=4)
+
+        await self._assert_nothing_retired(v3, guesty_transport, two_chunks)
 
 
 def _events(feed: str) -> dict[str, dict[str, Any]]:
