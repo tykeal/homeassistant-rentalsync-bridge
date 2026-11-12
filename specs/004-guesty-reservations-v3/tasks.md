@@ -195,7 +195,7 @@ Follow constitution Principle V:
 
 ### Implementation for User Story 1
 
-- [ ] T023 [US1] Implement `V3ReservationSource` window computation and the combined search in src/providers/guesty/reservations_v3.py:
+- [x] T023 [US1] Implement `V3ReservationSource` window computation and the combined search in src/providers/guesty/reservations_v3.py:
   - `V3_LOOKBACK_DAYS = 91`, with pads, against `DEFAULT_LOOKAHEAD_DAYS`
   - `begin_cycle`, the fetch-scope union and `filter[listingId][in]`
   - chunk packing by multi-unit family with `MAX_LISTING_IDS_PER_SEARCH = 50`, and cross-chunk de-duplication by `reservationId`
