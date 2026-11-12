@@ -2,13 +2,18 @@
 # SPDX-License-Identifier: Apache-2.0
 """Pytest fixtures for RentalSync Bridge tests."""
 
+import json
 import os
+import re
+from collections import Counter
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 from cryptography.fernet import Fernet
 from httpx import ASGITransport, AsyncClient
@@ -725,3 +730,383 @@ class GuestyV3Payloads:
 def guesty_v3_payloads() -> GuestyV3Payloads:
     """Synthetic Guesty Reservations V3 payload builders (spec 004)."""
     return GuestyV3Payloads()
+
+
+# ---------------------------------------------------------------------------
+# Counting fake Guesty transport (spec 004, T002)
+# ---------------------------------------------------------------------------
+
+# Resource names used for ``GuestyFakeTransport.counts`` and fault keys.
+GUESTY_RESOURCES: tuple[str, ...] = (
+    "listings",
+    "listing",
+    "reservations",
+    "v3_search",
+    "v3_by_ids",
+    "custom_fields",
+    "guests",
+    "guests_crud",
+    "account",
+    "custom_field_definitions",
+)
+
+# Search-page faults applied to the Nth page (0-based) of any search.
+SEARCH_PAGE_FAULTS: tuple[str, ...] = (
+    "empty_has_more",
+    "short_has_more",
+    "duplicate",
+    "out_of_order",
+)
+
+
+@dataclass(frozen=True)
+class RecordedRequest:
+    """One request seen by ``GuestyFakeTransport``."""
+
+    method: str
+    path: str
+    resource: str
+    query: dict[str, list[str]]
+
+
+@dataclass
+class _StatusFault:
+    """A queued HTTP error for one resource."""
+
+    status: int
+    remaining: int
+    body: Any
+    retry_after: str | None
+
+
+def _first_listing_refs(item: dict[str, Any]) -> set[str]:
+    """Return the first segment's ``listingId``/``parentListingId``."""
+    stay = item.get("stay") or [{}]
+    first = stay[0]
+    return {str(first[k]) for k in ("listingId", "parentListingId") if first.get(k)}
+
+
+class GuestyFakeTransport:
+    """A counting, filtering fake of the Guesty Open API.
+
+    Holds one account's data and serves it through ``httpx.MockTransport``,
+    applying the server-side filters Guesty documents so that narrowing and
+    the FR-016 residual gap are observable in tests.  Every request is
+    recorded (``requests``) and counted per resource (``counts``).
+
+    Attributes:
+        listings: Listing documents keyed by ``_id``.
+        legacy_reservations: ``GET /v1/reservations`` items.
+        v3_items: Search-shape V3 items (the by-IDs view is derived).
+        by_ids_overrides: Explicit by-IDs items keyed by ``_id``.
+        custom_fields: Explicit custom-field lists keyed by reservation.
+        guests: Guest bodies keyed by guest ID (both guest endpoints).
+        ignore_reservation_ids: By-IDs ignores ``reservationIds`` and
+            returns up to ``ignored_ids_limit`` account items instead.
+    """
+
+    def __init__(self, payloads: GuestyV3Payloads | None = None) -> None:
+        """Create an empty account."""
+        self.payloads = payloads or GuestyV3Payloads()
+        self.listings: dict[str, dict[str, Any]] = {}
+        self.legacy_reservations: list[dict[str, Any]] = []
+        self.v3_items: list[dict[str, Any]] = []
+        self.by_ids_overrides: dict[str, dict[str, Any]] = {}
+        self.custom_fields: dict[str, list[dict[str, Any]]] = {}
+        self.guests: dict[str, dict[str, Any]] = {}
+        self.ignore_reservation_ids = False
+        self.ignored_ids_limit = 10
+        self.requests: list[RecordedRequest] = []
+        self.counts: Counter[str] = Counter()
+        self._status_faults: dict[str, list[_StatusFault]] = {}
+        self._page_faults: dict[int, str] = {}
+
+    # -- setup ---------------------------------------------------------------
+
+    def add_listing(
+        self,
+        listing_id: str,
+        *,
+        title: str = "Synthetic Listing",
+        children: list[str] | None = None,
+        parent_id: str | None = None,
+        timezone: str = "UTC",
+    ) -> dict[str, Any]:
+        """Register a listing document (and its child sub-units)."""
+        document: dict[str, Any] = {
+            "_id": listing_id,
+            "title": title,
+            "timezone": timezone,
+        }
+        if children:
+            document["childListings"] = [
+                {"_id": child, "title": f"{title} unit {n}"}
+                for n, child in enumerate(children, start=1)
+            ]
+            for child in children:
+                self.listings.setdefault(
+                    child,
+                    {
+                        "_id": child,
+                        "title": f"{title} child",
+                        "timezone": timezone,
+                        "mtl": {"p": listing_id},
+                    },
+                )
+        if parent_id:
+            document["mtl"] = {"p": parent_id}
+        self.listings[listing_id] = document
+        return document
+
+    def fail(
+        self,
+        resource: str,
+        status: int,
+        *,
+        times: int = 1,
+        body: Any = None,
+        retry_after: str | None = "0",
+    ) -> None:
+        """Queue *times* HTTP *status* responses for *resource*."""
+        if resource not in GUESTY_RESOURCES:
+            msg = f"unknown Guesty resource {resource!r}"
+            raise ValueError(msg)
+        self._status_faults.setdefault(resource, []).append(
+            _StatusFault(status, times, body, retry_after)
+        )
+
+    def fault_search_page(self, page: int, kind: str) -> None:
+        """Corrupt the *page*-th (0-based) page of every search sequence."""
+        if kind not in SEARCH_PAGE_FAULTS:
+            msg = f"unknown search fault {kind!r}"
+            raise ValueError(msg)
+        self._page_faults[page] = kind
+
+    def requests_for(self, resource: str) -> list[RecordedRequest]:
+        """Return the recorded requests for one resource."""
+        return [r for r in self.requests if r.resource == resource]
+
+    # -- httpx wiring --------------------------------------------------------
+
+    def client(self) -> httpx.AsyncClient:
+        """Return an ``httpx.AsyncClient`` routed to this fake."""
+        from src.providers.guesty.service import GUESTY_BASE_URL
+
+        return httpx.AsyncClient(
+            transport=httpx.MockTransport(self.handle),
+            base_url=GUESTY_BASE_URL,
+        )
+
+    def provider(self, **kwargs: Any) -> Any:
+        """Return a ``GuestyProvider`` wired to this fake."""
+        from src.providers.guesty.service import GuestyProvider
+
+        token_manager = AsyncMock()
+        token_manager.get_token = AsyncMock(return_value="synthetic-token")
+        return GuestyProvider(
+            token_manager=token_manager, http_client=self.client(), **kwargs
+        )
+
+    @staticmethod
+    def _resource(path: str) -> str:
+        """Classify a request path into a resource name."""
+        routes: tuple[tuple[str, str], ...] = (
+            (r"/v1/listings", "listings"),
+            (r"/v1/listings/[^/]+", "listing"),
+            (r"/v1/reservations", "reservations"),
+            (r"/v1/reservations-v3/search", "v3_search"),
+            (r"/v1/reservations-v3", "v3_by_ids"),
+            (r"/v1/reservations-v3/[^/]+/custom-fields", "custom_fields"),
+            (r"/v1/guests/[^/]+", "guests"),
+            (r"/v1/guests-crud/[^/]+", "guests_crud"),
+            (r"/v1/accounts/me", "account"),
+            (r"/v1/accounts/[^/]+/custom-fields", "custom_field_definitions"),
+        )
+        for pattern, name in routes:
+            if re.fullmatch(pattern, path):
+                return name
+        return "unknown"
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        """Serve one request (the ``httpx.MockTransport`` handler)."""
+        path = request.url.path
+        resource = self._resource(path)
+        query = {key: request.url.params.get_list(key) for key in request.url.params}
+        self.requests.append(RecordedRequest(request.method, path, resource, query))
+        self.counts[resource] += 1
+
+        faults = self._status_faults.get(resource)
+        if faults:
+            fault = faults[0]
+            fault.remaining -= 1
+            if fault.remaining <= 0:
+                faults.pop(0)
+            headers = {"Retry-After": fault.retry_after} if fault.retry_after else {}
+            return httpx.Response(
+                fault.status,
+                json=fault.body if fault.body is not None else {"error": "fault"},
+                headers=headers,
+            )
+
+        handler = getattr(self, f"_serve_{resource}", None)
+        if handler is None:
+            return httpx.Response(404, json={"error": "not found"})
+        response: httpx.Response = handler(path, request.url.params)
+        return response
+
+    # -- resources -----------------------------------------------------------
+
+    @staticmethod
+    def _int(params: httpx.QueryParams, key: str, default: int) -> int:
+        """Read an integer query parameter."""
+        value = params.get(key)
+        return int(value) if value is not None else default
+
+    def _serve_listings(self, _path: str, params: httpx.QueryParams) -> httpx.Response:
+        """Serve ``GET /v1/listings`` (skip/limit paged)."""
+        skip = self._int(params, "skip", 0)
+        limit = self._int(params, "limit", 100)
+        docs = list(self.listings.values())
+        return httpx.Response(
+            200,
+            json={
+                "results": docs[skip : skip + limit],
+                "count": len(docs),
+                "skip": skip,
+                "limit": limit,
+            },
+        )
+
+    def _serve_listing(self, path: str, _params: httpx.QueryParams) -> httpx.Response:
+        """Serve ``GET /v1/listings/{id}``."""
+        document = self.listings.get(path.rsplit("/", 1)[-1])
+        if document is None:
+            return httpx.Response(404, json={"error": "listing not found"})
+        return httpx.Response(200, json=document)
+
+    def _serve_reservations(
+        self, _path: str, params: httpx.QueryParams
+    ) -> httpx.Response:
+        """Serve legacy ``GET /v1/reservations`` with its ``$in`` filter."""
+        wanted: set[str] | None = None
+        raw_filters = params.get("filters")
+        if raw_filters:
+            for clause in json.loads(raw_filters):
+                if clause.get("field") == "listingId" and clause.get("operator") == (
+                    "$in"
+                ):
+                    wanted = {str(v) for v in clause.get("value", [])}
+        items = [
+            item
+            for item in self.legacy_reservations
+            if wanted is None or str(item.get("listingId")) in wanted
+        ]
+        skip = self._int(params, "skip", 0)
+        limit = self._int(params, "limit", 100)
+        return httpx.Response(
+            200,
+            json={
+                "results": items[skip : skip + limit],
+                "count": len(items),
+                "skip": skip,
+                "limit": limit,
+            },
+        )
+
+    def search_matches(self, item: dict[str, Any], params: httpx.QueryParams) -> bool:
+        """Apply the documented server-side search filters to one item."""
+        raw_ids = params.get("filter[listingId][in]")
+        if raw_ids is not None:
+            wanted = {part for part in raw_ids.split(",") if part}
+            if not _first_listing_refs(item) & wanted:
+                return False
+        gte = params.get("filter[checkOut][gte]")
+        if gte is not None and str(item.get("checkOut", ""))[:10] < gte:
+            return False
+        lte = params.get("filter[checkIn][lte]")
+        return lte is None or str(item.get("checkIn", ""))[:10] <= lte
+
+    def _serve_v3_search(self, _path: str, params: httpx.QueryParams) -> httpx.Response:
+        """Serve ``GET /v1/reservations-v3/search`` with filters and paging."""
+        items = [item for item in self.v3_items if self.search_matches(item, params)]
+        if params.get("sort") == "_id":
+            items.sort(key=lambda item: str(item["reservationId"]))
+        skip = self._int(params, "skip", 0)
+        limit = self._int(params, "limit", 100)
+        page = items[skip : skip + limit]
+        has_more = skip + limit < len(items)
+        fault = self._page_faults.get(skip // limit if limit else 0)
+        if fault == "empty_has_more":
+            page, has_more = [], True
+        elif fault == "short_has_more" and page:
+            page, has_more = page[:-1], True
+        elif fault == "duplicate" and page:
+            page = [*page, page[-1]]
+        elif fault == "out_of_order" and len(page) > 1:
+            page = [page[1], page[0], *page[2:]]
+        return httpx.Response(
+            200, json=self.payloads.search_page(page, skip, limit, has_more)
+        )
+
+    def by_ids_view(self) -> dict[str, dict[str, Any]]:
+        """Return every account reservation in the by-IDs shape."""
+        view = {
+            str(item["reservationId"]): self.payloads.as_by_ids(item)
+            for item in self.v3_items
+        }
+        view.update(self.by_ids_overrides)
+        return view
+
+    def _serve_v3_by_ids(self, _path: str, params: httpx.QueryParams) -> httpx.Response:
+        """Serve ``GET /v1/reservations-v3?reservationIds=…`` (a list)."""
+        view = self.by_ids_view()
+        if self.ignore_reservation_ids:
+            ordered = [view[key] for key in sorted(view)]
+            return httpx.Response(200, json=ordered[: self.ignored_ids_limit])
+        requested = params.get_list("reservationIds")
+        return httpx.Response(200, json=[view[rid] for rid in requested if rid in view])
+
+    def _serve_custom_fields(
+        self, path: str, _params: httpx.QueryParams
+    ) -> httpx.Response:
+        """Serve ``GET /v1/reservations-v3/{id}/custom-fields``."""
+        reservation_id = path.split("/")[-2]
+        if reservation_id in self.custom_fields:
+            return httpx.Response(200, json=self.custom_fields[reservation_id])
+        for item in self.v3_items:
+            if item["reservationId"] == reservation_id:
+                return httpx.Response(200, json=item.get("customFields") or [])
+        return httpx.Response(200, json=[])
+
+    def _guest(self, path: str) -> httpx.Response:
+        """Serve one guest body or 404."""
+        guest = self.guests.get(path.rsplit("/", 1)[-1])
+        if guest is None:
+            return httpx.Response(404, json={"error": "guest not found"})
+        return httpx.Response(200, json=guest)
+
+    def _serve_guests(self, path: str, _params: httpx.QueryParams) -> httpx.Response:
+        """Serve legacy ``GET /v1/guests/{id}``."""
+        return self._guest(path)
+
+    def _serve_guests_crud(
+        self, path: str, _params: httpx.QueryParams
+    ) -> httpx.Response:
+        """Serve ``GET /v1/guests-crud/{id}``."""
+        return self._guest(path)
+
+    def _serve_account(self, _path: str, _params: httpx.QueryParams) -> httpx.Response:
+        """Serve ``GET /v1/accounts/me``."""
+        return httpx.Response(200, json={"_id": "synthetic-account"})
+
+    def _serve_custom_field_definitions(
+        self, _path: str, _params: httpx.QueryParams
+    ) -> httpx.Response:
+        """Serve the (empty) custom-field definitions list."""
+        return httpx.Response(200, json=[])
+
+
+@pytest.fixture
+def guesty_transport(guesty_v3_payloads: GuestyV3Payloads) -> GuestyFakeTransport:
+    """A counting fake Guesty API sharing the payload builders (spec 004)."""
+    return GuestyFakeTransport(guesty_v3_payloads)
