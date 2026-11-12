@@ -85,7 +85,7 @@ Follow constitution Principle V:
 - T009's tests extend the existing tests/unit/test_pms_provider_base.py rather than creating tests/unit/test_provider_base.py.
 - T013's manual-sync test lives in the existing tests/integration/test_listings_api.py; there is no tests/unit/test_listings_api.py.
 
-- [ ] T004 Pure refactor (plan D11, research R11):
+- [x] T004 Pure refactor (plan D11, research R11):
   - Move the legacy reservation fetch, guard and mapping verbatim from src/providers/guesty/service.py into a `LegacyReservationSource` class in a new src/providers/guesty/legacy_reservations.py. That covers `get_reservations` paging, `_guard_unclassified`, `_belongs_to_listing`, `_resolve_room_id`, `_map_reservation` and their helpers and constants.
   - Define a `ReservationSource` Protocol (`fetch(listing_pms_id, ...) -> list[PMSReservation]`).
   - `GuestyProvider` delegates to the source.
