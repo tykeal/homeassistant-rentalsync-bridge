@@ -602,7 +602,7 @@ header .subtitle {
 
 .badge.retired {
     background: var(--warning-color);
-    color: white;
+    color: var(--text-color);
     flex-shrink: 0;
     cursor: help;
 }
