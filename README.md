@@ -19,7 +19,7 @@ export, and serves publicly accessible iCal URLs for calendar subscription.
 | Provider | Auth Method | Notes |
 | ---------- | ------------ | ------- |
 | **Cloudbeds** | OAuth 2.0 or API Key | Full support for listings, rooms, bookings, and guest data |
-| **Guesty** | OAuth 2.0 (client credentials) | Token rate limiting (5 requests/24h), custom fields via v3 API |
+| **Guesty** | OAuth 2.0 (client credentials) | Reservations V3 (legacy API selectable for rollback until 2027-03-01), token rate limiting (5 requests/24h), custom fields via v3 API |
 
 The provider abstraction layer makes it straightforward to add additional PMS
 backends in the future.
@@ -141,9 +141,19 @@ enter credentials, and save. Alternatively, set environment variables:
 | `STANDALONE_MODE` | `false` | Disable HA auth for standalone use |
 | `ICAL_BASE_URL` | (empty) | External base URL for iCal feeds |
 | `LOG_LEVEL` | `INFO` | Logging level |
+| `GUESTY_RESERVATIONS_API` | `v3` | Guesty reservations API: `v3` or `legacy` (rollback only) |
 
 PMS type is auto-detected: explicit `PMS_TYPE` wins, then `GUESTY_CLIENT_ID`
 implies Guesty, otherwise defaults to Cloudbeds.
+
+Guesty retires its legacy reservations API on 2027-03-01, so Guesty
+installations read reservations from Reservations V3 by default.
+`GUESTY_RESERVATIONS_API=legacy` (the **Guesty reservations API** option in
+the add-on) restores the previous behaviour for rollback only; it is removed
+in a release after that date. On V3 the `money_*` payment description fields
+are retired. See the
+[add-on setup guide](docs/homeassistant-addon-setup.md#guesty-reservations-api)
+for rollback, validation and known limitations.
 
 ## Database Backup
 
