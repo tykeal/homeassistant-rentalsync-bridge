@@ -1519,3 +1519,41 @@ class TestChangeKey:
         reservation = await _fetch_one(guesty_transport, listing)
 
         assert reservation.change_key == change_key(item)
+
+
+class TestRetiredDescriptionFields:
+    """Payment totals are retired for Guesty V3 only (T060, FR-036)."""
+
+    MONEY = frozenset({"money_totalPaid", "money_balanceDue", "money_currency"})
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("api", "retired"), [("v3", True), ("legacy", False)])
+    async def test_provider_exposes_them_in_v3_mode(
+        self, guesty_transport: GuestyFakeTransport, api: str, retired: bool
+    ) -> None:
+        """The provider reports the retired set only when reading V3."""
+        provider = guesty_transport.provider(reservations_api=api)
+        try:
+            fields = provider.retired_description_fields
+        finally:
+            await provider.aclose()
+
+        assert set(fields) == (self.MONEY if retired else set())
+        assert all(isinstance(reason, str) and reason for reason in fields.values())
+
+    @pytest.mark.parametrize(
+        ("pms_type", "api", "retired"),
+        [
+            ("guesty", "v3", True),
+            ("guesty", "legacy", False),
+            ("cloudbeds", "v3", False),
+            ("cloudbeds", "legacy", False),
+        ],
+    )
+    def test_static_lookup(self, pms_type: str, api: str, retired: bool) -> None:
+        """The lookup needs no provider instance or network call."""
+        from src.providers.guesty.description_fields import retired_fields_for
+
+        assert set(retired_fields_for(pms_type, api)) == (
+            self.MONEY if retired else set()
+        )
