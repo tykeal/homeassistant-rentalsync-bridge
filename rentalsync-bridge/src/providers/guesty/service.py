@@ -26,6 +26,7 @@ from src.providers.guesty.legacy_reservations import (
     DEFAULT_PAGE_LIMIT,
     LegacyReservationSource,
 )
+from src.providers.guesty.reservations_v3 import V3ReservationSource
 from src.providers.registry import provider
 from src.utils.field_labels import humanize_label
 
@@ -120,6 +121,7 @@ class GuestyProvider(PMSProvider):
         client_secret: str | None = None,
         token_manager: GuestyTokenManager | None = None,
         http_client: httpx.AsyncClient | None = None,
+        reservations_api: str = "legacy",
         **_kwargs: Any,
     ) -> None:
         """Initialize GuestyProvider.
@@ -131,6 +133,8 @@ class GuestyProvider(PMSProvider):
             client_secret: Guesty OAuth2 client secret.
             token_manager: Optional pre-configured token manager.
             http_client: Optional httpx client for API calls.
+            reservations_api: Reservation source: ``"legacy"`` (default
+                until spec 004 completes) or ``"v3"``.
             **_kwargs: Ignored — accepted for registry compatibility.
         """
         self._http_client = http_client
@@ -155,7 +159,20 @@ class GuestyProvider(PMSProvider):
         else:
             self._token_manager = None
 
-        self._reservations: ReservationSource = LegacyReservationSource(
+        sources: dict[
+            str, type[LegacyReservationSource] | type[V3ReservationSource]
+        ] = {
+            "legacy": LegacyReservationSource,
+            "v3": V3ReservationSource,
+        }
+        source_cls = sources.get(reservations_api)
+        if source_cls is None:
+            msg = (
+                f"Unknown reservations_api {reservations_api!r}; "
+                f"expected one of {sorted(sources)}"
+            )
+            raise ValueError(msg)
+        self._reservations: ReservationSource = source_cls(
             request=self._request,
             listing_scopes=self._listing_scopes,
         )

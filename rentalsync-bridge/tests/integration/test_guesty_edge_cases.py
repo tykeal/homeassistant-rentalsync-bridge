@@ -192,7 +192,9 @@ class TestPaginatedResults:
         ]
         mock_http.request = AsyncMock(side_effect=responses)
 
-        provider = GuestyProvider(token_manager=mock_tm, http_client=mock_http)
+        provider = GuestyProvider(
+            reservations_api="legacy", token_manager=mock_tm, http_client=mock_http
+        )
         listings = await provider.get_listings()
         assert len(listings) == 150
         assert mock_http.request.call_count == 2
@@ -234,7 +236,9 @@ class TestPaginatedResults:
         ]
         mock_http.request = AsyncMock(side_effect=responses)
 
-        provider = GuestyProvider(token_manager=mock_tm, http_client=mock_http)
+        provider = GuestyProvider(
+            reservations_api="legacy", token_manager=mock_tm, http_client=mock_http
+        )
         reservations = await provider.get_reservations("PROP001")
         assert len(reservations) == 130
 
@@ -439,6 +443,7 @@ class TestCrossListingContamination:
         token_manager = AsyncMock()
         token_manager.get_token = AsyncMock(return_value="tok")
         provider = GuestyProvider(
+            reservations_api="legacy",
             token_manager=token_manager,
             http_client=httpx.AsyncClient(
                 transport=httpx.MockTransport(handler),
@@ -505,6 +510,7 @@ class TestDefaultFieldProjection:
         token_manager = AsyncMock()
         token_manager.get_token = AsyncMock(return_value="tok")
         provider = GuestyProvider(
+            reservations_api="legacy",
             token_manager=token_manager,
             http_client=httpx.AsyncClient(
                 transport=httpx.MockTransport(handler),

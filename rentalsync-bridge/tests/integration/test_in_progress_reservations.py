@@ -340,7 +340,9 @@ async def test_guesty_http_pipeline(async_session, async_session_factory):
     )
     token_manager = AsyncMock()
     token_manager.get_token = AsyncMock(return_value="tok")
-    provider = GuestyProvider(token_manager=token_manager, http_client=client)
+    provider = GuestyProvider(
+        reservations_api="legacy", token_manager=token_manager, http_client=client
+    )
     provider.get_custom_fields = AsyncMock(return_value={})  # type: ignore[method-assign]
 
     await _sync(async_session, async_session_factory, listing, provider)

@@ -188,6 +188,7 @@ def mock_http_client():
 def guesty_provider(mock_token_manager, mock_http_client):
     """Create a GuestyProvider with mocked dependencies."""
     return GuestyProvider(
+        reservations_api="legacy",
         token_manager=mock_token_manager,
         http_client=mock_http_client,
     )
@@ -664,7 +665,9 @@ def _scoped_provider(listing_json, reservations_json):
         transport=httpx.MockTransport(handler),
         base_url=GUESTY_BASE_URL,
     )
-    return GuestyProvider(token_manager=token_manager, http_client=client), seen
+    return GuestyProvider(
+        reservations_api="legacy", token_manager=token_manager, http_client=client
+    ), seen
 
 
 class TestReservationListingScope:
@@ -828,6 +831,7 @@ class TestReservationListingScope:
         token_manager = AsyncMock()
         token_manager.get_token = AsyncMock(return_value="tok")
         provider = GuestyProvider(
+            reservations_api="legacy",
             token_manager=token_manager,
             http_client=httpx.AsyncClient(
                 transport=httpx.MockTransport(handler),
@@ -866,6 +870,7 @@ class TestReservationListingScope:
         token_manager = AsyncMock()
         token_manager.get_token = AsyncMock(return_value="tok")
         provider = GuestyProvider(
+            reservations_api="legacy",
             token_manager=token_manager,
             http_client=httpx.AsyncClient(
                 transport=httpx.MockTransport(handler),
@@ -904,6 +909,7 @@ class TestReservationListingScope:
         token_manager = AsyncMock()
         token_manager.get_token = AsyncMock(return_value="tok")
         provider = GuestyProvider(
+            reservations_api="legacy",
             token_manager=token_manager,
             http_client=httpx.AsyncClient(
                 transport=httpx.MockTransport(handler),
@@ -973,7 +979,9 @@ def _mock_provider(handler):
         transport=httpx.MockTransport(dispatch),
         base_url=GUESTY_BASE_URL,
     )
-    return GuestyProvider(token_manager=token_manager, http_client=client)
+    return GuestyProvider(
+        reservations_api="legacy", token_manager=token_manager, http_client=client
+    )
 
 
 class TestReservationPagination:
@@ -1710,7 +1718,7 @@ class TestRefreshToken:
     @pytest.mark.asyncio
     async def test_refresh_without_manager_raises(self, mock_http_client):
         """Test that refresh without manager and missing creds raises."""
-        prov = GuestyProvider(http_client=mock_http_client)
+        prov = GuestyProvider(reservations_api="legacy", http_client=mock_http_client)
         mock_credential = MagicMock()
         mock_credential.client_id = None
         mock_credential.client_secret = None
@@ -1721,7 +1729,7 @@ class TestRefreshToken:
     @pytest.mark.asyncio
     async def test_refresh_direct_http_success(self, mock_http_client):
         """Test direct HTTP refresh returns TokenResult on 200."""
-        prov = GuestyProvider(http_client=mock_http_client)
+        prov = GuestyProvider(reservations_api="legacy", http_client=mock_http_client)
         mock_credential = MagicMock()
         mock_credential.client_id = "cid"
         mock_credential.client_secret = "csecret"
@@ -1746,7 +1754,7 @@ class TestRefreshToken:
     @pytest.mark.asyncio
     async def test_refresh_direct_http_non_200(self, mock_http_client):
         """Test direct HTTP refresh raises on non-200 response."""
-        prov = GuestyProvider(http_client=mock_http_client)
+        prov = GuestyProvider(reservations_api="legacy", http_client=mock_http_client)
         mock_credential = MagicMock()
         mock_credential.client_id = "cid"
         mock_credential.client_secret = "csecret"
@@ -1768,7 +1776,7 @@ class TestRefreshToken:
     @pytest.mark.asyncio
     async def test_refresh_direct_http_missing_access_token(self, mock_http_client):
         """Test direct HTTP refresh raises when access_token missing."""
-        prov = GuestyProvider(http_client=mock_http_client)
+        prov = GuestyProvider(reservations_api="legacy", http_client=mock_http_client)
         mock_credential = MagicMock()
         mock_credential.client_id = "cid"
         mock_credential.client_secret = "csecret"
@@ -1790,7 +1798,7 @@ class TestRefreshToken:
     @pytest.mark.asyncio
     async def test_refresh_direct_http_network_error(self, mock_http_client):
         """Test direct HTTP refresh raises on network error."""
-        prov = GuestyProvider(http_client=mock_http_client)
+        prov = GuestyProvider(reservations_api="legacy", http_client=mock_http_client)
         mock_credential = MagicMock()
         mock_credential.client_id = "cid"
         mock_credential.client_secret = "csecret"
@@ -2503,7 +2511,9 @@ def _definitions_provider(
         transport=httpx.MockTransport(_route),
         base_url=GUESTY_BASE_URL,
     )
-    return GuestyProvider(token_manager=token_manager, http_client=client)
+    return GuestyProvider(
+        reservations_api="legacy", token_manager=token_manager, http_client=client
+    )
 
 
 # Guesty populates ``key`` with the label the account owner typed and
