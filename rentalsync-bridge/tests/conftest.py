@@ -8,7 +8,7 @@ import re
 from collections import Counter
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
@@ -754,6 +754,27 @@ class GuestyV3Payloads:
             item["status"] = search_item["status"]
         if first.get("parentListingId"):
             item["unitTypeId"] = first["parentListingId"]
+        # Description fields as the legacy resource reports them (FR-034,
+        # FR-036): the reservation's guest count and nights, its notes as
+        # ``{note}`` objects, and the money block V3 no longer carries.
+        counts = [
+            segment["guestsCount"]
+            for segment in search_item["stay"]
+            if segment.get("guestsCount") is not None
+        ]
+        if counts:
+            item["guestsCount"] = max(counts)
+        item["nightsCount"] = (
+            date.fromisoformat(search_item["checkOutDateLocalized"])
+            - date.fromisoformat(search_item["checkInDateLocalized"])
+        ).days
+        notes = search_item.get("notes") or {}
+        item["notes"] = [
+            {"note": notes[key]}
+            for key in ("other", "guest", "specialRequests")
+            if notes.get(key)
+        ]
+        item["money"] = {"totalPaid": 450, "balanceDue": 0, "currency": "USD"}
         return item
 
     # -- guests-crud ---------------------------------------------------------
