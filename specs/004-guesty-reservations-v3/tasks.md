@@ -78,6 +78,13 @@ Follow constitution Principle V:
 
 **⚠️ CRITICAL**: No user-story work begins until this phase is complete.
 
+**Deviation (owner-approved, delivery plan)**: The work ships as eight PRs, one or more phases each. The `guesty_reservations_api` default is `legacy` on main from this phase through Phase 8, so main stays releasable while V3 is incomplete. Tests that exercise V3 select `v3` explicitly. The final PR (Phase 9 and Phase 10) flips the default to `v3` in Settings, config.yaml, the run script, translations and docs as its own atomic commit. Until then:
+
+- `Settings.guesty_reservations_api` defaults to `"legacy"` (T005, T006).
+- The `V3ReservationSource` stub raises `PMSProviderError`, not `NotImplementedError` (T008). Selecting `v3` before it is implemented aborts the listing's sync before any snapshot reaches the prune loop, so it fails safely like any other provider error and never yields an empty snapshot.
+- T009's tests extend the existing tests/unit/test_pms_provider_base.py rather than creating tests/unit/test_provider_base.py.
+- T013's manual-sync test lives in the existing tests/integration/test_listings_api.py; there is no tests/unit/test_listings_api.py.
+
 - [ ] T004 Pure refactor (plan D11, research R11):
   - Move the legacy reservation fetch, guard and mapping verbatim from src/providers/guesty/service.py into a `LegacyReservationSource` class in a new src/providers/guesty/legacy_reservations.py. That covers `get_reservations` paging, `_guard_unclassified`, `_belongs_to_listing`, `_resolve_room_id`, `_map_reservation` and their helpers and constants.
   - Define a `ReservationSource` Protocol (`fetch(listing_pms_id, ...) -> list[PMSReservation]`).
@@ -85,7 +92,7 @@ Follow constitution Principle V:
 
   No behaviour change. tests/unit/test_guesty_service.py, tests/integration/test_guesty_sync.py and tests/integration/test_guesty_edge_cases.py must pass unmodified, except for import paths.
 - [ ] T005 [P] Write failing tests in tests/unit/test_config.py for `Settings.guesty_reservations_api`:
-  - the default is `"v3"`
+  - the default is `"legacy"` until the final PR flips it to `"v3"` (see the deviation note above)
   - `" Legacy "` normalises to `"legacy"`
   - an invalid value raises at construction
   - the `GUESTY_RESERVATIONS_API` env var is read
@@ -96,11 +103,11 @@ Follow constitution Principle V:
   - `"v3"` selects `V3ReservationSource` (a stub at this point)
   - Cloudbeds ignores the setting
 - [ ] T008 Wire `reservations_api` through src/providers/factory.py into `GuestyProvider.__init__` in src/providers/guesty/service.py.
-  - Create src/providers/guesty/reservations_v3.py with a `V3ReservationSource` stub that raises `NotImplementedError`, so V3 is not yet selectable as working code.
+  - Create src/providers/guesty/reservations_v3.py with a `V3ReservationSource` stub that raises `PMSProviderError` (deviation note above), so V3 is not yet selectable as working code and selecting it fails safely.
   - Existing Guesty tests construct the provider with `reservations_api="legacy"`.
 
   This depends on T004, T006 and T007.
-- [ ] T009 [P] Write failing unit tests in tests/unit/test_provider_base.py (new):
+- [ ] T009 [P] Write failing unit tests in tests/unit/test_pms_provider_base.py (existing; see the deviation note above):
   - `PMSOccupancyInterval.booking_suffix` for ordinal 1 vs ≥ 2
   - the defaults of `PMSReservation.intervals`, `change_key` and `inline_custom_fields`
   - `InlineCustomFields` states
@@ -126,10 +133,10 @@ Follow constitution Principle V:
 
 - [ ] T013 [P] Write failing tests for the cycle hook (research R2):
   - in tests/unit/test_scheduler.py, a scheduled cycle calls `provider.begin_cycle` once per provider with the PMS IDs of every `enabled` and `sync_enabled` listing, before the first `sync_listing`
-  - in tests/unit/test_listings_api.py, the manual single-listing sync declares the same set before syncing its listing
+  - in tests/integration/test_listings_api.py, the manual single-listing sync declares the same set before syncing its listing
 - [ ] T014 Call `begin_cycle` from src/services/scheduler.py and from the manual sync in src/api/listings.py. This depends on T010 and T013.
 
-**Checkpoint**: The full suite is green. Legacy Guesty and Cloudbeds behave identically. The toggle exists but V3 is a stub.
+**Checkpoint**: The full suite is green. Legacy Guesty and Cloudbeds behave identically. The toggle exists and defaults to `legacy`; V3 is a stub that fails safely with `PMSProviderError` when selected.
 
 ---
 
@@ -214,7 +221,7 @@ Follow constitution Principle V:
   This makes T020 pass.
 - [ ] T027 [US1] Implement the FR-006 identity check in src/services/sync_service.py, before any upsert or prune for the listing. It maps stored active bookings' `custom_data.confirmationCode` to base IDs, aborts on a mismatch, and logs the first-sync matched count at INFO. This makes T021 pass.
 - [ ] T028 [US1] Make the V3 path end-to-end, so that T022 passes:
-  - replace the `NotImplementedError` stub so `GuestyProvider(reservations_api="v3")` serves `get_reservations` from the combined search, partitioned per listing by simple single-segment ownership (`stay[0].listingId` in the ownership scope); the full multi-segment attribution comes in US3
+  - replace the `PMSProviderError` stub so `GuestyProvider(reservations_api="v3")` serves `get_reservations` from the combined search, partitioned per listing by simple single-segment ownership (`stay[0].listingId` in the ownership scope); the full multi-segment attribution comes in US3
   - fix any parity gaps T022 exposes
 
 **Checkpoint**: The V3 MVP works for single-segment accounts. US1 is independently testable with T015–T022.
@@ -494,7 +501,7 @@ Follow constitution Principle V:
 ### Implementation for User Story 7
 
 - [ ] T067 [US7] Add the `guesty_reservations_api: v3` option and the `list(v3|legacy)?` schema to config.yaml. Create translations/en.yaml with names and descriptions for `log_level` and `guesty_reservations_api`, with an SPDX header or a `REUSE.toml` entry (contracts/addon-toggle.md).
-- [ ] T068 [US7] Export `GUESTY_RESERVATIONS_API` (default `v3`) and log the selected value in rootfs/etc/s6-overlay/s6-rc.d/rentalsync/run.
+- [ ] T068 [US7] Export `GUESTY_RESERVATIONS_API` (default `v3`; the same PR flips the `Settings` default from `legacy` to `v3`, see the Phase 2 deviation note) and log the selected value in rootfs/etc/s6-overlay/s6-rc.d/rentalsync/run.
 - [ ] T069 [US7] Implement the legacy 404/410 message in src/providers/guesty/legacy_reservations.py. This makes T065 pass.
 - [ ] T070 [US7] Add the FR-043 DEBUG diagnostics (research R15) in src/providers/guesty/reservations_v3.py and src/services/sync_service.py. Use reservation and listing IDs, counts and enum values only. This makes T066 pass.
 - [ ] T071 [US7] Make T064 pass. Expected to need no code beyond T012 and T042; fix any gap found.
@@ -564,7 +571,7 @@ Setup → Foundational → US1 (MVP) ─┬─► US2 ────────�
 T001 → T002 → T003
 
 # Phase 2 tests
-T005 (test_config.py)  ‖  T007 (test_provider_registry.py)  ‖  T009 (test_provider_base.py)  ‖  T013 (scheduler, listings API)
+T005 (test_config.py)  ‖  T007 (test_provider_registry.py)  ‖  T009 (test_pms_provider_base.py)  ‖  T013 (scheduler, listings API)
 
 # US1 tests: one task per file in parallel, then the same-file follow-ups
 T015 (contract)  ‖  T017 (unit v3 source)  ‖  T020 (integration v3 sync)
