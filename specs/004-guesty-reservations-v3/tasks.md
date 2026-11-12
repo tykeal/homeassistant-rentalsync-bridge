@@ -366,7 +366,7 @@ Follow constitution Principle V:
 
 ### Tests for User Story 4 (write first, confirm they fail)
 
-- [ ] T043 [P] [US4] Write unit tests in tests/unit/test_guesty_v3_source.py for status mapping (research R7):
+- [x] T043 [P] [US4] Write unit tests in tests/unit/test_guesty_v3_source.py for status mapping (research R7):
   - `completed`→`checked_out`
   - `canceled`/`cancelled`→`cancelled`, case-insensitive (FR-024)
   - `inquiry`/`reserved` excluded
