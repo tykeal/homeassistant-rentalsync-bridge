@@ -324,6 +324,13 @@
       "count": 1
     },
     {
+      "rule": "complexity/file-too-large",
+      "engine": "code-quality",
+      "file": "rentalsync-bridge/src/providers/base.py",
+      "fingerprint": "message:96b0128c3491727f",
+      "count": 1
+    },
+    {
       "rule": "ai-slop/todo-stub",
       "engine": "ai-slop",
       "file": "rentalsync-bridge/src/providers/cloudbeds/provider.py",
