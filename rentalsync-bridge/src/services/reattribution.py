@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from typing import TYPE_CHECKING, Any
 
 from src.providers.base import (
@@ -57,9 +57,16 @@ def reanchor(stored: datetime, target: date, tz: ZoneInfo) -> datetime:
 
     Returns:
         *stored* unchanged when it already falls on *target*; otherwise
-        *target* at the stored local time of day, as UTC.
+        *target* at the stored local time of day, as UTC.  A midnight-UTC
+        value is an all-day date (as in ``stay_time.to_local_date``) and
+        moves to *target* at midnight UTC.
     """
-    local = _as_utc(stored).astimezone(tz)
+    utc = _as_utc(stored)
+    if utc.time() == time(0, 0):
+        if utc.date() == target:
+            return stored
+        return datetime.combine(target, time(0, 0), tzinfo=UTC)
+    local = utc.astimezone(tz)
     if local.date() == target:
         return stored
     moved = datetime.combine(target, local.time(), tzinfo=tz)
