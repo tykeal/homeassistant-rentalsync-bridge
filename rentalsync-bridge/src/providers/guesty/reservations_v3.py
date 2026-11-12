@@ -43,20 +43,38 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-def search_window(now: datetime) -> tuple[date, date]:
-    """Return the ``(D_start, D_end)`` stay-date filter bounds (research R3).
+def default_window(now: datetime) -> tuple[datetime, datetime]:
+    """Return the default ``(start, end)`` stay window for a fetch.
 
     Args:
         now: Reference instant.
 
     Returns:
-        Localized-date bounds for ``filter[checkOut][gte]`` and
-        ``filter[checkIn][lte]``.
+        The retention lookback and the 365-day lookahead around *now*.
     """
     now = ensure_utc(now)
-    start = (now - timedelta(days=V3_LOOKBACK_DAYS)).date() - _TIMEZONE_PAD
-    end = (now + timedelta(days=DEFAULT_LOOKAHEAD_DAYS)).date() + _TIMEZONE_PAD
-    return start, end
+    return (
+        now - timedelta(days=V3_LOOKBACK_DAYS),
+        now + timedelta(days=DEFAULT_LOOKAHEAD_DAYS),
+    )
+
+
+def search_window(start: datetime, end: datetime) -> tuple[date, date]:
+    """Return the ``(D_start, D_end)`` stay-date filter bounds (research R3).
+
+    Args:
+        start: Start of the instant-based stay window.
+        end: End of the instant-based stay window.
+
+    Returns:
+        Localized-date bounds for ``filter[checkOut][gte]`` and
+        ``filter[checkIn][lte]``, padded so they cover *start*..*end* in
+        any listing's timezone.
+    """
+    return (
+        ensure_utc(start).date() - _TIMEZONE_PAD,
+        ensure_utc(end).date() + _TIMEZONE_PAD,
+    )
 
 
 class V3ReservationSource:
@@ -85,6 +103,7 @@ class V3ReservationSource:
         self._tracked: set[str] = set()
         self._scopes: dict[str, Scopes | PMSProviderError] = {}
         self._result: list[dict[str, Any]] | PMSProviderError | None = None
+        self._window: tuple[date, date] | None = None
 
     def begin_cycle(self, listing_pms_ids: Sequence[str]) -> None:
         """Declare the cycle's listings and drop the previous cycle's state.
@@ -95,6 +114,7 @@ class V3ReservationSource:
         self._tracked = set(listing_pms_ids)
         self._scopes = {}
         self._result = None
+        self._window = None
 
     async def _scope(self, listing_pms_id: str) -> Scopes | PMSProviderError:
         """Resolve (once per cycle) a listing's scopes or its failure."""
@@ -106,6 +126,24 @@ class V3ReservationSource:
             except PMSProviderError as exc:
                 self._scopes[listing_pms_id] = exc
         return self._scopes[listing_pms_id]
+
+    def _cover(self, window: tuple[date, date]) -> None:
+        """Widen the cycle's search to cover *window*, dropping a narrower result.
+
+        A search cannot be trimmed back to stays it never asked for, so a
+        fetch whose bounds fall outside the cached search re-searches.
+
+        Args:
+            window: Localized-date bounds the next fetch needs.
+        """
+        if self._window is not None and (
+            self._window[0] <= window[0] and window[1] <= self._window[1]
+        ):
+            return
+        if self._window is not None:
+            window = (min(window[0], self._window[0]), max(window[1], self._window[1]))
+        self._window = window
+        self._result = None
 
     async def _items(self) -> list[dict[str, Any]]:
         """Return the cycle's combined search result, searching once.
@@ -125,8 +163,9 @@ class V3ReservationSource:
                 )
                 families.append(fetch_ids)
             try:
+                window = self._window or search_window(*default_window(_utcnow()))
                 items, pages = await combined_search(
-                    self._request, pack_chunks(families), search_window(_utcnow())
+                    self._request, pack_chunks(families), window
                 )
                 logger.debug(
                     "Guesty V3 combined search: %d reservation(s) in %d page(s) "
@@ -168,15 +207,16 @@ class V3ReservationSource:
             self._tracked.add(listing_pms_id)
             self._result = None
 
+        default_start, default_end = default_window(_utcnow())
+        start = ensure_utc(start_date or default_start)
+        end = ensure_utc(end_date or default_end)
+        self._cover(search_window(start, end))
+
         items = await self._items()
         scope = await self._scope(listing_pms_id)
         if isinstance(scope, PMSProviderError):
             raise scope
         scope_ids = scope[1]
-
-        now = _utcnow()
-        start = ensure_utc(start_date or now - timedelta(days=V3_LOOKBACK_DAYS))
-        end = ensure_utc(end_date or now + timedelta(days=DEFAULT_LOOKAHEAD_DAYS))
 
         reservations: list[PMSReservation] = []
         unclassified = 0

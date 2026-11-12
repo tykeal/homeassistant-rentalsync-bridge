@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for the Guesty Reservations V3 source (spec 004, US1)."""
 
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 
 import pytest
@@ -265,6 +265,26 @@ class TestCombinedSearch:
             account["parent"],
             *account["units"],
         }
+
+    async def test_explicit_bounds_widen_the_search(
+        self, guesty_transport: GuestyFakeTransport, account: dict[str, Any]
+    ) -> None:
+        """Bounds beyond the searched window re-search; they are never trimmed."""
+        provider = guesty_transport.provider(reservations_api="v3")
+        provider.begin_cycle([account["a"], account["b"]])
+
+        await provider.get_reservations(account["a"])
+        await provider.get_reservations(
+            account["b"],
+            start_date=datetime(2020, 1, 1, tzinfo=UTC),
+            end_date=datetime(2040, 1, 1, tzinfo=UTC),
+        )
+        await provider.get_reservations(account["a"])
+
+        assert guesty_transport.counts["v3_search"] == 2
+        widened = guesty_transport.requests_for("v3_search")[-1].query
+        assert widened["filter[checkOut][gte]"] == ["2019-12-31"]
+        assert widened["filter[checkIn][lte]"] == ["2040-01-02"]
 
     async def test_filter_is_union_of_fetch_scopes(
         self, guesty_transport: GuestyFakeTransport, account: dict[str, Any]
