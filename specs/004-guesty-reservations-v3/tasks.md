@@ -291,7 +291,7 @@ Follow constitution Principle V:
 
 ### Implementation for User Story 2
 
-- [ ] T036 [US2] Implement the full research R4 completeness guard per chunk and the cached combined-search failure in src/providers/guesty/reservations_v3.py, plus 400 surfacing and missing-status abort. This makes T029, T030 and T035 pass.
+- [x] T036 [US2] Implement the full research R4 completeness guard per chunk and the cached combined-search failure in src/providers/guesty/reservations_v3.py, plus 400 surfacing and missing-status abort. This makes T029, T030 and T035 pass.
 - [ ] T037 [US2] Implement `GuestyProvider.confirm_absent()` for V3 mode in src/providers/guesty/reservations_v3.py (with delegation in service.py), per research R5:
   - batching and control selection
   - whole-response validation
