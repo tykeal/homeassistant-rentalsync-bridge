@@ -303,3 +303,103 @@ class TestCombinedSearch:
         assert guesty_transport.counts["v3_search"] == 1
         assert guesty_transport.counts["listing"] == 2
         assert _filter_ids(guesty_transport) == [{account["a"], account["b"]}]
+
+
+class TestChunking:
+    """Filter IDs are split into family-preserving chunks (T019, FR-016a)."""
+
+    @pytest.mark.parametrize(("listings", "chunk_sizes"), [(50, [50]), (51, [50, 1])])
+    async def test_fifty_ids_per_chunk(
+        self,
+        guesty_transport: GuestyFakeTransport,
+        listings: int,
+        chunk_sizes: list[int],
+    ) -> None:
+        """50 filter IDs make one search; 51 make two."""
+        p = guesty_transport.payloads
+        ids = [p.new_id("lst") for _ in range(listings)]
+        for listing in ids:
+            guesty_transport.add_listing(listing)
+        provider = guesty_transport.provider(reservations_api="v3")
+        provider.begin_cycle(ids)
+
+        await provider.get_reservations(ids[0])
+
+        chunks = _filter_ids(guesty_transport)
+        assert [len(chunk) for chunk in chunks] == chunk_sizes
+        assert set().union(*chunks) == set(ids)
+        for request in guesty_transport.requests_for("v3_search"):
+            value = request.query["filter[listingId][in]"][0].split(",")
+            assert value == sorted(value)
+
+    async def test_family_is_not_split(
+        self, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """A multi-unit family that would straddle 50 moves whole."""
+        p = guesty_transport.payloads
+        singles = [p.new_id("lst") for _ in range(48)]
+        parent = p.new_id("lst")
+        units = [p.new_id("lst") for _ in range(3)]
+        for listing in singles:
+            guesty_transport.add_listing(listing)
+        guesty_transport.add_listing(parent, children=units)
+        provider = guesty_transport.provider(reservations_api="v3")
+        provider.begin_cycle([*singles, parent])
+
+        await provider.get_reservations(parent)
+
+        chunks = _filter_ids(guesty_transport)
+        assert [len(chunk) for chunk in chunks] == [48, 4]
+        assert chunks[1] == {parent, *units}
+
+    @pytest.fixture
+    def oversized(self, guesty_transport: GuestyFakeTransport) -> dict[str, Any]:
+        """A parent with 51 units (52 IDs) and a stay in the last unit.
+
+        The parent sorts first and the unit last, so the stay's first
+        segment matches both chunks of the split family.
+        """
+        p = guesty_transport.payloads
+        parent = p.new_id("lst")
+        units = [p.new_id("lst") for _ in range(51)]
+        guesty_transport.add_listing(parent, children=units)
+        item = p.search_item(units[-1], parent_listing_id=parent)
+        guesty_transport.v3_items = [item]
+        return {"parent": parent, "item": item}
+
+    async def test_identical_copies_are_kept_once(
+        self, guesty_transport: GuestyFakeTransport, oversized: dict[str, Any]
+    ) -> None:
+        """Only an oversized family is split; a duplicate is merged."""
+        provider = guesty_transport.provider(reservations_api="v3")
+        provider.begin_cycle([oversized["parent"]])
+
+        reservations = await provider.get_reservations(oversized["parent"])
+
+        assert [len(chunk) for chunk in _filter_ids(guesty_transport)] == [50, 2]
+        assert [r.pms_booking_id for r in reservations] == [
+            oversized["item"]["reservationId"]
+        ]
+
+    async def test_conflicting_copies_fail_the_search(
+        self,
+        guesty_transport: GuestyFakeTransport,
+        oversized: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A copy that changed between chunk requests aborts (FR-011)."""
+        serve = guesty_transport._serve_v3_search
+
+        def serve_then_change(*args: Any) -> Any:
+            """Serve a page, then change the stay's source for the next."""
+            response = serve(*args)
+            oversized["item"]["source"] = "changed-between-chunks"
+            return response
+
+        monkeypatch.setattr(guesty_transport, "_serve_v3_search", serve_then_change)
+        provider = guesty_transport.provider(reservations_api="v3")
+        provider.begin_cycle([oversized["parent"]])
+
+        with pytest.raises(PMSProviderError):
+            await provider.get_reservations(oversized["parent"])
+        assert guesty_transport.counts["v3_search"] == 2
