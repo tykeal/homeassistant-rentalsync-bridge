@@ -338,19 +338,3 @@ class TestReservationsApiWiring:
 
         with pytest.raises(ValueError, match="reservations_api"):
             GuestyProvider(reservations_api="v2")
-
-    async def test_v3_stub_fails_safely(self, guesty_transport):
-        """Selecting v3 before it exists raises PMSProviderError, never [].
-
-        The error is raised before any reservation request, so the sync
-        aborts the listing without handing the prune loop a snapshot.
-        """
-        from src.providers.base import PMSProviderError
-
-        guesty_transport.add_listing("L1")
-        provider = guesty_transport.provider(reservations_api="v3")
-        with pytest.raises(PMSProviderError, match="guesty_reservations_api"):
-            await provider.get_reservations("L1")
-        await provider.aclose()
-        assert guesty_transport.counts["reservations"] == 0
-        assert guesty_transport.counts["v3_search"] == 0

@@ -31,6 +31,10 @@ from src.repositories.booking_repository import BookingRepository
 from src.repositories.custom_field_repository import CustomFieldRepository
 from src.repositories.room_repository import RoomRepository
 from src.services.calendar_service import CalendarCache
+from src.services.identity_check import (
+    CONFIRMATION_CODE_KEY,
+    verify_reservation_identity,
+)
 from src.utils.stay_time import get_timezone, is_stay_in_progress
 
 logger = logging.getLogger(__name__)
@@ -201,6 +205,7 @@ class SyncService:
                 len(reservations),
             )
             self._log_reservation_snapshot(listing, reservations)
+            await self._verify_identity(listing, reservations)
 
             # Ask the provider about stored reservations missing from the
             # snapshot before anything is written, so an inconsistent
@@ -342,6 +347,40 @@ class SyncService:
         # rather than left to publish noise (issue #127).
         await self._custom_field_repo.repair_derived_labels(
             listing.id, field_labels or {}
+        )
+
+    async def _verify_identity(
+        self,
+        listing: Listing,
+        reservations: list[PMSReservation],
+    ) -> None:
+        """Abort before any write if V3 re-keyed a stored reservation.
+
+        Only snapshots from a change-keyed source (Guesty V3) are checked;
+        other sources are what the stored IDs came from.
+
+        Args:
+            listing: Listing being synced.
+            reservations: Retention-filtered snapshot.
+
+        Raises:
+            PMSProviderError: If a stored reservation was re-keyed.
+        """
+        if not any(r.change_key is not None for r in reservations):
+            return
+        stored = [
+            (
+                self._extract_base_reservation_id(booking.pms_booking_id),
+                (booking.custom_data or {}).get(CONFIRMATION_CODE_KEY),
+            )
+            for booking in await self._booking_repo.get_for_listing(listing.id)
+            if booking.status != "cancelled" and not self._is_beyond_retention(booking)
+        ]
+        matched = verify_reservation_identity(listing.pms_id, stored, reservations)
+        logger.info(
+            "Identity check for listing %s: %d stored reservation(s) matched by ID",
+            listing.pms_id,
+            matched,
         )
 
     async def _confirm_absences(
@@ -1270,6 +1309,10 @@ class SyncService:
         if not provider.has_separate_custom_fields:
             return {}, False
 
+        inline = self._inline_custom_fields(reservation, cached, payload_keys)
+        if inline is not None:
+            return inline
+
         try:
             return await provider.get_custom_fields(reservation.pms_booking_id), False
         except PMSProviderError:
@@ -1283,11 +1326,69 @@ class SyncService:
                 reservation.pms_booking_id,
                 exc_info=True,
             )
-            if cached is None:
-                return {}, True
-            if cached.data is not None:
-                return _enrichment_owned(cached.data), True
-            return self._bootstrap_custom_fields(cached, payload_keys), True
+            return self._last_good_custom_fields(cached, payload_keys), True
+
+    def _inline_custom_fields(
+        self,
+        reservation: PMSReservation,
+        cached: _StoredEnrichment | None,
+        payload_keys: set[str],
+    ) -> tuple[dict, bool] | None:
+        """Resolve custom fields delivered with the reservation (research R8).
+
+        A ``present`` block is used directly.  An ``absent`` block is an
+        empty read when nothing endpoint-owned was ever published for the
+        reservation; otherwise only the custom-fields endpoint can tell a
+        cleared value from an omitted block, so one call confirms it.  A
+        ``malformed`` block is treated like a failed fetch.
+
+        Args:
+            reservation: Reservation being enriched.
+            cached: Enrichment state stored by the previous sync.
+            payload_keys: Custom-data keys this sync's reservation
+                payloads supply, used for bootstrap recovery only.
+
+        Returns:
+            ``(custom field values, fetch failed)``, or None when the
+            custom-fields endpoint must be called.
+        """
+        inline = reservation.inline_custom_fields
+        if inline is None:
+            return None
+        if inline.state == "present":
+            return dict(inline.values), False
+        if inline.state == "malformed":
+            logger.warning(
+                "Reservation %s carries a malformed customFields block; "
+                "reusing last known values",
+                reservation.pms_booking_id,
+            )
+            return self._last_good_custom_fields(cached, payload_keys), True
+        if cached is None:
+            return {}, False
+        if cached.data is not None and not _enrichment_owned(cached.data):
+            return {}, False
+        return None
+
+    def _last_good_custom_fields(
+        self,
+        cached: _StoredEnrichment | None,
+        payload_keys: set[str],
+    ) -> dict:
+        """Return the values to keep when custom fields cannot be read.
+
+        Args:
+            cached: Enrichment state stored by the previous sync.
+            payload_keys: Keys supplied by this sync's reservations.
+
+        Returns:
+            The last-good endpoint-owned values (FR-032).
+        """
+        if cached is None:
+            return {}
+        if cached.data is not None:
+            return _enrichment_owned(cached.data)
+        return self._bootstrap_custom_fields(cached, payload_keys)
 
     @staticmethod
     def _bootstrap_custom_fields(

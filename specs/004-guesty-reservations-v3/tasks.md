@@ -152,40 +152,40 @@ Follow constitution Principle V:
 
 ### Tests for User Story 1 (write first, confirm they fail)
 
-- [ ] T015 [P] [US1] Write a contract test in tests/contract/test_guesty_v3_contract.py (new) for the search request (contracts/guesty-v3-search.md):
+- [x] T015 [P] [US1] Write a contract test in tests/contract/test_guesty_v3_contract.py (new) for the search request (contracts/guesty-v3-search.md):
   - the exact query for page 0 and page 1: `filter[listingId][in]` (comma-joined, sorted fetch-scope IDs of the tracked listings), `filter[checkOut][gte]`, `filter[checkIn][lte]`, `sort=_id`, `limit=100`, `skip`
   - no `fields`
   - an untracked listing's ID never appears in the filter
   - the window dates computed from a frozen clock per research R3, including both 1-day pads
-- [ ] T016 [US1] Write a contract test in tests/contract/test_guesty_v3_contract.py for guests-crud (contracts/guesty-guests-crud.md):
+- [x] T016 [US1] Write a contract test in tests/contract/test_guesty_v3_contract.py for guests-crud (contracts/guesty-guests-crud.md):
   - the path `/v1/guests-crud/{id}` and `fields=fullName phone email`
   - 404 → `None`, 5xx → `PMSProviderError`, 401 → `PMSAuthenticationError`
   - legacy mode still calls `/v1/guests/{id}`
-- [ ] T017 [P] [US1] Write unit tests in tests/unit/test_guesty_v3_source.py (new) for single-segment mapping:
+- [x] T017 [P] [US1] Write unit tests in tests/unit/test_guesty_v3_source.py (new) for single-segment mapping:
   - `pms_booking_id`, UTC `check_in`/`check_out`, one interval with `ordinal=1` whose `room_id` equals the legacy `_resolve_room_id` for the same stay
   - `guest_id`, with `guest_name=None` and `updated_at=None`
   - `custom_data` keys `source` and `confirmationCode`
   - `InlineCustomFields` PRESENT, ABSENT and MALFORMED parsing (research R8)
-- [ ] T018 [US1] Write unit tests in tests/unit/test_guesty_v3_source.py for the combined search (research R2), with call-count assertions:
+- [x] T018 [US1] Write unit tests in tests/unit/test_guesty_v3_source.py for the combined search (research R2), with call-count assertions:
   - after `begin_cycle` with three listings, `get_reservations` for each issues the search pages exactly once per cycle
   - a `get_reservations` for a listing outside the declared set adds it and starts a fresh combined search
   - the filter ID set is the union of fetch scopes: a tracked multi-unit parent contributes its sub-unit IDs, and an imported child contributes its parent unit type
   - a fetch-scope resolution failure aborts only that listing, whose own ID is still filtered
-- [ ] T019 [US1] Write unit tests in tests/unit/test_guesty_v3_source.py for chunking (FR-016a):
+- [x] T019 [US1] Write unit tests in tests/unit/test_guesty_v3_source.py for chunking (FR-016a):
   - 50 filter IDs make one chunk and 51 make two
   - a multi-unit family is never split unless it alone exceeds 50 IDs
   - a reservation returned by two chunks with the same change key is kept once; with differing change keys the combined result fails (FR-011)
-- [ ] T020 [P] [US1] Write integration tests in tests/integration/test_guesty_v3_sync.py (new) for custom-field enrichment (research R8):
+- [x] T020 [P] [US1] Write integration tests in tests/integration/test_guesty_v3_sync.py (new) for custom-field enrichment (research R8):
   - PRESENT makes no custom-field call
   - ABSENT with non-NULL `{}`-shaped enrichment makes no call
   - ABSENT with stored non-empty values makes exactly one confirmation call. On success its values are used; on failure the last-good values are kept
   - ABSENT with NULL `enrichment_data` makes one confirmation call. On failure, `_bootstrap_custom_fields` recovery applies
   - MALFORMED keeps last-good and logs a WARNING without aborting
   - a published door-code custom field is never blanked in any of these cases
-- [ ] T021 [US1] Write integration tests in tests/integration/test_guesty_v3_sync.py for identity verification (research R14, FR-006):
+- [x] T021 [US1] Write integration tests in tests/integration/test_guesty_v3_sync.py for identity verification (research R14, FR-006):
   - the same `confirmationCode` under a new ID, with the old ID absent → `SyncServiceError`; nothing created or retired; the message names the setting `guesty_reservations_api`
   - matching IDs → the INFO line reports the matched count
-- [ ] T022 [US1] Write the upgrade-continuity integration test in tests/integration/test_guesty_v3_sync.py (SC-002):
+- [x] T022 [US1] Write the upgrade-continuity integration test in tests/integration/test_guesty_v3_sync.py (SC-002):
   - sync the reference account in legacy mode, render the feeds, switch the provider to V3, sync, and render again
   - assert every single-segment event's UID, dates, `SUMMARY` and `Booking ID:` line are byte-identical
   - assert that no retiring resource was requested
@@ -195,7 +195,7 @@ Follow constitution Principle V:
 
 ### Implementation for User Story 1
 
-- [ ] T023 [US1] Implement `V3ReservationSource` window computation and the combined search in src/providers/guesty/reservations_v3.py:
+- [x] T023 [US1] Implement `V3ReservationSource` window computation and the combined search in src/providers/guesty/reservations_v3.py:
   - `V3_LOOKBACK_DAYS = 91`, with pads, against `DEFAULT_LOOKAHEAD_DAYS`
   - `begin_cycle`, the fetch-scope union and `filter[listingId][in]`
   - chunk packing by multi-unit family with `MAX_LISTING_IDS_PER_SEARCH = 50`, and cross-chunk de-duplication by `reservationId`
@@ -203,7 +203,7 @@ Follow constitution Principle V:
   - the per-instance `V3CombinedSearch` cache (data-model.md §2.1)
 
   The minimal guard is shape and `hasMore`; the full guard comes in US2. This makes T015, T018 and T019 pass.
-- [ ] T024 [US1] Implement the single-segment V3 mapping in src/providers/guesty/reservations_v3.py:
+- [x] T024 [US1] Implement the single-segment V3 mapping in src/providers/guesty/reservations_v3.py:
   - status via `_STATUS_MAP`, initially confirmed, checked_in, checked_out and canceled
   - top-level and stay dates to UTC
   - one interval per segment with `room_id = stay.listingId`
@@ -212,15 +212,15 @@ Follow constitution Principle V:
   - client-side `_overlaps_window` kept authoritative
 
   This makes T017 pass.
-- [ ] T025 [US1] Implement V3 `get_guest` via `/v1/guests-crud/{id}?fields=fullName phone email` in src/providers/guesty/service.py. It branches on `reservations_api`, keeps the legacy `/v1/guests/{id}` path unchanged, and makes T016 pass.
-- [ ] T026 [US1] Implement inline custom-field enrichment in `SyncService._custom_field_enrichment` in src/services/sync_service.py, per research R8:
+- [x] T025 [US1] Implement V3 `get_guest` via `/v1/guests-crud/{id}?fields=fullName phone email` in src/providers/guesty/service.py. It branches on `reservations_api`, keeps the legacy `/v1/guests/{id}` path unchanged, and makes T016 pass.
+- [x] T026 [US1] Implement inline custom-field enrichment in `SyncService._custom_field_enrichment` in src/services/sync_service.py, per research R8:
   - PRESENT → values, with no call
   - ABSENT → no call if `enrichment_data` is non-NULL with no custom values; otherwise one confirmation call, with last-good or bootstrap on failure
   - MALFORMED → last-good, with a WARNING
 
   This makes T020 pass.
-- [ ] T027 [US1] Implement the FR-006 identity check in src/services/sync_service.py, before any upsert or prune for the listing. It maps stored active bookings' `custom_data.confirmationCode` to base IDs, aborts on a mismatch, and logs the first-sync matched count at INFO. This makes T021 pass.
-- [ ] T028 [US1] Make the V3 path end-to-end, so that T022 passes:
+- [x] T027 [US1] Implement the FR-006 identity check in src/services/sync_service.py, before any upsert or prune for the listing. It maps stored active bookings' `custom_data.confirmationCode` to base IDs, aborts on a mismatch, and logs the first-sync matched count at INFO. This makes T021 pass.
+- [x] T028 [US1] Make the V3 path end-to-end, so that T022 passes:
   - replace the `PMSProviderError` stub so `GuestyProvider(reservations_api="v3")` serves `get_reservations` from the combined search, partitioned per listing by simple single-segment ownership (`stay[0].listingId` in the ownership scope); the full multi-segment attribution comes in US3
   - fix any parity gaps T022 exposes
 
