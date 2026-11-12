@@ -315,14 +315,12 @@ class TestReservationsApiWiring:
         provider = GuestyProvider(reservations_api="legacy")
         assert isinstance(provider._reservations, LegacyReservationSource)
 
-    def test_guesty_default_is_legacy(self):
-        """Without the kwarg GuestyProvider stays on the legacy source."""
-        from src.providers.guesty.legacy_reservations import (
-            LegacyReservationSource,
-        )
+    def test_guesty_default_is_v3(self):
+        """Without the kwarg GuestyProvider uses the V3 source."""
+        from src.providers.guesty.reservations_v3 import V3ReservationSource
         from src.providers.guesty.service import GuestyProvider
 
-        assert isinstance(GuestyProvider()._reservations, LegacyReservationSource)
+        assert isinstance(GuestyProvider()._reservations, V3ReservationSource)
 
     def test_guesty_v3_selects_v3_source(self):
         """reservations_api='v3' selects the V3ReservationSource stub."""
