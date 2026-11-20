@@ -189,6 +189,27 @@ class TestSwitchOver:
 class TestUnchanged:
     """Stays without a switch-over keep their #215 instants and identity."""
 
+    async def test_tracked_unit_keeps_its_own_times(
+        self, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """A tracked unit's own document beats its tracked parent's entry."""
+        p = guesty_transport.payloads
+        parent, unit = p.new_id("lst"), p.new_id("lst")
+        document = guesty_transport.add_listing(parent, children=[unit], timezone=NY)
+        document["childListings"][0]["defaultCheckInTime"] = "14:00"
+        guesty_transport.listings[unit].update(
+            timezone=NY, defaultCheckInTime="16:00", defaultCheckOutTime="11:00"
+        )
+        guesty_transport.v3_items = [_item(_contiguous((unit, parent)))]
+        provider = guesty_transport.provider(reservations_api="v3")
+        provider.begin_cycle([parent, unit])
+
+        (reservation,) = await provider.get_reservations(unit)
+
+        assert _spans(reservation) == [
+            (unit, _local(START, 16), _local(START + timedelta(2), 11)),
+        ]
+
     def test_single_segment(self) -> None:
         """A one-room stay uses its listing's own times."""
         reservation = _map(_contiguous(("a", "p")), "p", {"p", "a"}, PARENT_TIMES)
