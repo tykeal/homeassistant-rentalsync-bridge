@@ -205,6 +205,19 @@ class TestListingLocalTimes:
             _midnight(end),
         )
 
+    def test_same_day_stay_is_never_inverted(
+        self, guesty_v3_payloads: GuestyV3Payloads
+    ) -> None:
+        """16:00 in, 11:00 out on one date would end first: export dates."""
+        p = guesty_v3_payloads
+        day = date(2027, 1, 10)
+        reservation = _map(_item(p, p.new_id("lst"), day, day), _document())
+
+        assert (reservation.check_in, reservation.check_out) == (
+            _midnight(day),
+            _midnight(day),
+        )
+
     def test_no_listing_times_is_all_day(
         self, guesty_v3_payloads: GuestyV3Payloads
     ) -> None:

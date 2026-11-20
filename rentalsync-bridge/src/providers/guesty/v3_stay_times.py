@@ -177,8 +177,9 @@ def stay_instants(
 
     Returns:
         Both instants timed, or both date-only when either time or zone
-        is unusable, or either instant falls on midnight UTC (which would
-        read back as a date-only stay on the wrong day).
+        is unusable, the check-out would not follow the check-in (a
+        same-day stay), or either instant falls on midnight UTC (which
+        would read back as a date-only stay on the wrong day).
     """
     (in_day, in_times), (out_day, out_times) = check_in, check_out
     in_zone, out_zone = _zone(in_times.timezone), _zone(out_times.timezone)
@@ -186,7 +187,7 @@ def stay_instants(
     if in_zone and out_zone and in_clock and out_clock:
         start = datetime.combine(in_day, in_clock, tzinfo=in_zone).astimezone(UTC)
         end = datetime.combine(out_day, out_clock, tzinfo=out_zone).astimezone(UTC)
-        if start.time() != time() and end.time() != time():
+        if start < end and time() not in (start.time(), end.time()):
             return start, end
     return _midnight(in_day), _midnight(out_day)
 
