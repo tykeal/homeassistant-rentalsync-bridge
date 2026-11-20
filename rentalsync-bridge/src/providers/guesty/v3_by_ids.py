@@ -18,11 +18,8 @@ from src.providers.base import (
 )
 from src.providers.guesty.legacy_reservations import _EXCLUDED_STATUSES
 from src.providers.guesty.sources import GuestyHTTPError
-from src.providers.guesty.v3_mapping import (
-    _intervals,
-    _status,
-    segment_owned,
-)
+from src.providers.guesty.v3_intervals import occupancy_intervals, segment_owned
+from src.providers.guesty.v3_mapping import _status
 from src.providers.guesty.v3_stay_times import local_date
 
 if TYPE_CHECKING:
@@ -162,7 +159,7 @@ def map_by_ids_item(
     dates = _stay_dates(item)
     if status is None or dates is None:
         return None
-    intervals = _intervals(item["stay"], scope_ids, with_instants=False)
+    intervals = occupancy_intervals(item["stay"], scope_ids, with_instants=False)
     guest_id = item.get("guestId")
     return PMSReservation(
         pms_booking_id=rid,

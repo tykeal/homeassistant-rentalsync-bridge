@@ -46,7 +46,7 @@ V3 mode populates the existing fields as follows:
 |---|---|---|
 | `room_id` | `str` | the segment `listingId`: a sub-unit ID, a single-unit listing ID, or the parent unit type when unassigned (FR-019) |
 | `ordinal` | `int` (≥ 1) | 1 for the first interval in this room within the reservation, 2 for the next, and so on |
-| `check_in` | `datetime` (UTC) \| `None` | first merged segment's `checkInDateLocalized` at the room's `defaultCheckInTime` in its `timezone` (midnight UTC, date-only, when unusable; issue #212); `None` only in a by-IDs re-attribution (§2.3) |
+| `check_in` | `datetime` (UTC) \| `None` | first merged segment's `checkInDateLocalized` at the room's `defaultCheckInTime` in its `timezone`, or at the previous room's `defaultCheckOutTime` after a mid-stay move (research R6 step 7) (midnight UTC, date-only, when unusable; issue #212); `None` only in a by-IDs re-attribution (§2.3) |
 | `check_out` | `datetime` (UTC) \| `None` | last merged segment's `checkOutDateLocalized` at the room's `defaultCheckOutTime`, likewise; `None` only in a by-IDs re-attribution |
 | `local_dates` | `tuple[date, date] \| None` | the interval's listing-localized check-in and check-out dates. Always set; for a by-IDs re-attribution (R5) it is the **only** date source, and `check_in`/`check_out` are re-anchored from the stored row by the sync |
 | `guests_count` | `int \| None` | the **maximum** of the merged segments' `guestsCount` (non-additive: adjacent segments describe the same guests over time). It equals the common value when they agree. `None` when no merged segment has a count |

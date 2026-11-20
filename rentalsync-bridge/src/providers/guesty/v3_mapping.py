@@ -7,15 +7,12 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from collections import Counter
-from dataclasses import replace
 from typing import Any
 
 from src.providers.base import (
     HOLD_STATUSES,
     RECOGNISED_NON_EXPORT_STATUSES,
     InlineCustomFields,
-    PMSOccupancyInterval,
     PMSProviderError,
     PMSReservation,
 )
@@ -24,15 +21,9 @@ from src.providers.guesty.legacy_reservations import (
     _CLASSIFIED_STATUSES,
     _EXCLUDED_STATUSES,
     _STATUS_MAP,
-    _parse_date,
 )
-from src.providers.guesty.v3_stay_times import (
-    StayTimes,
-    local_dates,
-    localized_stay,
-    required_date,
-    stay_instants,
-)
+from src.providers.guesty.v3_intervals import occupancy_intervals, segment_owned
+from src.providers.guesty.v3_stay_times import StayTimes, localized_stay
 
 logger = logging.getLogger(__name__)
 
@@ -106,26 +97,6 @@ def stay_segments(item: dict[str, Any]) -> list[dict[str, Any]]:
     raise PMSProviderError(msg)
 
 
-def segment_owned(segment: dict[str, Any], scope_ids: frozenset[str]) -> bool:
-    """Report whether a listing owns one stay segment (research R6).
-
-    A segment is owned through its own listing or its parent, so a new
-    sub-unit of a tracked multi-unit listing is owned before the listing
-    document lists it.  A tracked child's scope never holds its parent,
-    so a sibling's segment is not owned.
-
-    Args:
-        segment: A validated stay segment.
-        scope_ids: Listing IDs owned by the listing being synced.
-
-    Returns:
-        True when the segment's listing or parent is in *scope_ids*.
-    """
-    return (
-        segment["listingId"] in scope_ids or segment.get("parentListingId") in scope_ids
-    )
-
-
 def owned_by(item: dict[str, Any], scope_ids: frozenset[str]) -> bool:
     """Report whether a listing owns any segment of a reservation.
 
@@ -137,7 +108,7 @@ def owned_by(item: dict[str, Any], scope_ids: frozenset[str]) -> bool:
         scope_ids: Listing IDs owned by the listing being synced.
 
     Returns:
-        True when any stay segment is owned (see ``segment_owned``).
+        True when any stay segment is owned (see ``v3_intervals.segment_owned``).
 
     Raises:
         PMSProviderError: If the stay is unusable (see ``stay_segments``).
@@ -256,122 +227,6 @@ def _status(item: dict[str, Any], rid: str) -> str | None:
     return raw
 
 
-def _guests(value: Any) -> int | None:
-    """Return a segment's ``guestsCount`` when it is an integral number."""
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float) and value.is_integer():
-        return int(value)
-    return None
-
-
-def _adjacent(previous: dict[str, Any], segment: dict[str, Any]) -> bool:
-    """Report whether a segment continues the previous one in its room."""
-    if previous["listingId"] != segment["listingId"]:
-        return False
-    check_out, check_in = previous.get("checkOut"), segment.get("checkIn")
-    if not check_out or not check_in:
-        return False
-    return _parse_date(check_out) == _parse_date(check_in)
-
-
-def _merge(
-    interval: PMSOccupancyInterval, segment: dict[str, Any], times: StayTimes
-) -> PMSOccupancyInterval:
-    """Extend an interval by the adjacent same-room segment after it."""
-    check_out_local = required_date(segment, key="checkOutDateLocalized")
-    check_in_local = (
-        interval.local_dates[0]
-        if interval.local_dates
-        else required_date(segment, key="checkInDateLocalized")
-    )
-    room = times.for_room(interval.room_id)
-    check_in, check_out = stay_instants((check_in_local, room), (check_out_local, room))
-    counts = [
-        n
-        for n in (interval.guests_count, _guests(segment.get("guestsCount")))
-        if n is not None
-    ]
-    return replace(
-        interval,
-        check_in=check_in,
-        check_out=check_out,
-        local_dates=(check_in_local, check_out_local),
-        guests_count=max(counts) if counts else None,
-    )
-
-
-def _intervals(
-    segments: list[dict[str, Any]],
-    scope_ids: frozenset[str],
-    *,
-    with_instants: bool = True,
-    times: StayTimes | None = None,
-) -> tuple[PMSOccupancyInterval, ...]:
-    """Build the occupancy intervals of the segments a listing owns.
-
-    Consecutive owned segments in one room whose check-out instant is the
-    next check-in are one interval; a later return to a room is another,
-    and ordinals count those per room (research R6).
-
-    Args:
-        segments: Validated stay segments.
-        scope_ids: Listing IDs owned by the listing being synced.
-        with_instants: False for by-IDs segments, which carry only local
-            dates; their intervals then have no UTC instants and never
-            merge (an equal same-room boundary date is ambiguous there).
-        times: Listing times the instants are built from (see
-            ``stay_instants``); None gives date-only instants.
-
-    Raises:
-        PMSProviderError: If an owned segment's localized date is
-            unusable while instants are built.
-
-    Returns:
-        The owned intervals in stay order.
-    """
-    times = times or StayTimes()
-    seen: Counter[str] = Counter()
-    intervals: list[PMSOccupancyInterval] = []
-    previous: dict[str, Any] | None = None
-    for segment in segments:
-        owned = segment_owned(segment, scope_ids)
-        if (
-            owned
-            and with_instants
-            and previous is not None
-            and _adjacent(previous, segment)
-        ):
-            intervals[-1] = _merge(intervals[-1], segment, times)
-            previous = segment
-            continue
-        previous = segment if owned else None
-        if not owned:
-            continue
-        room = segment["listingId"]
-        seen[room] += 1
-        check_in = check_out = None
-        dates = local_dates(segment)
-        if with_instants:
-            room_times = times.for_room(room)
-            dates, (check_in, check_out) = localized_stay(
-                (segment,), (segment,), room_times, room_times
-            )
-        intervals.append(
-            PMSOccupancyInterval(
-                room_id=room,
-                ordinal=seen[room],
-                check_in=check_in,
-                check_out=check_out,
-                local_dates=dates,
-                guests_count=_guests(segment.get("guestsCount")),
-            )
-        )
-    return tuple(intervals)
-
-
 def map_search_item(
     item: dict[str, Any],
     listing_pms_id: str,
@@ -408,7 +263,7 @@ def map_search_item(
     if status is None:
         return None
     times = stay_times or StayTimes()
-    intervals = _intervals(segments, scope_ids, times=times)
+    intervals = occupancy_intervals(segments, scope_ids, times=times)
     if not intervals:
         return None
     if all(segment_owned(s, scope_ids) for s in segments):
