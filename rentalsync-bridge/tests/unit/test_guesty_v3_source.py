@@ -815,16 +815,21 @@ def _spans(reservation: Any) -> list[tuple[datetime | None, datetime | None]]:
     return [(i.check_in, i.check_out) for i in reservation.intervals]
 
 
-def _segment_span(segment: dict[str, Any]) -> tuple[datetime, datetime]:
+def _segment_span(
+    segment: dict[str, Any], *, switch_over: bool = False
+) -> tuple[datetime, datetime]:
     """Return a segment's instants at a UTC listing's 15:00 / 11:00.
 
     Its localized dates at the fake listing's default check-in/check-out
     times; the raw ``checkIn``/``checkOut`` are not trusted (issue #212).
+    A *switch_over* segment (a mid-stay move) opens at the previous
+    room's 11:00 check-out instead.
     """
+    opens = time(11) if switch_over else time(15)
     return (
         datetime.combine(
             date.fromisoformat(segment["checkInDateLocalized"]),
-            time(15),
+            opens,
             tzinfo=UTC,
         ),
         datetime.combine(
@@ -905,7 +910,9 @@ class TestAttribution:
         rid = item["reservationId"]
         segment_x, segment_y = item["stay"]
         assert _ids(rid, later) == [f"{rid}::{second}"]
-        assert (later.check_in, later.check_out) == _segment_span(segment_y)
+        assert (later.check_in, later.check_out) == _segment_span(
+            segment_y, switch_over=True
+        )
         assert _spans(later) == [(later.check_in, later.check_out)]
         assert later.intervals[0].local_dates == (
             date.fromisoformat(segment_y["checkInDateLocalized"]),
@@ -940,8 +947,9 @@ class TestAttribution:
         (reservation,) = await provider.get_reservations(tracked)
 
         assert _ids(rid, reservation) == [f"{rid}::{tracked}"]
-        assert reservation.check_in == datetime.fromisoformat(
-            item["stay"][1]["checkIn"]
+        # The first segment's listing is now tracked: a switch-over.
+        assert (
+            reservation.check_in == _segment_span(item["stay"][1], switch_over=True)[0]
         )
 
     async def test_same_property_move(
@@ -959,7 +967,9 @@ class TestAttribution:
             f"{rid}::{property_['a']}",
             f"{rid}::{property_['b']}",
         ]
-        assert _spans(reservation) == [_segment_span(s) for s in item["stay"]]
+        assert _spans(reservation) == [
+            _segment_span(s, switch_over=bool(i)) for i, s in enumerate(item["stay"])
+        ]
 
     async def test_round_trip(
         self, guesty_transport: GuestyFakeTransport, property_: dict[str, str]

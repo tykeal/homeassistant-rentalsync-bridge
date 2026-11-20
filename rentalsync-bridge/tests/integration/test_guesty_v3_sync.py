@@ -1184,15 +1184,20 @@ class TestUpgradeContinuity:
         assert upgraded == legacy
 
 
-def _segment_span(segment: dict[str, Any]) -> tuple[datetime, datetime]:
+def _segment_span(
+    segment: dict[str, Any], *, switch_over: bool = False
+) -> tuple[datetime, datetime]:
     """Return a segment's instants at a UTC listing's 15:00 / 11:00.
 
     Its localized dates at the fake listing's default check-in/check-out
     times; the raw ``checkIn``/``checkOut`` are not trusted (issue #212).
+    A *switch_over* segment (a mid-stay move) opens at the previous
+    room's 11:00 check-out instead.
     """
+    opens = time(11) if switch_over else time(15)
     return (
         datetime.combine(
-            date.fromisoformat(segment["checkInDateLocalized"]), time(15), tzinfo=UTC
+            date.fromisoformat(segment["checkInDateLocalized"]), opens, tzinfo=UTC
         ),
         datetime.combine(
             date.fromisoformat(segment["checkOutDateLocalized"]), time(11), tzinfo=UTC
@@ -1255,8 +1260,14 @@ class TestMultiSegmentIntervals:
             for key, row in rows.items()
         } == {
             f"{rid}::{unit_a}": (v3.rooms[unit_a], *_segment_span(first)),
-            f"{rid}::{unit_b}": (v3.rooms[unit_b], *_segment_span(middle)),
-            f"{rid}::{unit_a}#2": (v3.rooms[unit_a], *_segment_span(last)),
+            f"{rid}::{unit_b}": (
+                v3.rooms[unit_b],
+                *_segment_span(middle, switch_over=True),
+            ),
+            f"{rid}::{unit_a}#2": (
+                v3.rooms[unit_a],
+                *_segment_span(last, switch_over=True),
+            ),
         }
         feed_a = await self._room_feed(v3, listing, unit_a)
         feed_b = await self._room_feed(v3, listing, unit_b)
@@ -1290,15 +1301,20 @@ class TestMultiSegmentIntervals:
         await v3.sync_with(provider, second)
 
         segment_x, segment_y = item["stay"]
-        assert (owned.check_in, owned.check_out) == _segment_span(segment_y)
-        for listing, segment in ((first, segment_x), (second, segment_y)):
+        assert (owned.check_in, owned.check_out) == _segment_span(
+            segment_y, switch_over=True
+        )
+        for listing, segment, switch_over in (
+            (first, segment_x, False),
+            (second, segment_y, True),
+        ):
             ((key, row),) = (await v3.bookings(listing)).items()
             assert key == f"{rid}::{listing.pms_id}"
             assert row.room_id == v3.rooms[listing.pms_id]
             assert (
                 _as_utc(row.check_in_date),
                 _as_utc(row.check_out_date),
-            ) == _segment_span(segment)
+            ) == _segment_span(segment, switch_over=switch_over)
         assert v3.transport.counts["v3_search"] == 1
 
     async def test_adjacent_same_room_segments_are_one_booking(
