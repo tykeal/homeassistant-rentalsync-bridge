@@ -49,10 +49,10 @@ A full 50-ID chunk adds about 1.4 KB (24-character IDs plus encoded commas) to r
       "guestId": "string|null",
       "confirmationCode": "string",  // custom_data.confirmationCode; FR-006 check
       "source": "string",            // custom_data.source
-      "checkIn": "ISO-8601 UTC",     // first segment start (change key)
-      "checkOut": "ISO-8601 UTC",    // last segment end (change key)
-      "checkInDateLocalized": "YYYY-MM-DD",   // nightsCount
-      "checkOutDateLocalized": "YYYY-MM-DD",  // nightsCount
+      "checkIn": "ISO-8601 (local, Z)",  // change key only; see note below
+      "checkOut": "ISO-8601 (local, Z)", // change key only
+      "checkInDateLocalized": "YYYY-MM-DD",   // REQUIRED: stay start date; nightsCount
+      "checkOutDateLocalized": "YYYY-MM-DD",  // REQUIRED: stay end date; nightsCount
       "notes": { "other": "", "guest": "", "specialRequests": "", "cleaning": "", "keyCode": "" },
                                      // only other/guest/specialRequests used; cleaning & keyCode ignored
       "customFields": [ { "_id": "string", "fieldId": "string", "value": "any" } ],
@@ -61,10 +61,10 @@ A full 50-ID chunk adds about 1.4 KB (24-character IDs plus encoded commas) to r
         {
           "listingId": "string",     // REQUIRED: unitId ?? unitTypeId → interval room_id
           "parentListingId": "string",  // multi-unit only
-          "checkIn": "ISO-8601 UTC", // interval start
-          "checkOut": "ISO-8601 UTC",// interval end
-          "checkInDateLocalized": "YYYY-MM-DD",
-          "checkOutDateLocalized": "YYYY-MM-DD",
+          "checkIn": "ISO-8601 (local, Z)",  // change key; same-room adjacency
+          "checkOut": "ISO-8601 (local, Z)", // change key; same-room adjacency
+          "checkInDateLocalized": "YYYY-MM-DD",   // REQUIRED: interval start date
+          "checkOutDateLocalized": "YYYY-MM-DD",  // REQUIRED: interval end date
           "guestsCount": 2           // guestsCount
         }
       ]
@@ -73,6 +73,8 @@ A full 50-ID chunk adds about 1.4 KB (24-character IDs plus encoded commas) to r
   "pagination": { "skip": 0, "limit": 100, "hasMore": true }   // REQUIRED
 }
 ```
+
+**Correction (issue #212).** Despite the `Z` suffix and Guesty's "UTC" description, `checkIn`/`checkOut` carry the listing's local wall-clock check-in/check-out time (`…T16:00:00.000Z` for a 16:00 America/New_York listing). They are not used as instants. Each stay's instants are built from the localized dates and the listing document's `defaultCheckInTime`/`defaultCheckOutTime` (`HH:mm`) in its `timezone`; when a time or the timezone is unusable the stay is date-only (all-day). A missing or unparsable localized date fails the listing's sync. See research R6 step 7.
 
 All other fields are ignored. They are never logged at INFO or above, and personal fields are never logged at all.
 
@@ -92,6 +94,7 @@ All other fields are ignored. They are never logged at INFO or above, and person
 | transport error, or 429 after retries | abort (FR-010, FR-033) |
 | `status` key missing on any item | abort (FR-026) |
 | `stay` missing or empty, or a segment without `listingId` | abort (FR-020) |
+| owned stay's `checkInDateLocalized`/`checkOutDateLocalized` missing or unparsable | the listing's sync fails (issue #212) |
 | malformed `customFields` | **not** an abort: `InlineCustomFields(state="malformed")` (FR-028) |
 
 ## Contract tests
