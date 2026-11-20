@@ -915,12 +915,28 @@ class GuestyFakeTransport:
         children: list[str] | None = None,
         parent_id: str | None = None,
         timezone: str = "UTC",
+        check_in_time: str | None = "15:00",
+        check_out_time: str | None = "11:00",
     ) -> dict[str, Any]:
-        """Register a listing document (and its child sub-units)."""
+        """Register a listing document (and its child sub-units).
+
+        The default check-in/check-out times match the synthetic stay
+        instants, so a UTC listing's V3 stays keep those instants.  A
+        None time is omitted from the document.
+        """
+        times = {
+            key: value
+            for key, value in (
+                ("defaultCheckInTime", check_in_time),
+                ("defaultCheckOutTime", check_out_time),
+            )
+            if value is not None
+        }
         document: dict[str, Any] = {
             "_id": listing_id,
             "title": title,
             "timezone": timezone,
+            **times,
         }
         if children:
             document["childListings"] = [
@@ -934,6 +950,7 @@ class GuestyFakeTransport:
                         "_id": child,
                         "title": f"{title} child",
                         "timezone": timezone,
+                        **times,
                         "mtl": {"p": listing_id},
                     },
                 )

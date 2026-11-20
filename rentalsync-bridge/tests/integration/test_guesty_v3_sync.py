@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -47,11 +48,21 @@ class _Fixture:
         self.rooms: dict[str, int] = {}
         self.item: dict[str, Any]
 
-    async def add_tracked(self, *, children: list[str] | None = None) -> Listing:
+    async def add_tracked(
+        self,
+        *,
+        children: list[str] | None = None,
+        timezone: str = "UTC",
+        **times: str | None,
+    ) -> Listing:
         """Create a tracked listing with one room per unit (or itself)."""
         pms_id = self.transport.payloads.new_id("lst")
-        self.transport.add_listing(pms_id, children=children)
-        listing = make_listing(pms_id=pms_id, slug=f"v3-{pms_id[-6:]}", timezone="UTC")
+        self.transport.add_listing(
+            pms_id, children=children, timezone=timezone, **times
+        )
+        listing = make_listing(
+            pms_id=pms_id, slug=f"v3-{pms_id[-6:]}", timezone=timezone
+        )
         self.session.add(listing)
         await self.session.commit()
         await self.session.refresh(listing)
@@ -2046,3 +2057,70 @@ class TestGuestLookupFailure:
         row = (await v3.bookings())[v3.booking_id]
         assert row.guest_name is None
         assert row.guest_phone_last4 is None
+
+
+NY = "America/New_York"
+
+
+class TestListingLocalTimes:
+    """V3 rows are timed from the listing's local check-in/out (#212)."""
+
+    async def test_shifted_row_is_corrected_while_enrichment_is_reused(
+        self, v3: _Fixture
+    ) -> None:
+        """A row stored at V3's mislabelled instant is re-timed next sync."""
+        from src.services.calendar_service import CalendarService
+
+        p = v3.transport.payloads
+        check_in = (p.today + timedelta(days=45)).date()
+        check_out = check_in + timedelta(days=3)
+
+        def wall(day: date, hour: int) -> datetime:
+            """Return *day* at *hour* labelled UTC, as V3 reports it."""
+            return datetime.combine(day, time(hour), tzinfo=UTC)
+
+        def local(day: date, hour: int) -> datetime:
+            """Return *day* at *hour* in New York, as UTC."""
+            return datetime.combine(day, time(hour), tzinfo=ZoneInfo(NY)).astimezone(
+                UTC
+            )
+
+        v3.listing = await v3.add_tracked(
+            timezone=NY, check_in_time="16:00", check_out_time="11:00"
+        )
+        v3.item = p.search_item(
+            v3.listing.pms_id,
+            check_in=wall(check_in, 16),
+            check_out=wall(check_out, 11),
+            custom_fields=p.custom_fields({DOOR_CODE: "4242"}),
+        )
+        v3.transport.v3_items = [v3.item]
+        v3.transport.guests[v3.item["guestId"]] = p.guests_crud_body(v3.item["guestId"])
+        await v3.sync()
+        before = await v3.feed()
+        # A row stored before the fix: V3's local times read as UTC.
+        row = (await v3.bookings())[v3.booking_id]
+        row.check_in_date = wall(check_in, 16)
+        row.check_out_date = wall(check_out, 11)
+        await v3.session.commit()
+        v3.transport.counts.clear()
+
+        await v3.sync()
+
+        row = (await v3.bookings())[v3.booking_id]
+        assert v3.transport.counts["guests_crud"] == 0
+        assert v3.transport.counts["custom_fields"] == 0
+        assert _as_utc(row.check_in_date) == local(check_in, 16)
+        assert _as_utc(row.check_out_date) == local(check_out, 11)
+        assert row.custom_data[DOOR_CODE] == "4242"
+        bookings = [row]
+        feed = CalendarService(cache=CalendarCache(ttl_seconds=0)).generate_ical(
+            v3.listing, bookings
+        )
+        lines = feed.replace("\r\n ", "").splitlines()
+        assert f"DTSTART;TZID={NY}:{check_in:%Y%m%d}T160000" in lines
+        assert f"DTEND;TZID={NY}:{check_out:%Y%m%d}T110000" in lines
+        after = await v3.feed()
+        assert {uid: e["Booking ID"] for uid, e in after.items()} == {
+            uid: e["Booking ID"] for uid, e in before.items()
+        }
