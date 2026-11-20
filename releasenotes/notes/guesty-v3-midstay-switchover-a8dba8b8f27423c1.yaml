@@ -1,0 +1,11 @@
+---
+fixes:
+  - |
+    Guesty Reservations V3 stays with a mid-stay room move left a gap on
+    the switch day: the old room closed at its check-out time and the new
+    room only opened at its check-in time, so the guest had no door code
+    for the new room for several hours. The new room now opens at the
+    previous room's check-out time, so door access is continuous. When the
+    previous room is in a listing the bridge does not track, the new room
+    still opens at its own check-in time. The stay's first check-in, last
+    check-out and booking IDs are unchanged. See issue #212 and pull request #215.

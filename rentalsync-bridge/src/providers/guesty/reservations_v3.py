@@ -259,15 +259,29 @@ class V3ReservationSource:
 
         A room that is itself a tracked listing has had its document read
         this cycle; its own times beat its parent's ``childListings``
-        entry.
+        entry.  Other tracked listings' units are known too (with their
+        parent's per-value fallback), so a stay moved in from one opens
+        at its check-out time; a room this listing owns keeps its own
+        times.
         """
-        return scope.stay_times.with_rooms(
-            {
-                room: other.stay_times.default
-                for room, other in self._scopes.items()
-                if room != listing_pms_id and not isinstance(other, PMSProviderError)
-            }
-        )
+        others = [
+            (room, other)
+            for room, other in self._scopes.items()
+            if room != listing_pms_id and not isinstance(other, PMSProviderError)
+        ]
+        units = {
+            unit: other.stay_times.for_room(unit)
+            for _, other in others
+            for unit in other.stay_times.rooms
+            if unit not in scope.stay_times.rooms and unit not in scope.scope_ids
+        }
+        tracked = {
+            room: other.stay_times.default.inherit(units[room])
+            if room in units
+            else other.stay_times.default
+            for room, other in others
+        }
+        return scope.stay_times.with_rooms({**units, **tracked})
 
     def _control(
         self,

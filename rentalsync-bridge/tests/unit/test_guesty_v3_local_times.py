@@ -342,9 +342,13 @@ class TestSubUnitTimes:
             unit_b,
             f"{unit_a}#2",
         ]
-        for interval, segment in zip(reservation.intervals, item["stay"], strict=True):
+        for index, (interval, segment) in enumerate(
+            zip(reservation.intervals, item["stay"], strict=True)
+        ):
+            # A switch-over opens the next room at the previous check-out.
             assert interval.check_in == _local(
-                date.fromisoformat(segment["checkInDateLocalized"]), 16
+                date.fromisoformat(segment["checkInDateLocalized"]),
+                11 if index else 16,
             )
             assert interval.check_out == _local(
                 date.fromisoformat(segment["checkOutDateLocalized"]), 11
