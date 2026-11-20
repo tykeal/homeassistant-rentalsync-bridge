@@ -6,17 +6,30 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Protocol
+from typing import NamedTuple, Protocol
 
 import httpx
 
 from src.providers.base import PMSProviderError, PMSReservation
+from src.providers.guesty.v3_stay_times import StayTimes
 
 # ``GuestyProvider._request``: authenticated, rate-limit aware HTTP call.
 RequestFn = Callable[..., Awaitable[httpx.Response]]
 
-# ``GuestyProvider._listing_scopes``: ``(fetch_ids, scope_ids)`` for a listing.
-ListingScopesFn = Callable[[str], Awaitable[tuple[frozenset[str], frozenset[str]]]]
+
+class ListingScope(NamedTuple):
+    """What a listing's document says about the reservations it owns."""
+
+    # Listing IDs the reservation search filters on.
+    fetch_ids: frozenset[str]
+    # Listing IDs whose stays the listing owns.
+    scope_ids: frozenset[str]
+    # Check-in/check-out times of the listing and its sub-units.
+    stay_times: StayTimes
+
+
+# ``GuestyProvider._listing_scopes``: a listing's ``ListingScope``.
+ListingScopesFn = Callable[[str], Awaitable[ListingScope]]
 
 
 class GuestyHTTPError(PMSProviderError):

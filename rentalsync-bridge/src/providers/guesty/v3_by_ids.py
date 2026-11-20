@@ -20,10 +20,10 @@ from src.providers.guesty.legacy_reservations import _EXCLUDED_STATUSES
 from src.providers.guesty.sources import GuestyHTTPError
 from src.providers.guesty.v3_mapping import (
     _intervals,
-    _local_date,
     _status,
     segment_owned,
 )
+from src.providers.guesty.v3_stay_times import local_date
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -124,8 +124,8 @@ def _stay_dates(item: dict[str, Any]) -> tuple[date, date] | None:
     """Return the whole stay's first local check-in and last check-out."""
     starts, ends = [], []
     for segment in item["stay"]:
-        start = _local_date(segment.get("checkInDateLocalized"))
-        end = _local_date(segment.get("checkOutDateLocalized"))
+        start = local_date(segment.get("checkInDateLocalized"))
+        end = local_date(segment.get("checkOutDateLocalized"))
         if start is None or end is None:
             return None
         starts.append(start)

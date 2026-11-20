@@ -46,8 +46,8 @@ V3 mode populates the existing fields as follows:
 |---|---|---|
 | `room_id` | `str` | the segment `listingId`: a sub-unit ID, a single-unit listing ID, or the parent unit type when unassigned (FR-019) |
 | `ordinal` | `int` (≥ 1) | 1 for the first interval in this room within the reservation, 2 for the next, and so on |
-| `check_in` | `datetime` (UTC) \| `None` | first merged segment's `checkIn`; `None` only in a by-IDs re-attribution (§2.3) |
-| `check_out` | `datetime` (UTC) \| `None` | last merged segment's `checkOut`; `None` only in a by-IDs re-attribution |
+| `check_in` | `datetime` (UTC) \| `None` | first merged segment's `checkInDateLocalized` at the room's `defaultCheckInTime` in its `timezone` (midnight UTC, date-only, when unusable; issue #212); `None` only in a by-IDs re-attribution (§2.3) |
+| `check_out` | `datetime` (UTC) \| `None` | last merged segment's `checkOutDateLocalized` at the room's `defaultCheckOutTime`, likewise; `None` only in a by-IDs re-attribution |
 | `local_dates` | `tuple[date, date] \| None` | the interval's listing-localized check-in and check-out dates. Always set; for a by-IDs re-attribution (R5) it is the **only** date source, and `check_in`/`check_out` are re-anchored from the stored row by the sync |
 | `guests_count` | `int \| None` | the **maximum** of the merged segments' `guestsCount` (non-additive: adjacent segments describe the same guests over time). It equals the common value when they agree. `None` when no merged segment has a count |
 
@@ -148,7 +148,7 @@ The by-IDs resource returns a different shape from search. Before attribution, e
 | `status` | `status` | copied (R7 mapping applies afterwards) |
 | `stay[].listingId` | `stay[].unitId`, `stay[].unitTypeId` | `unitId ?? unitTypeId` |
 | `stay[].parentListingId` | — | `unitTypeId` when `unitId` is present and differs from it, else absent |
-| `stay[].checkIn`/`checkOut` (UTC) | — | absent; intervals carry `local_dates` only |
+| `stay[].checkIn`/`checkOut` (listing-local, labelled UTC; issue #212) | — | absent; intervals carry `local_dates` only |
 | `stay[].check*DateLocalized` | same | copied |
 | reservation-level window test | `stay[0].checkInDateLocalized`, `stay[-1].checkOutDateLocalized` | compared with the padded R3 window, the same bounds the search filter used |
 

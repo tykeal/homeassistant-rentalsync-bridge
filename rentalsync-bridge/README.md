@@ -99,6 +99,12 @@ Add-on options:
 | `log_level`               | Logging verbosity (`debug`, `info`, `warning`, `error`, `critical`) | `info`  |
 | `guesty_reservations_api` | Guesty reservations API: `v3` or `legacy` (rollback only)           | `v3`    |
 
+Installations upgraded from an earlier version may not show
+`guesty_reservations_api` or `log_level` on the **Configuration** tab,
+because Home Assistant hides optional options that are not set. Turn on
+**Show unused optional configuration options** from the ⋮ menu on that tab,
+or use **Edit in YAML** and add the option there.
+
 Set `log_level` to `debug` when collecting diagnostics for a bug report.
 `debug` adds application diagnostics (reservation ids, statuses, dates, room
 ids and sync counts) and deliberately leaves SQL, database driver and HTTP

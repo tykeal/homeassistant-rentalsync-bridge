@@ -9,7 +9,6 @@ import json
 import logging
 from collections import Counter
 from dataclasses import replace
-from datetime import date
 from typing import Any
 
 from src.providers.base import (
@@ -26,6 +25,13 @@ from src.providers.guesty.legacy_reservations import (
     _EXCLUDED_STATUSES,
     _STATUS_MAP,
     _parse_date,
+)
+from src.providers.guesty.v3_stay_times import (
+    StayTimes,
+    local_dates,
+    localized_stay,
+    required_date,
+    stay_instants,
 )
 
 logger = logging.getLogger(__name__)
@@ -250,16 +256,6 @@ def _status(item: dict[str, Any], rid: str) -> str | None:
     return raw
 
 
-def _local_date(value: Any) -> date | None:
-    """Parse a listing-localized ``YYYY-MM-DD`` date, or None."""
-    if not isinstance(value, str):
-        return None
-    try:
-        return date.fromisoformat(value[:10])
-    except ValueError:
-        return None
-
-
 def _guests(value: Any) -> int | None:
     """Return a segment's ``guestsCount`` when it is an integral number."""
     if isinstance(value, bool):
@@ -282,15 +278,17 @@ def _adjacent(previous: dict[str, Any], segment: dict[str, Any]) -> bool:
 
 
 def _merge(
-    interval: PMSOccupancyInterval, segment: dict[str, Any]
+    interval: PMSOccupancyInterval, segment: dict[str, Any], times: StayTimes
 ) -> PMSOccupancyInterval:
     """Extend an interval by the adjacent same-room segment after it."""
-    check_out_local = _local_date(segment.get("checkOutDateLocalized"))
-    local_dates = (
-        (interval.local_dates[0], check_out_local)
-        if interval.local_dates and check_out_local
-        else None
+    check_out_local = required_date(segment, key="checkOutDateLocalized")
+    check_in_local = (
+        interval.local_dates[0]
+        if interval.local_dates
+        else required_date(segment, key="checkInDateLocalized")
     )
+    room = times.for_room(interval.room_id)
+    check_in, check_out = stay_instants((check_in_local, room), (check_out_local, room))
     counts = [
         n
         for n in (interval.guests_count, _guests(segment.get("guestsCount")))
@@ -298,8 +296,9 @@ def _merge(
     ]
     return replace(
         interval,
-        check_out=_parse_date(segment.get("checkOut")),
-        local_dates=local_dates,
+        check_in=check_in,
+        check_out=check_out,
+        local_dates=(check_in_local, check_out_local),
         guests_count=max(counts) if counts else None,
     )
 
@@ -309,6 +308,7 @@ def _intervals(
     scope_ids: frozenset[str],
     *,
     with_instants: bool = True,
+    times: StayTimes | None = None,
 ) -> tuple[PMSOccupancyInterval, ...]:
     """Build the occupancy intervals of the segments a listing owns.
 
@@ -322,10 +322,17 @@ def _intervals(
         with_instants: False for by-IDs segments, which carry only local
             dates; their intervals then have no UTC instants and never
             merge (an equal same-room boundary date is ambiguous there).
+        times: Listing times the instants are built from (see
+            ``stay_instants``); None gives date-only instants.
+
+    Raises:
+        PMSProviderError: If an owned segment's localized date is
+            unusable while instants are built.
 
     Returns:
         The owned intervals in stay order.
     """
+    times = times or StayTimes()
     seen: Counter[str] = Counter()
     intervals: list[PMSOccupancyInterval] = []
     previous: dict[str, Any] | None = None
@@ -337,7 +344,7 @@ def _intervals(
             and previous is not None
             and _adjacent(previous, segment)
         ):
-            intervals[-1] = _merge(intervals[-1], segment)
+            intervals[-1] = _merge(intervals[-1], segment, times)
             previous = segment
             continue
         previous = segment if owned else None
@@ -345,19 +352,20 @@ def _intervals(
             continue
         room = segment["listingId"]
         seen[room] += 1
-        check_in_local = _local_date(segment.get("checkInDateLocalized"))
-        check_out_local = _local_date(segment.get("checkOutDateLocalized"))
+        check_in = check_out = None
+        dates = local_dates(segment)
+        if with_instants:
+            room_times = times.for_room(room)
+            dates, (check_in, check_out) = localized_stay(
+                (segment,), (segment,), room_times, room_times
+            )
         intervals.append(
             PMSOccupancyInterval(
                 room_id=room,
                 ordinal=seen[room],
-                check_in=_parse_date(segment.get("checkIn")) if with_instants else None,
-                check_out=_parse_date(segment.get("checkOut"))
-                if with_instants
-                else None,
-                local_dates=(check_in_local, check_out_local)
-                if check_in_local and check_out_local
-                else None,
+                check_in=check_in,
+                check_out=check_out,
+                local_dates=dates,
                 guests_count=_guests(segment.get("guestsCount")),
             )
         )
@@ -368,13 +376,21 @@ def map_search_item(
     item: dict[str, Any],
     listing_pms_id: str,
     scope_ids: frozenset[str],
+    *,
+    stay_times: StayTimes | None = None,
 ) -> PMSReservation | None:
     """Convert one owned search item to a ``PMSReservation``.
+
+    V3's ``checkIn``/``checkOut`` carry the listing's local wall-clock
+    time labelled UTC, so instants come from the localized dates and the
+    listing's configured times instead (see ``stay_instants``).
 
     Args:
         item: Raw search item owned by the listing (see ``owned_by``).
         listing_pms_id: Owning listing ID.
         scope_ids: Listing IDs owned by that listing.
+        stay_times: Times of the listing and its rooms; None gives a
+            date-only stay.
 
     Returns:
         The DTO, or None for an excluded status or a stay with no owned
@@ -391,12 +407,17 @@ def map_search_item(
     status = _status(item, rid)
     if status is None:
         return None
-    intervals = _intervals(segments, scope_ids)
+    times = stay_times or StayTimes()
+    intervals = _intervals(segments, scope_ids, times=times)
     if not intervals:
         return None
     if all(segment_owned(s, scope_ids) for s in segments):
-        check_in = _parse_date(item.get("checkIn") or segments[0].get("checkIn"))
-        check_out = _parse_date(item.get("checkOut") or segments[-1].get("checkOut"))
+        _, (check_in, check_out) = localized_stay(
+            (item, segments[0]),
+            (item, segments[-1]),
+            times.for_room(segments[0]["listingId"]),
+            times.for_room(segments[-1]["listingId"]),
+        )
     else:
         # A stay that also occupies other listings spans only its owned nights.
         check_in = min(i.check_in for i in intervals if i.check_in)

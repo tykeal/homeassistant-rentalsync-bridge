@@ -24,7 +24,7 @@ from src.providers.guesty.v3_by_ids import (
     AbsenceContext,
     confirm_batch,
 )
-from src.providers.guesty.v3_diagnostics import ListingStats
+from src.providers.guesty.v3_diagnostics import ListingStats, log_stay_times
 from src.providers.guesty.v3_mapping import (
     V3_CLASSIFIED_STATUSES,
     map_search_item,
@@ -37,7 +37,8 @@ from src.utils.datetime_utils import ensure_utc
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from src.providers.guesty.sources import ListingScopesFn, RequestFn
+    from src.providers.guesty.sources import ListingScope, ListingScopesFn, RequestFn
+    from src.providers.guesty.v3_stay_times import StayTimes
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +50,6 @@ V3_LOOKBACK_DAYS = 91
 # Pad on each side of the localized-date filter so one combined search over
 # listings in any timezone stays a superset of the instant-based window.
 _TIMEZONE_PAD = timedelta(days=1)
-
-Scopes = tuple[frozenset[str], frozenset[str]]
 
 
 def _utcnow() -> datetime:
@@ -111,12 +110,12 @@ class V3ReservationSource:
 
         Args:
             request: The provider's authenticated, retrying request method.
-            listing_scopes: Resolves a listing's ``(fetch_ids, scope_ids)``.
+            listing_scopes: Resolves a listing's ``ListingScope``.
         """
         self._request = request
         self._listing_scopes = listing_scopes
         self._tracked: set[str] = set()
-        self._scopes: dict[str, Scopes | PMSProviderError] = {}
+        self._scopes: dict[str, ListingScope | PMSProviderError] = {}
         self._result: list[dict[str, Any]] | PMSProviderError | None = None
         self._window: tuple[date, date] | None = None
         self._filter_ids: frozenset[str] = frozenset()
@@ -132,7 +131,7 @@ class V3ReservationSource:
         self._result = None
         self._window = None
 
-    async def _scope(self, listing_pms_id: str) -> Scopes | PMSProviderError:
+    async def _scope(self, listing_pms_id: str) -> ListingScope | PMSProviderError:
         """Resolve (once per cycle) a listing's scopes or its failure."""
         if listing_pms_id not in self._scopes:
             try:
@@ -234,7 +233,8 @@ class V3ReservationSource:
         scope = await self._scope(listing_pms_id)
         if isinstance(scope, PMSProviderError):
             raise scope
-        scope_ids = scope[1]
+        scope_ids = scope.scope_ids
+        times = self._stay_times(listing_pms_id, scope)
 
         reservations: list[PMSReservation] = []
         stats = ListingStats()
@@ -242,7 +242,8 @@ class V3ReservationSource:
             if not owned_by(item, scope_ids):
                 continue
             stats.owned += 1
-            mapped = map_search_item(item, listing_pms_id, scope_ids)
+            mapped = map_search_item(item, listing_pms_id, scope_ids, stay_times=times)
+            log_stay_times(item, times, mapped)
             if mapped is None or not _overlaps_window(mapped, start, end):
                 continue
             if mapped.status not in V3_CLASSIFIED_STATUSES:
@@ -252,6 +253,21 @@ class V3ReservationSource:
         stats.log(listing_pms_id, reservations)
         _guard_unclassified(stats.unclassified, len(reservations), listing_pms_id)
         return reservations
+
+    def _stay_times(self, listing_pms_id: str, scope: ListingScope) -> StayTimes:
+        """Return a listing's stay times, preferring a room's own document.
+
+        A room that is itself a tracked listing has had its document read
+        this cycle; its own times beat its parent's ``childListings``
+        entry.
+        """
+        return scope.stay_times.with_rooms(
+            {
+                room: other.stay_times.default
+                for room, other in self._scopes.items()
+                if room != listing_pms_id and not isinstance(other, PMSProviderError)
+            }
+        )
 
     def _control(
         self,

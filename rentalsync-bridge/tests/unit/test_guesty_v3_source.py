@@ -5,7 +5,7 @@
 import copy
 import itertools
 import logging
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from typing import Any
 
 import pytest
@@ -16,6 +16,7 @@ from src.providers.base import (
     PMSProviderError,
 )
 from src.providers.guesty import reservations_v3, v3_search
+from src.providers.guesty.description_fields import description_fields
 from src.providers.guesty.legacy_reservations import (
     LegacyReservationSource,
     _resolve_room_id,
@@ -396,7 +397,11 @@ class TestDescriptionFields:
         check_in: str | None,
         check_out: str | None,
     ) -> None:
-        """Unparsable or non-positive localized dates omit the key."""
+        """Unparsable or non-positive localized dates omit the key.
+
+        Mapping itself rejects unusable localized dates (issue #212), so
+        the description fields are built directly.
+        """
         p = guesty_v3_payloads
         item = p.search_item(p.new_id("lst"))
         for key, value in (
@@ -410,7 +415,7 @@ class TestDescriptionFields:
             for segment in item["stay"]:
                 segment.pop(key, None)
 
-        assert "nightsCount" not in _description(item)
+        assert "nightsCount" not in description_fields(item, item["stay"], ())
 
     def test_no_money_fields(self, guesty_v3_payloads: GuestyV3Payloads) -> None:
         """Payment totals are retired, never re-sourced (FR-036)."""
@@ -810,6 +815,26 @@ def _spans(reservation: Any) -> list[tuple[datetime | None, datetime | None]]:
     return [(i.check_in, i.check_out) for i in reservation.intervals]
 
 
+def _segment_span(segment: dict[str, Any]) -> tuple[datetime, datetime]:
+    """Return a segment's instants at a UTC listing's 15:00 / 11:00.
+
+    Its localized dates at the fake listing's default check-in/check-out
+    times; the raw ``checkIn``/``checkOut`` are not trusted (issue #212).
+    """
+    return (
+        datetime.combine(
+            date.fromisoformat(segment["checkInDateLocalized"]),
+            time(15),
+            tzinfo=UTC,
+        ),
+        datetime.combine(
+            date.fromisoformat(segment["checkOutDateLocalized"]),
+            time(11),
+            tzinfo=UTC,
+        ),
+    )
+
+
 class TestAttribution:
     """Segment-level ownership and interval identities (T039, R6)."""
 
@@ -880,20 +905,14 @@ class TestAttribution:
         rid = item["reservationId"]
         segment_x, segment_y = item["stay"]
         assert _ids(rid, later) == [f"{rid}::{second}"]
-        assert (later.check_in, later.check_out) == (
-            datetime.fromisoformat(segment_y["checkIn"]),
-            datetime.fromisoformat(segment_y["checkOut"]),
-        )
+        assert (later.check_in, later.check_out) == _segment_span(segment_y)
         assert _spans(later) == [(later.check_in, later.check_out)]
         assert later.intervals[0].local_dates == (
             date.fromisoformat(segment_y["checkInDateLocalized"]),
             date.fromisoformat(segment_y["checkOutDateLocalized"]),
         )
         assert _ids(rid, earlier) == [f"{rid}::{first}"]
-        assert (earlier.check_in, earlier.check_out) == (
-            datetime.fromisoformat(segment_x["checkIn"]),
-            datetime.fromisoformat(segment_x["checkOut"]),
-        )
+        assert (earlier.check_in, earlier.check_out) == _segment_span(segment_x)
         assert guesty_transport.counts["v3_search"] == 1
 
     async def test_untracked_start_is_the_residual_gap(
@@ -940,13 +959,7 @@ class TestAttribution:
             f"{rid}::{property_['a']}",
             f"{rid}::{property_['b']}",
         ]
-        assert _spans(reservation) == [
-            (
-                datetime.fromisoformat(s["checkIn"]),
-                datetime.fromisoformat(s["checkOut"]),
-            )
-            for s in item["stay"]
-        ]
+        assert _spans(reservation) == [_segment_span(s) for s in item["stay"]]
 
     async def test_round_trip(
         self, guesty_transport: GuestyFakeTransport, property_: dict[str, str]

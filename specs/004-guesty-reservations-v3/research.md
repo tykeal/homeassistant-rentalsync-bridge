@@ -192,7 +192,7 @@ The by-IDs item differs from a search item: `_id` instead of `reservationId`; pe
 | `stay[].listingId` | `unitId ?? unitTypeId` (Guesty's own definition of the search field) |
 | `stay[].parentListingId` | `unitTypeId` when `unitId` is present and differs from it; otherwise absent |
 | `stay[].checkInDateLocalized`, `checkOutDateLocalized` | the same fields |
-| `stay[].checkIn`, `checkOut` (UTC instants) | not available; see "Dates" below |
+| `stay[].checkIn`, `checkOut` (raw instants; listing-local, see the R6 correction) | not available; see "Dates" below |
 
 - **Identities.** Intervals and `#n` numbering come from the normalised `stay[]` through R6 steps 2–5 unchanged, so a booking's `pms_booking_id`, and therefore its event UID and `Booking ID:` line, are byte-identical whichever endpoint supplied the data. A contract test feeds the same reservation through both shapes and asserts identical IDs.
 - **Ambiguous boundaries.** R6 merges same-room segments only when they are adjacent by UTC instant (`prev.checkOut == next.checkIn`). Localized dates cannot always decide that: two consecutive segments that share a room and whose `checkOutDateLocalized`/`checkInDateLocalized` are the **same date** may be adjacent (one interval) or separated by a gap within that day (two intervals, the second `#2`). For such a candidate the grouping, and therefore the `#n` identities, cannot be rebuilt reliably, so the verdict is `UNCONFIRMED` (keep every stored row, WARNING with the reservation ID). Different dates are unambiguous: a later date is a gap, an earlier one is invalid. Different rooms never merge, so their boundaries are never ambiguous.
@@ -242,7 +242,9 @@ Each reservation goes through these steps per listing:
    - The first interval in room R is `{rid}::{R}`, which is identical to legacy for every single-segment reservation (FR-005, FR-007).
    - The *n*-th interval (n ≥ 2) in room R is `{rid}::{R}#{n}`.
 6. **Room ID equivalence.** The V3 segment `listingId` is `unitId ?? unitTypeId`. For a single segment this equals legacy `_resolve_room_id`, which takes the first `unitId`, else falls back to `listingId` = `unitId ?? unitTypeId`. A fixture-based identity test pins this against stored legacy rows (SC-002).
-7. **Dates.** Each interval uses its segments' UTC `checkIn`/`checkOut` instants (first segment's in, last segment's out). For a single segment these equal the top-level `checkIn`/`checkOut` that legacy used.
+7. **Dates.** Each interval spans its first segment's `checkInDateLocalized` to its last segment's `checkOutDateLocalized`. The instants are built from those listing-local dates, the room's `defaultCheckInTime`/`defaultCheckOutTime` and its `timezone` (see the correction below).
+
+> **Correction (issue #212).** This decision originally used the segments' `checkIn`/`checkOut` as UTC instants. They are not UTC: V3 sends the listing's local wall-clock check-in/check-out time with a `Z` suffix (`…T16:00:00.000Z` for a 16:00 America/New_York listing), which exported stays five hours early for US Eastern listings. Instants now come from the localized dates plus the listing document's `defaultCheckInTime`/`defaultCheckOutTime` (`HH:mm`) and `timezone`, from the document `_listing_scopes` already reads (no extra request). A room uses its own values when known (its `childListings` entry, or its own document when it is a tracked listing), else the owning listing's, per value. A missing or unparsable time or timezone gives a date-only stay (midnight UTC on the localized dates, exported all-day); a missing localized date fails the listing's sync. Step 4's adjacency still compares the raw `checkOut`/`checkIn` values: both sides carry the same labelling, so grouping and `#n` identities are unchanged. The raw values also still feed the R9 change key.
 
 ### Why `#n` is safe
 
