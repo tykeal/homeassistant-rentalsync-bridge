@@ -48,6 +48,12 @@ log_level: info
 | `log_level` | Logging verbosity | `info` |
 | `guesty_reservations_api` | Guesty API used to read reservations: `v3` or `legacy` | `v3` |
 
+Installations upgraded from an earlier version may not show
+`guesty_reservations_api` or `log_level` on the **Configuration** tab,
+because Home Assistant hides optional options that are not set. Turn on
+**Show unused optional configuration options** from the ⋮ menu on that tab,
+or use **Edit in YAML** and add the option there.
+
 The `log_level` option accepts `debug`, `info`, `warning`, `error` or
 `critical` and is passed to the application as the `LOG_LEVEL` environment
 variable. Set it to `debug` when gathering diagnostics (for example, to see how
