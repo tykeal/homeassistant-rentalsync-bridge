@@ -61,8 +61,16 @@ class StayTimes:
         return own.inherit(self.default) if own is not None else self.default
 
     def with_rooms(self, rooms: dict[str, ListingTimes]) -> StayTimes:
-        """Return a copy where *rooms* take precedence over known rooms."""
-        return StayTimes(self.default, {**self.rooms, **rooms})
+        """Return a copy where *rooms* take precedence over known rooms.
+
+        Each value present in *rooms* wins; an absent one keeps the known
+        room's value.
+        """
+        merged = {
+            room: own.inherit(self.rooms[room]) if room in self.rooms else own
+            for room, own in rooms.items()
+        }
+        return StayTimes(self.default, {**self.rooms, **merged})
 
 
 def _text(value: Any) -> str | None:

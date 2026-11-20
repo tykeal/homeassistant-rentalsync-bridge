@@ -294,6 +294,18 @@ class TestSubUnitTimes:
         assert reservation.check_in == _local(start, 14)
         assert reservation.check_out == _local(start + timedelta(5), 11)
 
+    def test_tracked_room_document_merges_per_field(self) -> None:
+        """A tracked room's partial document keeps its entry's other times."""
+        from src.providers.guesty.v3_stay_times import ListingTimes, stay_times
+
+        parent = _document("16:00", "11:00")
+        parent["childListings"] = [{"_id": "unit", "defaultCheckInTime": "14:00"}]
+        own = ListingTimes(timezone=NY, check_in=None, check_out="10:00")
+
+        times = stay_times(parent).with_rooms({"unit": own})
+
+        assert times.for_room("unit") == ListingTimes(NY, "14:00", "10:00")
+
     async def test_round_trip_keeps_its_identities(
         self, guesty_transport: GuestyFakeTransport
     ) -> None:
