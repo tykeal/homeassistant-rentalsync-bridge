@@ -261,7 +261,8 @@ class V3ReservationSource:
         this cycle; its own times beat its parent's ``childListings``
         entry.  Other tracked listings' units are known too (with their
         parent's per-value fallback), so a stay moved in from one opens
-        at its check-out time.
+        at its check-out time; a room this listing owns keeps its own
+        times.
         """
         others = [
             (room, other)
@@ -272,7 +273,7 @@ class V3ReservationSource:
             unit: other.stay_times.for_room(unit)
             for _, other in others
             for unit in other.stay_times.rooms
-            if unit not in scope.stay_times.rooms
+            if unit not in scope.stay_times.rooms and unit not in scope.scope_ids
         }
         tracked = {
             room: other.stay_times.default.inherit(units[room])
