@@ -16,6 +16,8 @@ from src.providers.base import PMSReservation
 from src.providers.guesty.v3_mapping import map_search_item
 from src.providers.guesty.v3_stay_times import ListingTimes, StayTimes
 
+from tests.conftest import GuestyFakeTransport
+
 NY = "America/New_York"
 CHI = "America/Chicago"
 START = date(2026, 12, 7)
@@ -162,6 +164,26 @@ class TestSwitchOver:
 
         switch = START + timedelta(2)
         assert _spans(reservation)[0][1] == _local(switch, 16)
+
+    async def test_move_between_tracked_multi_unit_listings(
+        self, guesty_transport: GuestyFakeTransport
+    ) -> None:
+        """P's unit → Q's unit: Q's unit opens at P's unit's check-out."""
+        p = guesty_transport.payloads
+        parent_p, unit_p, parent_q, unit_q = (p.new_id("lst") for _ in range(4))
+        document = guesty_transport.add_listing(
+            parent_p, children=[unit_p], timezone=CHI, check_out_time="11:00"
+        )
+        document["childListings"][0]["defaultCheckOutTime"] = "10:00"
+        guesty_transport.add_listing(parent_q, children=[unit_q], timezone=NY)
+        stay = _contiguous((unit_p, parent_p), (unit_q, parent_q))
+        guesty_transport.v3_items = [_item(stay)]
+        provider = guesty_transport.provider(reservations_api="v3")
+        provider.begin_cycle([parent_p, parent_q])
+
+        (reservation,) = await provider.get_reservations(parent_q)
+
+        assert _spans(reservation)[0][1] == _local(START + timedelta(2), 10, CHI)
 
 
 class TestUnchanged:
