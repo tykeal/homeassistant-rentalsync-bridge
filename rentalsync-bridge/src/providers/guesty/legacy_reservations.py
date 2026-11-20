@@ -203,7 +203,7 @@ class LegacyReservationSource:
 
         Args:
             request: The provider's authenticated, retrying request method.
-            listing_scopes: Resolves a listing's ``(fetch_ids, scope_ids)``.
+            listing_scopes: Resolves a listing's ``ListingScope``.
         """
         self._request = request
         self._listing_scopes = listing_scopes
@@ -268,7 +268,7 @@ class LegacyReservationSource:
         # before any reservation page is requested.  A failure here raises
         # out of ``get_rooms`` and aborts the whole fetch, so the sync prune
         # logic is never handed an unscoped or empty snapshot.
-        fetch_ids, scope_ids = await self._listing_scopes(listing_pms_id)
+        fetch_ids, scope_ids, _ = await self._listing_scopes(listing_pms_id)
         listing_filter = json.dumps(
             [
                 {

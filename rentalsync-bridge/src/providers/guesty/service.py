@@ -31,7 +31,8 @@ from src.providers.guesty.legacy_reservations import (
     LegacyReservationSource,
 )
 from src.providers.guesty.reservations_v3 import V3ReservationSource
-from src.providers.guesty.sources import GuestyHTTPError
+from src.providers.guesty.sources import GuestyHTTPError, ListingScope
+from src.providers.guesty.v3_stay_times import stay_times
 from src.providers.registry import provider
 from src.utils.field_labels import humanize_label
 
@@ -497,7 +498,7 @@ class GuestyProvider(PMSProvider):
     async def _listing_scopes(
         self,
         listing_pms_id: str,
-    ) -> tuple[frozenset[str], frozenset[str]]:
+    ) -> ListingScope:
         """Resolve the fetch scope and ownership scope for a listing.
 
         The two scopes differ on purpose:
@@ -518,8 +519,11 @@ class GuestyProvider(PMSProvider):
         Args:
             listing_pms_id: Guesty listing ID being synced.
 
+        The same document supplies the listing's check-in/check-out times
+        (issue #212), so they cost no extra request.
+
         Returns:
-            Tuple of ``(fetch_ids, scope_ids)``.
+            The listing's ``ListingScope``.
 
         Raises:
             PMSProviderError: On API failure.
@@ -527,7 +531,11 @@ class GuestyProvider(PMSProvider):
         data = await self._listing_document(listing_pms_id)
         rooms = _rooms_from_document(data, listing_pms_id)
         scope_ids = frozenset({listing_pms_id, *(room.pms_room_id for room in rooms)})
-        return frozenset(scope_ids | _parent_listing_ids(data)), scope_ids
+        return ListingScope(
+            frozenset(scope_ids | _parent_listing_ids(data)),
+            scope_ids,
+            stay_times(data),
+        )
 
     async def _listing_document(self, listing_pms_id: str) -> dict[str, Any]:
         """Fetch the raw Guesty listing document.

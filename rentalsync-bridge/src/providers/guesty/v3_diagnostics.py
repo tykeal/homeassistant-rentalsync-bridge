@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from datetime import date
 
     from src.providers.base import PMSReservation
+    from src.providers.guesty.v3_stay_times import StayTimes
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +95,42 @@ def log_search_result(items: list[dict[str, Any]], duplicates: int) -> None:
             len(stay),
             ",".join(str(segment.get("listingId")) for segment in stay),
         )
+
+
+def log_stay_times(
+    item: dict[str, Any], times: StayTimes, mapped: PMSReservation | None
+) -> None:
+    """Log the raw V3 stay times beside the instants built from them (#212).
+
+    Per segment: its room, the raw ``checkIn``/``checkOut``, the localized
+    dates and the listing times used.  Dates and times only, no guest data.
+    """
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+    segments = [
+        (
+            segment.get("listingId"),
+            segment.get("checkIn"),
+            segment.get("checkOut"),
+            segment.get("checkInDateLocalized"),
+            segment.get("checkOutDateLocalized"),
+            times.for_room(str(segment.get("listingId"))).describe(),
+        )
+        for segment in item.get("stay") or ()
+        if isinstance(segment, dict)
+    ]
+    logger.debug(
+        "Guesty V3 reservation %s stay times: raw=%s..%s local=%s..%s "
+        "built=%s..%s segments=%s",
+        item.get("reservationId"),
+        item.get("checkIn"),
+        item.get("checkOut"),
+        item.get("checkInDateLocalized"),
+        item.get("checkOutDateLocalized"),
+        mapped.check_in.isoformat() if mapped else None,
+        mapped.check_out.isoformat() if mapped else None,
+        segments,
+    )
 
 
 @dataclass

@@ -1,0 +1,13 @@
+---
+fixes:
+  - |
+    Guesty Reservations V3 check-in and check-out times were shifted by
+    the listing's UTC offset (5 hours early for US Eastern listings, so a
+    16:00 check-in exported as 11:00). Guesty sends the listing's local
+    time with a UTC label, which the bridge took at face value. Stay
+    times are now built from the listing's local check-in/check-out
+    dates, its configured default check-in and check-out times and its
+    timezone. Existing bookings are corrected automatically on the next
+    sync. A listing without configured check-in/check-out times (or
+    without a timezone) now exports all-day events, so Rental Control
+    applies its own default times. See issue #212.

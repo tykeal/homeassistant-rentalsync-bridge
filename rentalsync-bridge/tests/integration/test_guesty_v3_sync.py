@@ -1185,10 +1185,18 @@ class TestUpgradeContinuity:
 
 
 def _segment_span(segment: dict[str, Any]) -> tuple[datetime, datetime]:
-    """Return a search segment's UTC ``(checkIn, checkOut)`` instants."""
+    """Return a segment's instants at a UTC listing's 15:00 / 11:00.
+
+    Its localized dates at the fake listing's default check-in/check-out
+    times; the raw ``checkIn``/``checkOut`` are not trusted (issue #212).
+    """
     return (
-        datetime.fromisoformat(segment["checkIn"]),
-        datetime.fromisoformat(segment["checkOut"]),
+        datetime.combine(
+            date.fromisoformat(segment["checkInDateLocalized"]), time(15), tzinfo=UTC
+        ),
+        datetime.combine(
+            date.fromisoformat(segment["checkOutDateLocalized"]), time(11), tzinfo=UTC
+        ),
     )
 
 
