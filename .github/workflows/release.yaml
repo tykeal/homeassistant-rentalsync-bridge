@@ -279,14 +279,19 @@ jobs:
       - name: "Generate SBOM"
         id: sbom
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/python-sbom-action@639001a0def8109e045818dfb3ee82cf602657af  # v0.1.4
+        uses: lfreleng-actions/sbom-action@434d39a14c023feabeb207cce667179a7acf49b0  # v0.7.3
         with:
+          backend: 'python'
+          # This job holds no permissions, secrets or runner beyond those
+          # of python-build, which already ran this checkout, so a fork
+          # pull request need not skip it.
+          untrusted_checkout: 'false'
           include_dev: "false"
           sbom_format: "both"
           path_prefix: 'rentalsync-bridge/'
-          # The action defaults to 3.12 and binds uv to that interpreter
-          # (no downloads), so it must match requires-python (3.14 only).
-          # Remove once the action derives it from the project; see #101.
+          # The python backend defaults to 3.12 and binds uv to that
+          # interpreter (no downloads) rather than deriving it from
+          # requires-python, so it must match that (3.14 only).
           python_version: "3.14"
 
       - name: "Upload SBOM artifacts"
@@ -295,8 +300,8 @@ jobs:
         with:
           name: sbom-files
           path: |
-            sbom-cyclonedx.json
-            sbom-cyclonedx.xml
+            ${{ steps.sbom.outputs.sbom_json_path }}
+            ${{ steps.sbom.outputs.sbom_xml_path }}
           if-no-files-found: error
           retention-days: 45
 
