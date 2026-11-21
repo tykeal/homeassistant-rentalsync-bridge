@@ -66,7 +66,7 @@ jobs:
       - name: 'Run zizmor audit'
         id: 'zizmor'
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/zizmor-scan-action@777b537a9c616bb820b6e59173e22d651cfb18a8  # v0.6.1
+        uses: lfreleng-actions/zizmor-scan-action@f3b82e7c4603753c708678359ba91626a17aa421  # v0.6.3
         with:
           persona: 'auditor'
           min-severity: 'informational'
