@@ -37,7 +37,7 @@ jobs:
       # Load this job's egress allow-list, then block everything
       # else; see .github/harden-runner/README.md.
       # yamllint disable-line rule:line-length
-      - uses: lfreleng-actions/harden-runner-block-action@f5a475661142cd2f1611ae6fbf8af2be0f36a9a7  # v0.16.3
+      - uses: lfreleng-actions/harden-runner-block-action@65ff87957e1cac2de3203a85dbb07c31810321cb  # v0.16.4
         with:
           # yamllint disable-line rule:line-length
           config: '${{ github.repository }}//.github/harden-runner/build-test/repository-metadata.txt@${{ github.sha }}'
@@ -166,7 +166,7 @@ jobs:
       # Load this job's egress allow-list, then block everything
       # else; see .github/harden-runner/README.md.
       # yamllint disable-line rule:line-length
-      - uses: lfreleng-actions/harden-runner-block-action@f5a475661142cd2f1611ae6fbf8af2be0f36a9a7  # v0.16.3
+      - uses: lfreleng-actions/harden-runner-block-action@65ff87957e1cac2de3203a85dbb07c31810321cb  # v0.16.4
         with:
           # yamllint disable-line rule:line-length
           config: '${{ github.repository }}//.github/harden-runner/build-test/python-build.txt@${{ github.sha }}'
@@ -206,7 +206,7 @@ jobs:
       # Load this job's egress allow-list, then block everything
       # else; see .github/harden-runner/README.md.
       # yamllint disable-line rule:line-length
-      - uses: lfreleng-actions/harden-runner-block-action@f5a475661142cd2f1611ae6fbf8af2be0f36a9a7  # v0.16.3
+      - uses: lfreleng-actions/harden-runner-block-action@65ff87957e1cac2de3203a85dbb07c31810321cb  # v0.16.4
         with:
           # yamllint disable-line rule:line-length
           config: '${{ github.repository }}//.github/harden-runner/build-test/python-tests.txt@${{ github.sha }}'
@@ -248,7 +248,7 @@ jobs:
       # Load this job's egress allow-list, then block everything
       # else; see .github/harden-runner/README.md.
       # yamllint disable-line rule:line-length
-      - uses: lfreleng-actions/harden-runner-block-action@f5a475661142cd2f1611ae6fbf8af2be0f36a9a7  # v0.16.3
+      - uses: lfreleng-actions/harden-runner-block-action@65ff87957e1cac2de3203a85dbb07c31810321cb  # v0.16.4
         with:
           # yamllint disable-line rule:line-length
           config: '${{ github.repository }}//.github/harden-runner/build-test/python-audit.txt@${{ github.sha }}'
@@ -287,7 +287,7 @@ jobs:
       # Load this job's egress allow-list, then block everything
       # else; see .github/harden-runner/README.md.
       # yamllint disable-line rule:line-length
-      - uses: lfreleng-actions/harden-runner-block-action@f5a475661142cd2f1611ae6fbf8af2be0f36a9a7  # v0.16.3
+      - uses: lfreleng-actions/harden-runner-block-action@65ff87957e1cac2de3203a85dbb07c31810321cb  # v0.16.4
         with:
           # yamllint disable-line rule:line-length
           config: '${{ github.repository }}//.github/harden-runner/build-test/sbom.txt@${{ github.sha }}'
@@ -352,7 +352,7 @@ jobs:
       # Load this job's egress allow-list, then block everything
       # else; see .github/harden-runner/README.md.
       # yamllint disable-line rule:line-length
-      - uses: lfreleng-actions/harden-runner-block-action@f5a475661142cd2f1611ae6fbf8af2be0f36a9a7  # v0.16.3
+      - uses: lfreleng-actions/harden-runner-block-action@65ff87957e1cac2de3203a85dbb07c31810321cb  # v0.16.4
         with:
           # yamllint disable-line rule:line-length
           config: '${{ github.repository }}//.github/harden-runner/build-test/grype.txt@${{ github.sha }}'
@@ -404,7 +404,7 @@ jobs:
       # Load this job's egress allow-list, then block everything
       # else; see .github/harden-runner/README.md.
       # yamllint disable-line rule:line-length
-      - uses: lfreleng-actions/harden-runner-block-action@f5a475661142cd2f1611ae6fbf8af2be0f36a9a7  # v0.16.3
+      - uses: lfreleng-actions/harden-runner-block-action@65ff87957e1cac2de3203a85dbb07c31810321cb  # v0.16.4
         with:
           # yamllint disable-line rule:line-length
           config: '${{ github.repository }}//.github/harden-runner/build-test/container-scan.txt@${{ github.sha }}'
