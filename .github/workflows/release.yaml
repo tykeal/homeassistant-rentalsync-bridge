@@ -174,7 +174,7 @@ jobs:
       - name: 'Build Python project'
         id: 'python-build'
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/python-build-action@3a996fe53edf0117e283b9fef8d3aacaa9adaf02  # v2.1.2
+        uses: lfreleng-actions/python-build-action@6853a39de0cc11ca089f56ec3cfa2e9fae8157ce  # v2.1.4
         with:
           sigstore_sign: true
           attestations: true
@@ -291,8 +291,8 @@ jobs:
           path_prefix: 'rentalsync-bridge/'
           # The python backend defaults to 3.12 and binds uv to that
           # interpreter (no downloads) rather than deriving it from
-          # requires-python, so it must match that (3.14 only).
-          python_version: "3.14"
+          # requires-python, so it must match that (3.15 only).
+          python_version: "3.15"
 
       - name: "Upload SBOM artifacts"
         # yamllint disable-line rule:line-length

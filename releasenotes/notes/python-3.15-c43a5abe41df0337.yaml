@@ -1,0 +1,9 @@
+---
+upgrade:
+  - |
+    The Home Assistant add-on now runs on the
+    `base-python:3.15-alpine3.24` base image and the standalone
+    Docker/Podman image on `python:3.15-slim`, so both run Python 3.15.
+    No configuration changes are needed. The project now targets Python
+    3.15 only (`requires-python = ">=3.15,<3.16"`); if you install the
+    Python package directly, you need Python 3.15.

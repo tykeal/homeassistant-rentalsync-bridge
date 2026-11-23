@@ -7,7 +7,7 @@ dynamic = ["version"]
 description = "Multi-PMS booking sync and iCal export bridge for Home Assistant"
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.14,<3.15"
+requires-python = ">=3.15,<3.16"
 authors = [
     { name = "Andrew Grimberg", email = "tykeal@bardicgrove.org" }
 ]
@@ -18,7 +18,7 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Topic :: Home Automation",
 ]
 dependencies = [
@@ -96,7 +96,7 @@ exclude_lines = [
 ]
 
 [tool.ruff]
-target-version = "py314"
+target-version = "py315"
 line-length = 88
 src = ["src", "tests"]
 
@@ -126,13 +126,18 @@ ignore = [
     "ANN401", # Dynamically typed expressions (Any)
     "PLR0913", # Too many arguments
     "PLR0917", # Too many positional arguments
-    # Python 3.14 defers annotation evaluation (PEP 649), so ruff would move
+    # Python 3.14+ defers annotation evaluation (PEP 649), so ruff would move
     # annotation-only imports under TYPE_CHECKING. FastAPI, Pydantic and
     # SQLAlchemy resolve annotations at runtime and need them importable.
     "TC001",  # typing-only-first-party-import
     "TC002",  # typing-only-third-party-import
     "TC003",  # typing-only-standard-library-import
 ]
+
+[tool.ruff.lint.isort]
+# aislop 0.20.0 runs its bundled ruff 0.15.4, whose py315 standard
+# library list lacks zoneinfo, so it would sort zoneinfo as third party.
+extra-standard-library = ["zoneinfo"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
