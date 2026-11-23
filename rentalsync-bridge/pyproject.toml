@@ -134,6 +134,11 @@ ignore = [
     "TC003",  # typing-only-standard-library-import
 ]
 
+[tool.ruff.lint.isort]
+# aislop 0.20.0 runs its bundled ruff 0.15.4, whose py315 standard
+# library list lacks zoneinfo, so it would sort zoneinfo as third party.
+extra-standard-library = ["zoneinfo"]
+
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
