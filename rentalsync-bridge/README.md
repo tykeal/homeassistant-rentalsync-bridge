@@ -159,7 +159,7 @@ docker start rentalsync-bridge
 
 ### Prerequisites
 
-- Python 3.14
+- Python 3.15
 - [uv](https://docs.astral.sh/uv/) package manager
 - Pre-commit hooks
 
