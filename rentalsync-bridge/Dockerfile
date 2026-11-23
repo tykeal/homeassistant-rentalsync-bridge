@@ -4,7 +4,7 @@
 # Home Assistant Add-on Dockerfile
 # Uses s6-overlay for process supervision (required by HA base images)
 
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-python:3.14-alpine3.24
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-python:3.15-alpine3.24
 FROM ${BUILD_FROM}
 
 # Build version passed by HA builder for hatch-vcs fallback
@@ -42,9 +42,12 @@ RUN apk add --no-cache --virtual .build-deps \
 COPY src/ ./src/
 COPY README.md ./
 
-# Install the project itself
+# Install the project itself. The base image points UV_EXTRA_INDEX_URL
+# at Home Assistant's wheel index, which uv prefers when resolving the
+# build backend; its stale trove-classifiers rejects the Python 3.15
+# classifier, so build against PyPI only.
 RUN SETUPTOOLS_SCM_PRETEND_VERSION="${BUILD_VERSION}" \
-    uv sync --frozen --no-dev
+    env -u UV_EXTRA_INDEX_URL uv sync --frozen --no-dev
 
 # Copy alembic for database migrations
 COPY alembic/ ./alembic/
