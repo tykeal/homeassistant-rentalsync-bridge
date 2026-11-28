@@ -120,7 +120,7 @@ jobs:
       - name: 'Run aislop'
         id: scan
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/aislop-scan-action@e6978bd7318af5b8671ec709fd40fe7d37041829  # v0.4.2
+        uses: lfreleng-actions/aislop-scan-action@a08560b1192d84439e310dfdb9f22c2ada09c585  # v0.4.3
         with:
           scan-mode: 'full'
           # Annotations list the top findings even when they are already
